@@ -1,7 +1,10 @@
 "use server";
 
 import { z } from "zod";
+import { headers } from "next/headers";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/security/rate-limit";
+import { sanitizeInternalRedirect } from "@/lib/security/redirect";
 import { redirect } from "next/navigation";
 
 const loginSchema = z.object({
@@ -18,6 +21,15 @@ export type LoginState = {
 };
 
 export async function loginAction(_prevState: LoginState | null, formData: FormData): Promise<LoginState> {
+  const hdrs = await headers();
+  const ip = hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const rate = checkRateLimit(`login:${ip}`, 15, 60_000);
+  if (!rate.allowed) {
+    return {
+      error: `Terlalu banyak percobaan masuk. Coba lagi dalam ${rate.retryAfterSeconds} detik.`,
+    };
+  }
+
   const rawData = {
     email: formData.get("email"),
     password: formData.get("password"),
@@ -60,5 +72,9 @@ export async function loginAction(_prevState: LoginState | null, formData: FormD
     };
   }
 
-  redirect("/dashboard");
+  const nextPath = sanitizeInternalRedirect(
+    formData.get("next") as string | null,
+    "/dashboard",
+  );
+  redirect(nextPath);
 }

@@ -22,13 +22,14 @@ Executed via `supabase db query --remote --yes --file tests/rls-multi-lsp.test.s
 | `src/ai/__tests__/redact.test.ts` | 4 tests (NIK/phone/image redaction, Jury allow-list) | **PASS** | `npm test` |
 | `src/lib/crypto/__tests__/encryption.test.ts` | 4 tests (AES-256-GCM roundtrip, tamper detect, missing secret) | **PASS** | `npm test` |
 | `src/lib/security/__tests__/ssrf.test.ts` | 3 tests (private IP/localhost block, Drive allow-list) | **PASS** | `npm test` |
+| `src/lib/security/__tests__/rate-limit.test.ts` | 2 tests (sliding rate limit throttle, internal redirect sanitizer) | **PASS** | `npm test` |
 | `src/lib/__tests__/names.test.ts` | 4 tests (KTP authority, confidence floor, Declan Rice case) | **PASS** | `npm test` |
 | `src/lib/audit/__tests__/write-audit-log.test.ts` | 2 tests (audit insert, graceful error catch) | **PASS** | `npm test` |
 | `src/services/__tests__/similarity.test.ts` | 1 test (copy-paste vs paraphrase vs unrelated calibration) | **PASS** | `npm test` |
 | `src/services/__tests__/export.test.ts` | 2 tests (D8 format lock, real PDF/DOCX/XLSX generation) | **PASS** | `npm test` |
 | `src/services/__tests__/dit.test.ts` | 2 tests (completeness gate 422, dynamic count 10 vs 13) | **PASS** | `npm test` |
 | `src/services/__tests__/no-hardcoded-values.test.ts` | 2 tests (zero literal 13 count, zero prohibited status) | **PASS** | `npm test` |
-| `src/lib/supabase/__tests__/middleware.test.ts` | 2 tests (fail-closed `/`, `/dashboard`, `/settings/provider` redirect when Supabase env missing; `/login` + `/api/health` pass) | **PASS** | `npm test` |
+| `src/lib/supabase/__tests__/middleware.test.ts` | 2 tests (fail-closed `/`, `/dashboard`, `/settings/provider`, `/onboarding` redirect; `/login`, `/register`, `/auth/callback`, `/api/health` pass) | **PASS** | `npm test` |
 
 ---
 
@@ -38,18 +39,6 @@ Executed via `supabase db query --remote --yes --file tests/rls-multi-lsp.test.s
 | :--- | :--- | :--- |
 | TypeScript Strict | `npm run typecheck` | **PASS (0 errors)** |
 | ESLint Zero Warnings | `npx eslint . --ext .ts,.tsx --max-warnings 0` | **PASS (0 warnings)** |
-| Vitest Unit Suite | `npm test` | **PASS (10 files, 26/26 tests)** |
-| Production Build | `npm run build` | **PASS (21 routes + `Proxy (Middleware)`)** |
+| Vitest Unit Suite | `npm test` | **PASS (11 files, 28/28 tests)** |
+| Production Build | `npm run build` | **PASS (24 routes + `/_not-found` + `Proxy (Middleware)`)** |
 | Supabase Advisors | `supabase db advisors --remote` | **PASS (0 issues)** |
-
----
-
-## 4. Live Vercel Deployment Verification (`https://assessor-zeta.vercel.app/`)
-
-Verified against live deployment after commit `91c4544` via headless browser (`BROWSER_HOST_FACTS` origin: `https://assessor-zeta.vercel.app`):
-- `GET /` -> `307` -> `/login?next=%2F&reason=config` (**HTTP 200**, zero console errors)
-- `GET /dashboard` -> `307` -> `/login?next=%2Fdashboard&reason=config` (**HTTP 200**, zero HTTP 500s)
-- `GET /settings/provider` -> `307` -> `/login?next=%2Fsettings%2Fprovider&reason=config` (**HTTP 200**, zero HTTP 500s)
-- `GET /login` -> **HTTP 200**, renders `AsesorKompetensi` login form + deployment env var reminder banner
-- `GET /api/health` -> **HTTP 200** (`{"ok":true,"data":{"status":"ok","service":"AsesorKompetensi","version":"v1.4",...}}`)
-- **Action Required for Authenticated Flows on Vercel:** Configure `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `BYOK_ENCRYPTION_SECRET` (plus optional `DATABASE_URL`) in Vercel Project Settings -> Environment Variables and redeploy.

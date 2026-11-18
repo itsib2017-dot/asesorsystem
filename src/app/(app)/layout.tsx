@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { listUserMemberships } from "@/repositories/auth.repository";
 
 export default async function AppShellLayout({
   children,
@@ -21,6 +22,11 @@ export default async function AppShellLayout({
   const user = await getUser();
   if (!user) {
     redirect("/login");
+  }
+
+  const memberships = await listUserMemberships(user.id);
+  if (memberships.length === 0) {
+    redirect("/onboarding");
   }
 
   async function signOutAction() {

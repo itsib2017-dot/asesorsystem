@@ -1,13 +1,20 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 import { loginAction, type LoginState } from "../actions";
 
 interface LoginFormProps {
   supabaseConfigured: boolean;
+  nextPath?: string;
+  hasCallbackError?: boolean;
 }
 
-export function LoginForm({ supabaseConfigured }: LoginFormProps) {
+export function LoginForm({
+  supabaseConfigured,
+  nextPath = "/dashboard",
+  hasCallbackError = false,
+}: LoginFormProps) {
   const [state, formAction, isPending] = useActionState<LoginState, FormData>(
     loginAction,
     {},
@@ -54,6 +61,13 @@ export function LoginForm({ supabaseConfigured }: LoginFormProps) {
         </div>
       )}
 
+      {hasCallbackError && (
+        <div className="mb-6 p-4 rounded-lg bg-red-950/50 border border-red-800/80 text-red-200 text-sm">
+          Tautan verifikasi email tidak valid atau telah kedaluwarsa. Silakan
+          masuk atau daftar kembali.
+        </div>
+      )}
+
       {state?.error && (
         <div className="mb-6 p-4 rounded-lg bg-red-950/50 border border-red-800/80 text-red-200 text-sm">
           {state.error}
@@ -61,6 +75,7 @@ export function LoginForm({ supabaseConfigured }: LoginFormProps) {
       )}
 
       <form action={formAction} className="space-y-5">
+        <input type="hidden" name="next" value={nextPath} />
         <div>
           <label
             htmlFor="email"
@@ -122,6 +137,16 @@ export function LoginForm({ supabaseConfigured }: LoginFormProps) {
           )}
         </button>
       </form>
+
+      <div className="mt-6 pt-5 border-t border-slate-800 text-center text-xs text-slate-400">
+        Belum punya akun LSP atau asesor?{" "}
+        <Link
+          href="/register"
+          className="text-indigo-400 hover:text-indigo-300 font-medium underline underline-offset-4"
+        >
+          Daftar Akun &amp; Buat LSP Baru
+        </Link>
+      </div>
     </div>
   );
 }

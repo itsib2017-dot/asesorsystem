@@ -17,7 +17,7 @@ describe("updateSession fail-closed behavior", () => {
   });
 
   it("redirects protected routes to /login when Supabase env vars are missing", async () => {
-    for (const path of ["/", "/dashboard", "/settings/provider"]) {
+    for (const path of ["/", "/dashboard", "/settings/provider", "/onboarding"]) {
       const req = new NextRequest(`https://assessor-zeta.vercel.app${path}`);
       const res = await updateSession(req);
       expect(res.status).toBe(307);
@@ -26,8 +26,8 @@ describe("updateSession fail-closed behavior", () => {
     }
   });
 
-  it("allows /login and /api/health to pass without redirect loop", async () => {
-    for (const path of ["/login", "/api/health"]) {
+  it("allows auth and health routes to pass without redirect loop", async () => {
+    for (const path of ["/login", "/register", "/auth/callback", "/api/health"]) {
       const req = new NextRequest(`https://assessor-zeta.vercel.app${path}`);
       const res = await updateSession(req);
       expect(res.status).toBe(200);

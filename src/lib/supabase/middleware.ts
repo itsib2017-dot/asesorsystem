@@ -15,7 +15,10 @@ export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
   const { pathname } = request.nextUrl;
-  const isAuthRoute = pathname.startsWith("/login") || pathname.startsWith("/auth");
+  const isAuthRoute =
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/register") ||
+    pathname.startsWith("/auth");
   const isApiRoute = pathname.startsWith("/api/");
   const isPublicAsset =
     pathname.startsWith("/_next") ||
@@ -80,8 +83,8 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // If the user IS authenticated and tries to reach /login, redirect to /dashboard.
-  if (user && pathname.startsWith("/login")) {
+  // If the user IS authenticated and tries to reach /login or /register, redirect to /dashboard.
+  if (user && (pathname.startsWith("/login") || pathname.startsWith("/register"))) {
     const dashboardUrl = request.nextUrl.clone();
     dashboardUrl.pathname = "/dashboard";
     dashboardUrl.search = "";
