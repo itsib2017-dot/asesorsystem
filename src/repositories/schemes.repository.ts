@@ -3,6 +3,28 @@ import { hasDatabaseUrl, withRlsTransaction } from "@/db";
 import { schemes, schemeFormManifests } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
+export interface SchemeKelompokSpec {
+  kpIndex: number;
+  title: string;
+  units: Array<{ no: number; code: string; title: string }>;
+  aspects: Array<{
+    kpIndex: number;
+    no: number;
+    unitCode: string;
+    unitTitle: string;
+    lingkup: string;
+    question: string;
+    kukRef: string;
+  }>;
+}
+
+export interface SchemeBrandingConfig {
+  leftLogoUrl?: string;
+  leftLogoAlt?: string;
+  rightLogoUrl?: string;
+  rightLogoAlt?: string;
+}
+
 export interface SchemeManifestConfig {
   questionCounts: {
     official04bCount: number;
@@ -14,6 +36,9 @@ export interface SchemeManifestConfig {
   prerequisites: string[];
   registrationRequirements: string[];
   units: Array<{ code: string; title: string }>;
+  kelompokPekerjaan?: SchemeKelompokSpec[];
+  docColumns?: string[];
+  branding?: SchemeBrandingConfig;
   formSuffixMapping: {
     soal: string;
     kunci: string;

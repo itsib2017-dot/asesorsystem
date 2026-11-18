@@ -1,0 +1,103 @@
+import { describe, expect, it } from "vitest";
+import type { SchemeRecord } from "@/repositories/schemes.repository";
+import {
+  buildAk02Payload,
+  buildIa04bPayload,
+  resolveSchemeBranding,
+  resolveSchemeDocColumns,
+  resolveSchemeKelompokPekerjaan,
+} from "../assessee-forms";
+
+describe("D21 / R7 Scheme Manifest Portability", () => {
+  const customScheme: SchemeRecord = {
+    id: "scheme-pemrog-1",
+    lspId: "lsp-1",
+    code: "PRG-01",
+    name: "Okupasi Pemrogram Junior (SKM/999/001/2026/1)",
+    version: 1,
+    forms: [],
+    manifest: {
+      questionCounts: {
+        official04bCount: 2,
+        written06aCount: 5,
+        questionBankCount: 5,
+      },
+      decisionRule: "VATM",
+      decisionRuleRef: "SKKNI TIK 2024",
+      prerequisites: ["Lulusan SMK/D3"],
+      registrationRequirements: ["KTP", "CV"],
+      units: [
+        { code: "J.620100.001.02", title: "Menggunakan Struktur Data" },
+        { code: "J.620100.002.02", title: "Menerapkan Pemrograman Terstruktur" },
+      ],
+      docColumns: ["APL.01", "KTP", "Portfolio Git", "04A", "06C"],
+      branding: {
+        leftLogoUrl: "/logos/custom-bnsp.png",
+        leftLogoAlt: "Custom BNSP",
+        rightLogoUrl: "/logos/custom-lsp.png",
+        rightLogoAlt: "LSP TIK Nusantara",
+      },
+      formSuffixMapping: {
+        soal: "06A",
+        kunci: "06B",
+        jawaban: "06C",
+      },
+    },
+  };
+
+  it("uses manifest.units instead of hardcoded AK3U units in buildAk02Payload", () => {
+    const payload = buildAk02Payload({
+      scheme: customScheme,
+      schemeTitle: "Pemrogram Junior",
+      schemeNumber: "SKM/999/001/2026/1",
+      assessorName: "Asesor TIK",
+      assessorRegNo: "MET.999",
+      assesseeName: "Peserta Uji",
+      assessmentDate: "2026-11-18",
+      decisions: [
+        { unitCode: "J.620100.001.02", unitTitle: "Menggunakan Struktur Data", decision: "K" },
+      ],
+      hasDit: true,
+      hasWritten: false,
+    });
+
+    expect(payload.unitDecisions).toHaveLength(2);
+    expect(payload.unitDecisions[0]?.unitCode).toBe("J.620100.001.02");
+    expect(payload.unitDecisions[0]?.unitTitle).toBe("Menggunakan Struktur Data");
+    expect(payload.unitDecisions[1]?.unitTitle).toBe("Menerapkan Pemrograman Terstruktur");
+  });
+
+  it("synthesizes non-AK3U Kelompok Pekerjaan from manifest.units and resolves docColumns & branding", () => {
+    const kps = resolveSchemeKelompokPekerjaan(customScheme);
+    expect(kps).toHaveLength(1);
+    expect(kps[0]?.units).toHaveLength(2);
+    expect(kps[0]?.aspects).toHaveLength(2);
+
+    const ia04b = buildIa04bPayload({
+      scheme: customScheme,
+      schemeTitle: "Pemrogram Junior",
+      schemeNumber: "SKM/999/001/2026/1",
+      assessorName: "Asesor TIK",
+      assessorRegNo: "MET.999",
+      assesseeName: "Peserta Uji",
+      assessmentDate: "2026-11-18",
+      decisions: [],
+    });
+    expect(ia04b.itemAchievedFlags).toHaveLength(2);
+
+    expect(resolveSchemeDocColumns(customScheme)).toEqual([
+      "APL.01",
+      "KTP",
+      "Portfolio Git",
+      "04A",
+      "06C",
+    ]);
+
+    expect(resolveSchemeBranding(customScheme)).toEqual({
+      leftLogoUrl: "/logos/custom-bnsp.png",
+      leftLogoAlt: "Custom BNSP",
+      rightLogoUrl: "/logos/custom-lsp.png",
+      rightLogoAlt: "LSP TIK Nusantara",
+    });
+  });
+});

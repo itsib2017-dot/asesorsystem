@@ -122,7 +122,7 @@ export async function GET(
     (profile?.fullName as string) || (profile?.full_name as string) || user.email || "Asesor";
   const assessorRegNo =
     (profile?.regNoMet as string) || (profile?.reg_no_met as string) || "-";
-  const assessmentDate = batch.assessmentDate ?? new Date().toISOString().slice(0, 10);
+  const assessmentDate = batch.assessmentDate ?? "";
   const signatureMimeType =
     signature.mimeType === "image/jpeg" ? ("image/jpeg" as const) : ("image/png" as const);
   const rawDecisions = decisions as unknown as RawDecisionRow[];
@@ -131,6 +131,7 @@ export async function GET(
   if (form === "ak02") {
     docxBuf = await generateAk02Docx(
       buildAk02Payload({
+        scheme,
         schemeTitle,
         schemeNumber,
         tukType: batch.tukType,
@@ -149,6 +150,7 @@ export async function GET(
   } else if (form === "ia04b") {
     docxBuf = await generateIa04bDocx(
       buildIa04bPayload({
+        scheme,
         schemeTitle,
         schemeNumber,
         tukType: batch.tukType,

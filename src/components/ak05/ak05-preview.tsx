@@ -5,6 +5,8 @@ import {
   formatAk05DateIndonesia,
   formatAk05SchemeTitle,
 } from "@/lib/ak05/format";
+import { AK05_LAYOUT } from "@/lib/ak05/layout";
+import type { SchemeBrandingConfig } from "@/repositories/schemes.repository";
 import {
   BlankoA4Sheet,
   BlankoMetadataTable,
@@ -15,6 +17,7 @@ import {
 
 interface Ak05PreviewProps {
   batchId: string;
+  branding?: SchemeBrandingConfig;
   schemeTitle: string;
   schemeNumber: string;
   tukName?: string;
@@ -41,30 +44,39 @@ export function Ak05Preview(props: Ak05PreviewProps) {
   const blocked = !props.hasActiveSignature || props.unconfirmedNamesCount > 0;
   const displaySchemeTitle = formatAk05SchemeTitle(props.schemeTitle);
   const displayDate = formatAk05DateIndonesia(props.assessmentDate);
-  const totalSlots = Math.max(12, props.rows.length);
+  const totalSlots = Math.max(AK05_LAYOUT.minCandidateSlots, props.rows.length);
 
   const notesTable = (
     <table className="w-full text-xs border-collapse border border-black">
       <tbody>
         <tr>
-          <td className="border border-black bg-[#92D050] p-2 w-1/3 align-top">
-            Aspek Negatif dan Positif dalam asesmen
+          <td
+            className="border border-black p-2 w-1/3 align-top"
+            style={{ backgroundColor: AK05_LAYOUT.colors.tableHeaderGreenHex }}
+          >
+            {AK05_LAYOUT.noteRowLabels.positiveNegative}
           </td>
           <td className="border border-black p-2 align-top">
             {props.notesPositiveNegative || "-"}
           </td>
         </tr>
         <tr>
-          <td className="border border-black bg-[#92D050] p-2 align-top">
-            Pencatatan penolakan hasil asesmen
+          <td
+            className="border border-black p-2 align-top"
+            style={{ backgroundColor: AK05_LAYOUT.colors.tableHeaderGreenHex }}
+          >
+            {AK05_LAYOUT.noteRowLabels.rejection}
           </td>
           <td className="border border-black p-2 align-top">
             {props.notesRejection || "-"}
           </td>
         </tr>
         <tr>
-          <td className="border border-black bg-[#92D050] p-2 align-top">
-            Saran perbaikan (Asesor/personil terkait)
+          <td
+            className="border border-black p-2 align-top"
+            style={{ backgroundColor: AK05_LAYOUT.colors.tableHeaderGreenHex }}
+          >
+            {AK05_LAYOUT.noteRowLabels.improvement}
           </td>
           <td className="border border-black p-2 align-top">
             {props.notesImprovement || "-"}
@@ -148,7 +160,7 @@ export function Ak05Preview(props: Ak05PreviewProps) {
 
       {/* Sheet 1: Faithful Official Blanko FR.AK.05 Page 1 */}
       <BlankoA4Sheet>
-        <BlankoSheetHeader />
+        <BlankoSheetHeader {...props.branding} />
 
         {/* Borderless Table 0: FR.AK.05.   LAPORAN ASESMEN */}
         <BlankoTitleBar code="FR.AK.05." title="LAPORAN ASESMEN" />
@@ -169,12 +181,15 @@ export function Ak05Preview(props: Ak05PreviewProps) {
           </tr>
         </BlankoMetadataTable>
 
-        <p className="text-[11px] italic">*Coret yang tidak perlu</p>
+        <p className="text-[11px] italic">{AK05_LAYOUT.footnoteAsterisk}</p>
 
         {/* Table 2: Candidate Recommendations Grid (#92D050 Green Header) */}
         <table className="w-full text-xs border-collapse border border-black">
           <thead>
-            <tr className="bg-[#92D050] font-bold">
+            <tr
+              className="font-bold"
+              style={{ backgroundColor: AK05_LAYOUT.colors.tableHeaderGreenHex }}
+            >
               <th rowSpan={2} className="border border-black p-1.5 w-[7%] text-center">
                 No.
               </th>
@@ -188,7 +203,10 @@ export function Ak05Preview(props: Ak05PreviewProps) {
                 Keterangan**
               </th>
             </tr>
-            <tr className="bg-[#92D050] font-bold">
+            <tr
+              className="font-bold"
+              style={{ backgroundColor: AK05_LAYOUT.colors.tableHeaderGreenHex }}
+            >
               <th className="border border-black py-1 w-[8%] text-center">K</th>
               <th className="border border-black py-1 w-[8%] text-center">BK</th>
             </tr>
@@ -213,9 +231,7 @@ export function Ak05Preview(props: Ak05PreviewProps) {
           </tbody>
         </table>
 
-        <p className="text-[11px] italic">
-          **Tuliskan Kode dan Judul Unit Kompetensi yang dinyatakan BK bila mengases satu skema
-        </p>
+        <p className="text-[11px] italic">{AK05_LAYOUT.footnoteKeterangan}</p>
 
         {/* Table 3 on Page 1 matching official FR.AK.05 */}
         {notesTable}
@@ -225,7 +241,7 @@ export function Ak05Preview(props: Ak05PreviewProps) {
 
       {/* Sheet 2: Faithful Official Blanko FR.AK.05 Page 2 (Table 4 Assessor Block) */}
       <BlankoA4Sheet className="min-h-[680px]">
-        <BlankoSheetHeader />
+        <BlankoSheetHeader {...props.branding} />
 
         <table className="w-full text-xs border-collapse border border-black mt-2">
           <tbody>

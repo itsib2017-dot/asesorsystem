@@ -66,16 +66,6 @@ describe("Worker dispatcher and queue runner", () => {
     mocks.getConfig.mockResolvedValue(null);
   });
 
-  it("handles hello jobs cleanly", async () => {
-    const res = await runWorkerJob({
-      id: "job-hello-1",
-      type: "hello",
-      payload: { message: "ping" },
-      userId: "user-1",
-    });
-    expect(res).toEqual({ status: "done", progress: 100 });
-  });
-
   it("fails loudly instead of faking success on unknown job types", async () => {
     await expect(
       runWorkerJob({
@@ -167,9 +157,9 @@ describe("Worker dispatcher and queue runner", () => {
     const baseJob = {
       id: "job-inline-1",
       createdBy: "user-1",
-      type: "hello",
+      type: "extract_file",
       status: "pending" as const,
-      payload: { message: "ok" },
+      payload: { fileId: "file-inline-1", text: "Isi teks uji inline" },
       progress: 0,
       error: null,
       attempts: 0,
@@ -183,11 +173,12 @@ describe("Worker dispatcher and queue runner", () => {
       .mockResolvedValueOnce(baseJob)
       .mockResolvedValueOnce(doneJob);
     mocks.updateJobStatusRecord.mockResolvedValue(undefined);
+    mocks.updateDriveFileExtraction.mockResolvedValue(undefined);
 
     const out = await enqueueJob({
       userId: "user-1",
-      type: "hello",
-      payload: { message: "ok" },
+      type: "extract_file",
+      payload: { fileId: "file-inline-1", text: "Isi teks uji inline" },
     });
 
     expect(out.ok).toBe(true);

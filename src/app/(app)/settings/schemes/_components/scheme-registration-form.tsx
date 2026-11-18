@@ -3,6 +3,7 @@
 import React, { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PlusCircle, Sparkles } from "lucide-react";
+import { getFallbackAk3uUnits } from "@/lib/forms/assessee-forms";
 import { saveSchemeManifestAction } from "../actions";
 
 export function SchemeRegistrationForm() {
@@ -55,6 +56,13 @@ export function SchemeRegistrationForm() {
         "Pas Foto Terbaru",
       ].join("\n"),
     );
+    setField(
+      "unitsText",
+      getFallbackAk3uUnits()
+        .map((u) => `${u.code} | ${u.title}`)
+        .join("\n"),
+    );
+    setField("docColumnsText", "APL.01, APL.02, KTP, Ijazah, Pas Foto, CV, 04A, 06C");
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -260,6 +268,34 @@ export function SchemeRegistrationForm() {
             placeholder="KTP, Ijazah, CV..."
             className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white"
           />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 mb-1">
+            Unit Kompetensi (1 per baris: KODE | Judul Unit)
+          </label>
+          <textarea
+            name="unitsText"
+            rows={4}
+            placeholder="J.620100.001.02 | Menggunakan Struktur Data"
+            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono bg-white"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 mb-1">
+            Kolom Matriks Dokumen Batch (pisahkan dengan koma)
+          </label>
+          <input
+            name="docColumnsText"
+            defaultValue="APL.01, APL.02, KTP, Ijazah, Pas Foto, CV, 04A, 06C"
+            placeholder="APL.01, APL.02, KTP, Ijazah, Pas Foto, CV, 04A, 06C"
+            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono bg-white"
+          />
+          <p className="text-[11px] text-slate-500 mt-1.5">
+            Daftar unit kompetensi dan kolom kelengkapan di atas disimpan ke manifes skema sehingga batch non-AK3U tidak bergantung pada daftar AK3U bawaan (D21).
+          </p>
         </div>
       </div>
 

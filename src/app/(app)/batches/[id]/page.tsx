@@ -13,10 +13,13 @@ import {
 } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
+import { getConfig } from "@/lib/config/get-config";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { getLatestJobForBatch } from "@/repositories/jobs.repository";
+import { listSchemes } from "@/repositories/schemes.repository";
+import { resolveSchemeDocColumns } from "@/lib/forms/assessee-forms";
 import { enqueueJob } from "@/worker/queue";
 import { CompletenessMatrix, type CompletenessRow } from "@/components/batch/completeness-matrix";
 import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
@@ -25,8 +28,6 @@ import { RescanDriveButton } from "./_components/rescan-drive-button";
 export const metadata = {
   title: "Detail Batch — AsesorKompetensi",
 };
-
-const DEFAULT_DOC_COLUMNS = ["APL.01", "APL.02", "KTP", "Ijazah", "Pas Foto", "CV", "04A", "06C"];
 
 export default async function BatchDetailPage({
   params,
@@ -40,11 +41,17 @@ export default async function BatchDetailPage({
   const batch = await getBatchById(user.id, id);
   if (!batch) return notFound();
 
-  const [assessees, files, latestJob] = await Promise.all([
+  const [assessees, files, latestJob, schemes, configuredMinOcr] = await Promise.all([
     listAssesseesByBatch(user.id, id),
     listDriveFilesForBatch(user.id, id),
     getLatestJobForBatch(user.id, id),
+    listSchemes(user.id, batch.lspId),
+    getConfig("identity.ktp_ocr_min_confidence", { lspId: batch.lspId }),
   ]);
+  const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
+  const docColumns = resolveSchemeDocColumns(scheme);
+  const ktpOcrMinConfidence =
+    typeof configuredMinOcr === "number" && configuredMinOcr > 0 ? configuredMinOcr : 0.75;
 
   const userId = user.id;
   const batchId = batch.id;
@@ -91,11 +98,11 @@ export default async function BatchDetailPage({
   const rows: CompletenessRow[] = assessees.map((a) => {
     const aFiles = files.filter((f) => f.assesseeId === a.id);
     const docs: Record<string, "complete" | "warning" | "missing"> = {};
-    for (const col of DEFAULT_DOC_COLUMNS) {
+    for (const col of docColumns) {
       const key = col.toLowerCase().replace(/\./g, "").replace(/\s+/g, "_");
       const matched = aFiles.find((f) => f.docType === key);
       docs[col] = matched
-        ? matched.ocrConfidence !== null && matched.ocrConfidence < 0.75
+        ? matched.ocrConfidence !== null && matched.ocrConfidence < ktpOcrMinConfidence
           ? "warning"
           : "complete"
         : "missing";
@@ -251,7 +258,7 @@ export default async function BatchDetailPage({
           <Users className="w-4 h-4 text-teal-700" />
           Matriks Kelengkapan Berkas Asesi ({assessees.length} Asesi · {files.length} Berkas Drive)
         </div>
-        <CompletenessMatrix batchId={batch.id} docColumns={DEFAULT_DOC_COLUMNS} rows={rows} />
+        <CompletenessMatrix batchId={batch.id} docColumns={docColumns} rows={rows} />
       </div>
     </div>
   );

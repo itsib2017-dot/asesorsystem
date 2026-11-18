@@ -10,7 +10,6 @@ import {
 import { runWorkerJob } from "./index";
 
 export type JobType =
-  | "hello"
   | "drive_scan"
   | "extract_file"
   | "ocr_ktp"

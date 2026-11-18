@@ -49,7 +49,6 @@ import {
   resolveUnitsForScheme,
   syncAssesseeVatmRecommendations,
 } from "@/lib/forms/sync-vatm-decisions";
-import { handleHelloJob } from "./handlers/hello.handler";
 
 export interface WorkerJobInput {
   id: string;
@@ -745,9 +744,6 @@ export async function runWorkerJob(job: WorkerJobInput): Promise<WorkerJobResult
 
   let result: WorkerJobResult;
   switch (job.type) {
-    case "hello":
-      result = await handleHelloJob(job.id, job.payload);
-      break;
     case "drive_scan":
       result = await handleDriveScanJob(job);
       break;

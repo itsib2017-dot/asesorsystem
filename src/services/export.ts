@@ -18,6 +18,7 @@ import {
   formatAk05DateIndonesia,
   formatAk05SchemeTitle,
 } from "@/lib/ak05/format";
+import { AK05_LAYOUT } from "@/lib/ak05/layout";
 
 export type DocumentType = "ak05" | "ak02" | "ia04b" | "ia06" | "dit_pack" | "similarity";
 export type ExportFormat = "pdf" | "docx" | "xlsx";
@@ -1150,8 +1151,8 @@ function drawBlankoHeaderFooter(params: {
   logoRight?: PDFImage;
 }) {
   const { page, pageNum, schemeTitle, fontRegular, fontBold, logoLeft, logoRight } = params;
-  const xStart = 54;
-  const xEnd = 540;
+  const xStart = AK05_LAYOUT.marginXPt;
+  const xEnd = AK05_LAYOUT.rightEdgeXPt;
 
   if (logoLeft) {
     const dims = logoLeft.scaleToFit(86, 38);
@@ -1167,7 +1168,7 @@ function drawBlankoHeaderFooter(params: {
     start: { x: xStart, y: 50 },
     end: { x: xEnd, y: 50 },
     thickness: 1,
-    color: rgb(68 / 255, 114 / 255, 196 / 255),
+    color: rgb(...AK05_LAYOUT.colors.footerDividerRgb),
   });
 
   page.drawText(toWinAnsiSafe(formatAk05SchemeTitle(schemeTitle)), {
@@ -1186,7 +1187,7 @@ function drawBlankoHeaderFooter(params: {
     y: badgeY,
     width: badgeSize,
     height: badgeSize,
-    color: rgb(168 / 255, 208 / 255, 141 / 255),
+    color: rgb(...AK05_LAYOUT.colors.pageBadgeRgb),
   });
   const pStr = String(pageNum);
   const pw = fontBold.widthOfTextAtSize(pStr, 8);
@@ -1198,7 +1199,7 @@ function drawBlankoHeaderFooter(params: {
     color: rgb(1, 1, 1),
   });
 
-  const refLabel = "FR.AK.05-2024";
+  const refLabel = AK05_LAYOUT.formCode;
   const rw = fontRegular.widthOfTextAtSize(refLabel, 7.5);
   page.drawText(refLabel, {
     x: badgeX - rw - 6,
@@ -1248,10 +1249,10 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
 
   const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
   const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
-  const greenFill: [number, number, number] = [146 / 255, 208 / 255, 80 / 255];
+  const greenFill: [number, number, number] = [...AK05_LAYOUT.colors.tableHeaderGreenRgb];
 
-  const x0 = 54;
-  const page1 = pdfDoc.addPage([595.28, 841.89]);
+  const x0 = AK05_LAYOUT.marginXPt;
+  const page1 = pdfDoc.addPage(AK05_LAYOUT.pageSizeA4Pt);
   drawBlankoHeaderFooter({
     page: page1,
     pageNum: 1,
@@ -1269,10 +1270,7 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
   y -= 20;
 
   // Table 1: 5-row Metadata block (widths: 128 | 50 | 14 | 294 = 486, exact blanko ratios)
-  const w1 = 128;
-  const w2 = 50;
-  const w3 = 14;
-  const w4 = 294;
+  const [w1, w2, w3, w4] = AK05_LAYOUT.metadataColWidthsPt;
   const t1RowH = 18;
   drawCellBox(page1, x0, y, w1, t1RowH * 2);
   drawCellBox(page1, x0 + w1, y, w2, t1RowH);
@@ -1353,7 +1351,7 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
   }
 
   // *Coret yang tidak perlu directly beneath Table 1
-  page1.drawText("*Coret yang tidak perlu", {
+  page1.drawText(AK05_LAYOUT.footnoteAsterisk, {
     x: x0,
     y: y - 10.5,
     size: 8,
@@ -1362,8 +1360,8 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
   });
   y -= 17;
 
-  // Table 2: Candidate Results Table (widths: 34 | 179 | 40 | 40 | 193 = 486) with #92D050 green header
-  const cw = [34, 179, 40, 40, 193] as const;
+  // Table 2: Candidate Results Table with #92D050 green header
+  const cw = AK05_LAYOUT.candidateColWidthsPt;
   const drawTable2Header = (p: PDFPage, yTop: number) => {
     drawCellBox(p, x0, yTop, cw[0], 30, greenFill);
     drawCellBox(p, x0 + cw[0], yTop, cw[1], 30, greenFill);
@@ -1454,9 +1452,9 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
 
   const drawTable3Block = (p: PDFPage, yTop: number) => {
     const noteRows: Array<[string, string, number]> = [
-      ["Aspek Negatif dan Positif dalam asesmen", payload.notesPositiveNegative || "-", 48],
-      ["Pencatatan penolakan hasil asesmen", payload.notesRejection || "-", 48],
-      ["Saran perbaikan (Asesor/personil terkait)", payload.notesImprovement || "-", 58],
+      [AK05_LAYOUT.noteRowLabels.positiveNegative, payload.notesPositiveNegative || "-", 48],
+      [AK05_LAYOUT.noteRowLabels.rejection, payload.notesRejection || "-", 48],
+      [AK05_LAYOUT.noteRowLabels.improvement, payload.notesImprovement || "-", 58],
     ];
     let curY = yTop;
     for (const [label, textVal, h] of noteRows) {
@@ -1476,17 +1474,19 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
   };
 
   y = drawTable2Header(page1, y);
-  const totalSlots = Math.max(12, payload.rows.length);
-  const fitsSinglePageCandidates = totalSlots <= 12;
-  const page1Slots = fitsSinglePageCandidates ? totalSlots : Math.min(24, totalSlots);
+  const totalSlots = Math.max(AK05_LAYOUT.minCandidateSlots, payload.rows.length);
+  const fitsSinglePageCandidates = totalSlots <= AK05_LAYOUT.minCandidateSlots;
+  const page1Slots = fitsSinglePageCandidates
+    ? totalSlots
+    : Math.min(AK05_LAYOUT.maxPage1SlotsWhenOverflow, totalSlots);
 
   for (let i = 0; i < page1Slots; i++) {
     y = drawCandidateRow(page1, y, i, payload.rows[i]);
   }
 
-  // Page 1 holds footnote + Table 3 directly below Table 2 when candidate count <= 12 (matching official Image 3)
+  // Page 1 holds footnote + Table 3 directly below Table 2 when candidate count <= 12
   if (fitsSinglePageCandidates) {
-    page1.drawText("**Tuliskan Kode dan Judul Unit Kompetensi yang dinyatakan BK bila mengases satu skema", {
+    page1.drawText(AK05_LAYOUT.footnoteKeterangan, {
       x: x0,
       y: y - 10.5,
       size: 8,
@@ -1498,7 +1498,7 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
   }
 
   // Page 2: Overflow candidate rows (if >12) + Table 3 (if overflow) + Table 4 (Catatan + Asesor Signature Block)
-  const page2 = pdfDoc.addPage([595.28, 841.89]);
+  const page2 = pdfDoc.addPage(AK05_LAYOUT.pageSizeA4Pt);
   drawBlankoHeaderFooter({
     page: page2,
     pageNum: 2,
@@ -1517,7 +1517,7 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
         y2 = drawCandidateRow(page2, y2, i, payload.rows[i]);
       }
     }
-    page2.drawText("**Tuliskan Kode dan Judul Unit Kompetensi yang dinyatakan BK bila mengases satu skema", {
+    page2.drawText(AK05_LAYOUT.footnoteKeterangan, {
       x: x0,
       y: y2 - 10.5,
       size: 8,
@@ -1529,10 +1529,8 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
     y2 -= 14;
   }
 
-  // Table 4: Catatan + Asesor Signature Block (widths: 256 | 78 | 152 = 486, matching Image 2)
-  const cLeft = 256;
-  const cMid = 78;
-  const cRight = 152;
+  // Table 4: Catatan + Asesor Signature Block
+  const [cLeft, cMid, cRight] = AK05_LAYOUT.assessorBlockColWidthsPt;
   const t4HeaderH = 20;
   const t4NameH = 20;
   const t4RegH = 20;

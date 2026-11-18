@@ -1,3 +1,8 @@
+import type {
+  SchemeBrandingConfig,
+  SchemeKelompokSpec,
+} from "@/repositories/schemes.repository";
+
 export interface FormMapping06 {
   soal: string;
   kunci: string;
@@ -8,6 +13,7 @@ export interface SimilarityThresholds {
   exact: number;
   near: number;
   partial: number;
+  unconfirmed?: boolean;
 }
 
 export interface NameJuryThresholds {
@@ -24,6 +30,10 @@ export interface SchemeManifest {
   decisionRule: "VATM" | string;
   prerequisites: string[];
   requirements: string[];
+  units?: Array<{ code: string; title: string }>;
+  kelompokPekerjaan?: SchemeKelompokSpec[];
+  docColumns?: string[];
+  branding?: SchemeBrandingConfig;
 }
 
 export interface ConfigMap {
@@ -31,6 +41,7 @@ export interface ConfigMap {
   "question_bank.count": number;
   "similarity.flag_thresholds": SimilarityThresholds;
   "name_jury.thresholds": NameJuryThresholds;
+  "identity.ktp_ocr_min_confidence": number;
   "app.name": string;
   "scheme.manifest": SchemeManifest;
 }

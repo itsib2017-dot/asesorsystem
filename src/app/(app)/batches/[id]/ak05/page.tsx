@@ -8,7 +8,7 @@ import { getAssessorProfile } from "@/repositories/auth.repository";
 import { getAk05ReportForBatch } from "@/repositories/assessment.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import { resolveAk05BatchRows } from "@/lib/ak05/rollup";
-import { extractSchemeMeta } from "@/lib/forms/assessee-forms";
+import { extractSchemeMeta, resolveSchemeBranding } from "@/lib/forms/assessee-forms";
 import { Ak05Preview } from "@/components/ak05/ak05-preview";
 
 export const metadata = {
@@ -57,6 +57,7 @@ export default async function Ak05Page({
 
       <Ak05Preview
         batchId={batchId}
+        branding={resolveSchemeBranding(scheme)}
         schemeTitle={schemeTitle}
         schemeNumber={schemeNumber}
         tukName={batch.tukName ?? "-"}

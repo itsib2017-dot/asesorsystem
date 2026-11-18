@@ -4,7 +4,11 @@ import type {
   Ia04bExportPayload,
   Ia06cExportPayload,
 } from "@/services/export";
-import type { SchemeRecord } from "@/repositories/schemes.repository";
+import type {
+  SchemeBrandingConfig,
+  SchemeKelompokSpec,
+  SchemeRecord,
+} from "@/repositories/schemes.repository";
 
 export const AK3U_OFFICIAL_UNITS = [
   "Merancang Strategi Pengendalian Risiko K3 di Tempat Kerja",
@@ -217,10 +221,81 @@ export const IA04B_KELOMPOK_PEKERJAAN: Ia04bKelompokSpec[] = [
   },
 ];
 
+export const DEFAULT_DOC_COLUMNS = [
+  "APL.01",
+  "APL.02",
+  "KTP",
+  "Ijazah",
+  "Pas Foto",
+  "CV",
+  "04A",
+  "06C",
+] as const;
+
 export function getFallbackAk3uUnits(): Array<{ code: string; title: string }> {
   return IA04B_KELOMPOK_PEKERJAAN.flatMap((kp) =>
     kp.units.map((u) => ({ code: u.code, title: u.title })),
   );
+}
+
+export function resolveSchemeUnitsList(
+  scheme?: SchemeRecord | null,
+): Array<{ code?: string; title: string }> {
+  const manifestUnits = scheme?.manifest?.units;
+  if (Array.isArray(manifestUnits) && manifestUnits.length > 0) {
+    return manifestUnits;
+  }
+  const kps = scheme?.manifest?.kelompokPekerjaan;
+  if (Array.isArray(kps) && kps.length > 0) {
+    return kps.flatMap((kp) => kp.units.map((u) => ({ code: u.code, title: u.title })));
+  }
+  return getFallbackAk3uUnits();
+}
+
+export function resolveSchemeKelompokPekerjaan(
+  scheme?: SchemeRecord | null,
+): SchemeKelompokSpec[] {
+  const configured = scheme?.manifest?.kelompokPekerjaan;
+  if (Array.isArray(configured) && configured.length > 0) {
+    return configured;
+  }
+  const units = scheme?.manifest?.units;
+  if (Array.isArray(units) && units.length > 0) {
+    return [
+      {
+        kpIndex: 1,
+        title: "Kelompok Pekerjaan 1",
+        units: units.map((u, idx) => ({ no: idx + 1, code: u.code, title: u.title })),
+        aspects: units.map((u, idx) => ({
+          kpIndex: 1,
+          no: idx + 1,
+          unitCode: u.code,
+          unitTitle: u.title,
+          lingkup: u.title,
+          question: `Bagaimana penerapan prosedur dan pengendalian pada unit ${u.title}?`,
+          kukRef: `${u.code} — ${u.title}`,
+        })),
+      },
+    ];
+  }
+  return IA04B_KELOMPOK_PEKERJAAN;
+}
+
+export function resolveSchemeDocColumns(scheme?: SchemeRecord | null): string[] {
+  const cols = scheme?.manifest?.docColumns;
+  if (Array.isArray(cols) && cols.length > 0) {
+    return cols;
+  }
+  return [...DEFAULT_DOC_COLUMNS];
+}
+
+export function resolveSchemeBranding(scheme?: SchemeRecord | null): SchemeBrandingConfig {
+  return {
+    leftLogoUrl: scheme?.manifest?.branding?.leftLogoUrl || "/templates/ak3u/bnsp-logo.png",
+    leftLogoAlt: scheme?.manifest?.branding?.leftLogoAlt || "BNSP",
+    rightLogoUrl: scheme?.manifest?.branding?.rightLogoUrl || "/templates/ak3u/lsp-logo.png",
+    rightLogoAlt: scheme?.manifest?.branding?.rightLogoAlt || "LSP Logo",
+  };
 }
 
 export function extractSchemeMeta(scheme?: SchemeRecord | null): {
@@ -265,6 +340,7 @@ export interface RawDecisionRow {
 }
 
 export function buildAk02Payload(params: {
+  scheme?: SchemeRecord | null;
   schemeTitle: string;
   schemeNumber: string;
   tukType?: string | null;
@@ -286,10 +362,15 @@ export function buildAk02Payload(params: {
     note: normalizeStr(d.assessorNote ?? d.assessor_note),
   }));
 
-  const unitDecisions = AK3U_OFFICIAL_UNITS.map((officialTitle) => {
-    const lowerOfficial = officialTitle.toLowerCase();
+  const targetUnits = params.scheme
+    ? resolveSchemeUnitsList(params.scheme)
+    : AK3U_OFFICIAL_UNITS.map((title) => ({ code: undefined, title }));
+
+  const unitDecisions = targetUnits.map((unitRef) => {
+    const lowerOfficial = unitRef.title.toLowerCase();
     const matched = decisionList.find(
       (d) =>
+        (unitRef.code && d.unitCode.toLowerCase() === unitRef.code.toLowerCase()) ||
         d.unitTitle.toLowerCase() === lowerOfficial ||
         d.unitTitle.toLowerCase().includes(lowerOfficial.slice(0, 20)),
     );
@@ -300,8 +381,8 @@ export function buildAk02Payload(params: {
     if (params.hasInterview) evidenceTypes.push("pihak_ketiga");
 
     return {
-      unitCode: matched?.unitCode,
-      unitTitle: officialTitle,
+      unitCode: matched?.unitCode || unitRef.code,
+      unitTitle: unitRef.title,
       evidenceTypes:
         matched || params.hasDit || params.hasWritten || params.hasInterview
           ? evidenceTypes
@@ -341,6 +422,7 @@ export function buildAk02Payload(params: {
 }
 
 export function buildIa04bPayload(params: {
+  scheme?: SchemeRecord | null;
   schemeTitle: string;
   schemeNumber: string;
   tukType?: string | null;
@@ -353,7 +435,7 @@ export function buildIa04bPayload(params: {
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
 }): Ia04bExportPayload {
-  const flatAspects = IA04B_KELOMPOK_PEKERJAAN.flatMap((kp) => kp.aspects);
+  const flatAspects = resolveSchemeKelompokPekerjaan(params.scheme).flatMap((kp) => kp.aspects);
   const matrixRaw = params.ditAnalysis
     ? getField<Array<{ focusPoint?: string; status?: string }>>(
         params.ditAnalysis,

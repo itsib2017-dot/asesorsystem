@@ -1,6 +1,7 @@
 import React from "react";
 import { formatAk05DateIndonesia, formatAk05SchemeTitle } from "@/lib/ak05/format";
 import { IA04B_KELOMPOK_PEKERJAAN } from "@/lib/forms/assessee-forms";
+import type { SchemeKelompokSpec } from "@/repositories/schemes.repository";
 import type { Ia04bExportPayload } from "@/services/export";
 import {
   BlankoA4Sheet,
@@ -17,9 +18,14 @@ export function Ia04bBlankoPreview(props: {
   hasActiveSignature: boolean;
   signatureUrl?: string;
   isNameConfirmed: boolean;
+  kelompokPekerjaan?: SchemeKelompokSpec[];
   payload: Ia04bExportPayload;
 }) {
   const { payload } = props;
+  const kelompokList =
+    props.kelompokPekerjaan && props.kelompokPekerjaan.length > 0
+      ? props.kelompokPekerjaan
+      : IA04B_KELOMPOK_PEKERJAAN;
   const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
   const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
   const isK = payload.overallRecommendation === "K";
@@ -93,9 +99,9 @@ export function Ia04bBlankoPreview(props: {
           </tbody>
         </table>
 
-        {/* Official Kelompok Pekerjaan 1..4 & Aspect Evaluation Tables (Tables 3..10) */}
-        {IA04B_KELOMPOK_PEKERJAAN.map((kp, kpIdx) => {
-          const kpOffset = IA04B_KELOMPOK_PEKERJAAN.slice(0, kpIdx).reduce(
+        {/* Official Kelompok Pekerjaan & Aspect Evaluation Tables */}
+        {kelompokList.map((kp, kpIdx) => {
+          const kpOffset = kelompokList.slice(0, kpIdx).reduce(
             (sum, prev) => sum + prev.aspects.length,
             0,
           );

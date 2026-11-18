@@ -13,7 +13,11 @@ import { NameJuryCard } from "@/components/identity/name-jury-card";
 import { DecisionToggle } from "@/components/ak05/decision-toggle";
 import { Ak02BlankoPreview } from "@/components/forms/ak02-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
-import { buildAk02Payload, type RawDecisionRow } from "@/lib/forms/assessee-forms";
+import {
+  buildAk02Payload,
+  resolveSchemeBranding,
+  type RawDecisionRow,
+} from "@/lib/forms/assessee-forms";
 import { resolveUnitsForScheme } from "@/lib/forms/sync-vatm-decisions";
 import { computeVatmUnitRollup } from "@/services/vatm-rollup";
 import { confirmCertificateNameAction, saveUnitDecisionAction } from "./actions";
@@ -80,6 +84,7 @@ export default async function AssesseeDetailPage({
   });
 
   const ak02Payload = buildAk02Payload({
+    scheme: common.scheme,
     schemeTitle: common.schemeTitle,
     schemeNumber: common.schemeNumber,
     tukType: common.batch.tukType,
@@ -208,6 +213,7 @@ export default async function AssesseeDetailPage({
           hasActiveSignature={common.hasActiveSignature}
           signatureUrl={common.signatureUrl}
           isNameConfirmed={common.isNameConfirmed}
+          branding={resolveSchemeBranding(common.scheme)}
           payload={ak02Payload}
         />
       </div>

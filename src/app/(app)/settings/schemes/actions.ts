@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { getUser } from "@/lib/auth/get-session";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
+import { IA04B_KELOMPOK_PEKERJAAN } from "@/lib/forms/assessee-forms";
 import { createOrUpdateScheme } from "@/repositories/schemes.repository";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -18,10 +19,29 @@ const schemeSchema = z.object({
   decisionRuleRef: z.string().min(1),
   prerequisites: z.string().default(""),
   registrationRequirements: z.string().default(""),
+  unitsText: z.string().default(""),
+  docColumnsText: z.string().default(""),
   soalSuffix: z.string().min(1).default("06A"),
   kunciSuffix: z.string().min(1).default("06B"),
   jawabanSuffix: z.string().min(1).default("06C"),
 });
+
+function parseUnitsLines(raw: string): Array<{ code: string; title: string }> {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, idx) => {
+      const sep = line.includes("|") ? "|" : line.includes("—") ? "—" : null;
+      if (sep) {
+        const [rawCode, ...rest] = line.split(sep);
+        const code = (rawCode ?? "").trim() || `UNIT.${idx + 1}`;
+        const title = rest.join(sep).trim() || code;
+        return { code, title };
+      }
+      return { code: `UNIT.${String(idx + 1).padStart(2, "0")}`, title: line };
+    });
+}
 
 export async function saveSchemeManifestAction(formData: FormData) {
   const user = await getUser();
@@ -48,6 +68,8 @@ export async function saveSchemeManifestAction(formData: FormData) {
     decisionRuleRef: formData.get("decisionRuleRef"),
     prerequisites: formData.get("prerequisites") ?? "",
     registrationRequirements: formData.get("registrationRequirements") ?? "",
+    unitsText: formData.get("unitsText") ?? "",
+    docColumnsText: formData.get("docColumnsText") ?? "",
     soalSuffix: formData.get("soalSuffix") || "06A",
     kunciSuffix: formData.get("kunciSuffix") || "06B",
     jawabanSuffix: formData.get("jawabanSuffix") || "06C",
@@ -61,10 +83,17 @@ export async function saveSchemeManifestAction(formData: FormData) {
   }
 
   const d = parsed.data;
+  const normalizedCode = d.code.trim().toUpperCase();
+  const parsedUnits = parseUnitsLines(d.unitsText);
+  const parsedDocColumns = d.docColumnsText
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   const res = await createOrUpdateScheme({
     userId: user.id,
     lspId: adminLspId,
-    code: d.code.trim().toUpperCase(),
+    code: normalizedCode,
     name: d.name.trim(),
     manifest: {
       questionCounts: {
@@ -82,7 +111,11 @@ export async function saveSchemeManifestAction(formData: FormData) {
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean),
-      units: [],
+      units: parsedUnits,
+      ...(normalizedCode === "AK3U" && parsedUnits.length === 13
+        ? { kelompokPekerjaan: IA04B_KELOMPOK_PEKERJAAN }
+        : {}),
+      ...(parsedDocColumns.length > 0 ? { docColumns: parsedDocColumns } : {}),
       formSuffixMapping: {
         soal: d.soalSuffix.trim(),
         kunci: d.kunciSuffix.trim(),

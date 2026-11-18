@@ -1,6 +1,8 @@
 import React from "react";
 import Link from "next/link";
 import { AlertTriangle, FileText } from "lucide-react";
+import { AK05_LAYOUT } from "@/lib/ak05/layout";
+import type { SchemeBrandingConfig } from "@/repositories/schemes.repository";
 
 export function BlankoA4Sheet({
   children,
@@ -20,19 +22,24 @@ export function BlankoA4Sheet({
   );
 }
 
-export function BlankoSheetHeader() {
+export function BlankoSheetHeader(props?: SchemeBrandingConfig) {
+  const leftUrl = props?.leftLogoUrl || "/templates/ak3u/bnsp-logo.png";
+  const leftAlt = props?.leftLogoAlt || "BNSP";
+  const rightUrl = props?.rightLogoUrl || "/templates/ak3u/lsp-logo.png";
+  const rightAlt = props?.rightLogoAlt || "LSP Logo";
+
   return (
     <div className="flex items-center justify-between gap-4 pb-3">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/templates/ak3u/bnsp-logo.png"
-        alt="BNSP"
+        src={leftUrl}
+        alt={leftAlt}
         className="h-10 w-auto object-contain"
       />
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/templates/ak3u/lsp-logo.png"
-        alt="LSP K3 Nasional"
+        src={rightUrl}
+        alt={rightAlt}
         className="h-11 w-auto object-contain"
       />
     </div>
@@ -41,7 +48,7 @@ export function BlankoSheetHeader() {
 
 export function BlankoSheetFooter({
   schemeTitle,
-  formCode = "FR.AK.05-2024",
+  formCode = AK05_LAYOUT.formCode,
   pageNumber,
 }: {
   schemeTitle: string;
@@ -50,11 +57,17 @@ export function BlankoSheetFooter({
 }) {
   return (
     <div className="pt-6 mt-auto">
-      <div className="border-t-2 border-[#4472C4] pt-2 flex items-center justify-between text-[10px] text-slate-800">
+      <div
+        className="border-t-2 pt-2 flex items-center justify-between text-[10px] text-slate-800"
+        style={{ borderColor: AK05_LAYOUT.colors.footerDividerHex }}
+      >
         <span className="tracking-tight">{schemeTitle}</span>
         <div className="flex items-center gap-2">
           <span>{formCode}</span>
-          <span className="inline-flex items-center justify-center w-5 h-5 bg-[#A8D08D] text-white font-bold text-[11px]">
+          <span
+            className="inline-flex items-center justify-center w-5 h-5 text-white font-bold text-[11px]"
+            style={{ backgroundColor: AK05_LAYOUT.colors.pageBadgeHex }}
+          >
             {pageNumber}
           </span>
         </div>

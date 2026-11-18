@@ -1,5 +1,6 @@
 import React from "react";
 import { formatAk05DateIndonesia, formatAk05SchemeTitle } from "@/lib/ak05/format";
+import type { SchemeBrandingConfig } from "@/repositories/schemes.repository";
 import type { Ak02ExportPayload, Ak02EvidenceType } from "@/services/export";
 import {
   BlankoA4Sheet,
@@ -27,6 +28,7 @@ export function Ak02BlankoPreview(props: {
   hasActiveSignature: boolean;
   signatureUrl?: string;
   isNameConfirmed: boolean;
+  branding?: SchemeBrandingConfig;
   payload: Ak02ExportPayload;
 }) {
   const { payload } = props;
@@ -47,7 +49,7 @@ export function Ak02BlankoPreview(props: {
       />
 
       <BlankoA4Sheet>
-        <BlankoSheetHeader />
+        <BlankoSheetHeader {...props.branding} />
         <BlankoTitleBar code="FR.AK.02." title="REKAMAN ASESMEN KOMPETENSI" />
 
         <BlankoMetadataTable

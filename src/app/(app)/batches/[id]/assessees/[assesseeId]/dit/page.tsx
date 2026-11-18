@@ -10,7 +10,11 @@ import {
 import { checkDitCompletenessGate } from "@/services/dit";
 import { Ia04bBlankoPreview } from "@/components/forms/ia04b-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
-import { buildIa04bPayload, type RawDecisionRow } from "@/lib/forms/assessee-forms";
+import {
+  buildIa04bPayload,
+  resolveSchemeKelompokPekerjaan,
+  type RawDecisionRow,
+} from "@/lib/forms/assessee-forms";
 import { DitAnalysisTrigger } from "./_components/dit-analysis-trigger";
 
 export const metadata = {
@@ -56,6 +60,7 @@ export default async function DitAnalysisPage({
   });
 
   const ia04bPayload = buildIa04bPayload({
+    scheme: common.scheme,
     schemeTitle: common.schemeTitle,
     schemeNumber: common.schemeNumber,
     tukType: common.batch.tukType,
@@ -163,6 +168,7 @@ export default async function DitAnalysisPage({
           hasActiveSignature={common.hasActiveSignature}
           signatureUrl={common.signatureUrl}
           isNameConfirmed={common.isNameConfirmed}
+          kelompokPekerjaan={resolveSchemeKelompokPekerjaan(common.scheme)}
           payload={ia04bPayload}
         />
 

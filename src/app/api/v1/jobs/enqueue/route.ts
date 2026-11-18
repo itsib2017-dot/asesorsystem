@@ -6,7 +6,6 @@ import { enqueueJob, type JobType } from "@/worker/queue";
 
 const enqueueSchema = z.object({
   type: z.enum([
-    "hello",
     "drive_scan",
     "extract_file",
     "ocr_ktp",
