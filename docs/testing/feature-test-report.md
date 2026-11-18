@@ -28,6 +28,7 @@ Executed via `supabase db query --remote --yes --file tests/rls-multi-lsp.test.s
 | `src/services/__tests__/export.test.ts` | 2 tests (D8 format lock, real PDF/DOCX/XLSX generation) | **PASS** | `npm test` |
 | `src/services/__tests__/dit.test.ts` | 2 tests (completeness gate 422, dynamic count 10 vs 13) | **PASS** | `npm test` |
 | `src/services/__tests__/no-hardcoded-values.test.ts` | 2 tests (zero literal 13 count, zero prohibited status) | **PASS** | `npm test` |
+| `src/lib/supabase/__tests__/middleware.test.ts` | 2 tests (fail-closed `/`, `/dashboard`, `/settings/provider` redirect when Supabase env missing; `/login` + `/api/health` pass) | **PASS** | `npm test` |
 
 ---
 
@@ -37,5 +38,18 @@ Executed via `supabase db query --remote --yes --file tests/rls-multi-lsp.test.s
 | :--- | :--- | :--- |
 | TypeScript Strict | `npm run typecheck` | **PASS (0 errors)** |
 | ESLint Zero Warnings | `npx eslint . --ext .ts,.tsx --max-warnings 0` | **PASS (0 warnings)** |
-| Production Build | `npm run build` | **PASS (21 routes compiled)** |
+| Vitest Unit Suite | `npm test` | **PASS (10 files, 26/26 tests)** |
+| Production Build | `npm run build` | **PASS (21 routes + `Proxy (Middleware)`)** |
 | Supabase Advisors | `supabase db advisors --remote` | **PASS (0 issues)** |
+
+---
+
+## 4. Live Vercel Deployment Verification (`https://assessor-zeta.vercel.app/`)
+
+Verified against live deployment after commit `91c4544` via headless browser (`BROWSER_HOST_FACTS` origin: `https://assessor-zeta.vercel.app`):
+- `GET /` -> `307` -> `/login?next=%2F&reason=config` (**HTTP 200**, zero console errors)
+- `GET /dashboard` -> `307` -> `/login?next=%2Fdashboard&reason=config` (**HTTP 200**, zero HTTP 500s)
+- `GET /settings/provider` -> `307` -> `/login?next=%2Fsettings%2Fprovider&reason=config` (**HTTP 200**, zero HTTP 500s)
+- `GET /login` -> **HTTP 200**, renders `AsesorKompetensi` login form + deployment env var reminder banner
+- `GET /api/health` -> **HTTP 200** (`{"ok":true,"data":{"status":"ok","service":"AsesorKompetensi","version":"v1.4",...}}`)
+- **Action Required for Authenticated Flows on Vercel:** Configure `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `BYOK_ENCRYPTION_SECRET` (plus optional `DATABASE_URL`) in Vercel Project Settings -> Environment Variables and redeploy.
