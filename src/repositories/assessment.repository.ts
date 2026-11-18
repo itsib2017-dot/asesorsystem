@@ -117,6 +117,27 @@ export async function getLatestWrittenGrading(userId: string, assesseeId: string
   return data ?? null;
 }
 
+export async function listWrittenGradingsForBatch(userId: string, batchId: string) {
+  if (hasDatabaseUrl()) {
+    return withRlsTransaction(userId, (tx) =>
+      tx
+        .select()
+        .from(writtenGradings)
+        .where(eq(writtenGradings.batchId, batchId))
+        .orderBy(desc(writtenGradings.createdAt)),
+    );
+  }
+
+  const supabase = await getSupabaseServerClient();
+  const { data } = await supabase
+    .from("written_gradings")
+    .select("*")
+    .eq("batch_id", batchId)
+    .order("created_at", { ascending: false });
+
+  return data ?? [];
+}
+
 export async function saveWrittenGrading(params: {
   userId: string;
   lspId: string;

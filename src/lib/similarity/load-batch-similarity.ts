@@ -1,25 +1,44 @@
 import { getConfig } from "@/lib/config/get-config";
 import { getBatchById } from "@/repositories/batches.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
-import { listSimilarityPairsByBatch } from "@/repositories/assessment.repository";
+import {
+  listSimilarityPairsByBatch,
+  listWrittenGradingsForBatch,
+} from "@/repositories/assessment.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import {
   DEFAULT_SIMILARITY_THRESHOLDS,
   renderCombinedWrittenReportMarkdown,
 } from "@/services/similarity";
 
+interface RawItemVerdict {
+  questionNo?: unknown;
+  verdict?: unknown;
+  explanation?: unknown;
+}
+
 export async function loadBatchSimilarityReportData(userId: string, batchId: string) {
   const batch = await getBatchById(userId, batchId);
   if (!batch) return null;
 
-  const [pairs, assessees, schemes, configuredThresholds] = await Promise.all([
+  const [pairs, assessees, schemes, configuredThresholds, gradings] = await Promise.all([
     listSimilarityPairsByBatch(userId, batchId),
     listAssesseesByBatch(userId, batchId),
     listSchemes(userId, batch.lspId),
     getConfig("similarity.flag_thresholds", { lspId: batch.lspId }),
+    listWrittenGradingsForBatch(userId, batchId),
   ]);
 
-  const thresholds = configuredThresholds ?? { ...DEFAULT_SIMILARITY_THRESHOLDS };
+  const rawTh = configuredThresholds as
+    | { exact?: number; near?: number; partial?: number; unconfirmed?: boolean }
+    | null;
+  const thresholds = {
+    exact: Number(rawTh?.exact ?? DEFAULT_SIMILARITY_THRESHOLDS.exact),
+    near: Number(rawTh?.near ?? DEFAULT_SIMILARITY_THRESHOLDS.near),
+    partial: Number(rawTh?.partial ?? DEFAULT_SIMILARITY_THRESHOLDS.partial),
+  };
+  const thresholdsUncalibrated = rawTh ? rawTh.unconfirmed !== false : true;
+
   const scheme = schemes.find((s) => s.id === batch.schemeId);
   const schemeName = scheme
     ? `${scheme.code} — ${scheme.name}`
@@ -49,21 +68,75 @@ export async function loadBatchSimilarityReportData(userId: string, batchId: str
     if (fp.assesseeBId) flaggedIds.add(fp.assesseeBId);
   }
 
-  const assesseeSummaries = assessees.map((a) => ({
-    assesseeId: a.id,
-    realName: a.displayName,
-    verdicts: [] as Array<{ questionNo: number; verdict: string; explanation: string }>,
-    ringkasanKesalahan: [] as number[],
-    plagiarismStatus: flaggedIds.has(a.id) ? ("Waspada" as const) : ("Bersih" as const),
-    plagiarismReasoning: flaggedIds.has(a.id)
-      ? "Terdapat pasangan jawaban di atas ambang batas — mohon tinjau manual."
-      : "Menunggu hasil pemeriksaan tertulis / bersih.",
-  }));
+  // gradings are ordered by createdAt DESC, so keep first row seen per assesseeId
+  const latestGradingByAssessee = new Map<string, Record<string, unknown>>();
+  for (const row of gradings as Array<Record<string, unknown>>) {
+    const aid = String(row.assesseeId ?? row.assessee_id ?? "");
+    if (aid && !latestGradingByAssessee.has(aid)) {
+      latestGradingByAssessee.set(aid, row);
+    }
+  }
+
+  const assesseeSummaries = assessees.map((a) => {
+    const grading = latestGradingByAssessee.get(a.id);
+    const rawVerdicts = grading?.itemVerdicts ?? grading?.item_verdicts;
+    const verdicts = Array.isArray(rawVerdicts)
+      ? (rawVerdicts as RawItemVerdict[]).map((v, i) => ({
+          questionNo: Number(v.questionNo ?? i + 1),
+          verdict: String(v.verdict ?? "-"),
+          explanation: String(v.explanation ?? "-"),
+        }))
+      : [];
+
+    const rawErr = grading?.errorSummary ?? grading?.error_summary;
+    const ringkasanKesalahan = Array.isArray(rawErr)
+      ? rawErr.map((n) => Number(n)).filter((n) => Number.isFinite(n))
+      : [];
+
+    const rawPlag = (grading?.plagiarismReport ?? grading?.plagiarism_report) as
+      | { status?: string; reasoning?: string }
+      | undefined;
+
+    const isFlagged = flaggedIds.has(a.id);
+    let plagiarismStatus: "Bersih" | "Waspada" | "Belum diperiksa";
+    let plagiarismReasoning: string;
+
+    if (isFlagged || rawPlag?.status === "Waspada") {
+      plagiarismStatus = "Waspada";
+      plagiarismReasoning = isFlagged
+        ? "Terdapat pasangan jawaban di atas ambang batas kemiripan — mohon tinjau manual."
+        : rawPlag?.reasoning?.trim() || "Terindikasi kemiripan pada koreksi tertulis — mohon tinjau manual.";
+    } else if (grading && rawPlag?.status === "Bersih") {
+      plagiarismStatus = "Bersih";
+      plagiarismReasoning =
+        rawPlag.reasoning?.trim() ||
+        "Koreksi tertulis selesai tanpa indikasi kemiripan di atas ambang batas.";
+    } else if (grading && flaggedPairs.length === 0 && pairs.length > 0) {
+      // Wait: pairs only stores flagged pairs, so absence of rows without rawPlag="Bersih" remains neutral
+      plagiarismStatus = "Belum diperiksa";
+      plagiarismReasoning =
+        "Koreksi tertulis tersedia, namun analisis kemiripan belum menghasilkan status terverifikasi.";
+    } else {
+      plagiarismStatus = "Belum diperiksa";
+      plagiarismReasoning =
+        "Pemeriksaan kemiripan atau koreksi tertulis belum menghasilkan kesimpulan untuk asesi ini.";
+    }
+
+    return {
+      assesseeId: a.id,
+      realName: a.displayName,
+      verdicts,
+      ringkasanKesalahan,
+      plagiarismStatus,
+      plagiarismReasoning,
+    };
+  });
 
   const combinedMd = renderCombinedWrittenReportMarkdown({
     batchName: batch.name,
     schemeName,
     thresholds,
+    thresholdsUncalibrated,
     assessees: assesseeSummaries,
     flaggedPairs,
   });
@@ -72,6 +145,7 @@ export async function loadBatchSimilarityReportData(userId: string, batchId: str
     batch,
     schemeName,
     thresholds,
+    thresholdsUncalibrated,
     pairs,
     flaggedPairs,
     assesseeSummaries,

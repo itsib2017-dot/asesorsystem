@@ -1,7 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getUser } from "@/lib/auth/get-session";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
   parseMasterKey06bFile,
   persistBatchMasterKey06b,
@@ -11,6 +14,11 @@ import {
   listDriveFilesForBatch,
 } from "@/repositories/batches.repository";
 import { enqueueJob } from "@/worker/queue";
+
+const WrittenGradingInputSchema = z.object({
+  batchId: z.string().trim().min(1, "Parameter batchId wajib diisi."),
+  assesseeId: z.string().trim().min(1, "Parameter assesseeId wajib diisi."),
+});
 
 export async function runWrittenGradingWithKeyAction(formData: FormData): Promise<{
   ok: boolean;
@@ -23,20 +31,37 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
     return { ok: false, error: "Unauthorized: Silakan masuk terlebih dahulu." };
   }
 
-  const batchId = String(formData.get("batchId") ?? "").trim();
-  const assesseeId = String(formData.get("assesseeId") ?? "").trim();
+  const parsedInput = WrittenGradingInputSchema.safeParse({
+    batchId: String(formData.get("batchId") ?? ""),
+    assesseeId: String(formData.get("assesseeId") ?? ""),
+  });
+  if (!parsedInput.success) {
+    return {
+      ok: false,
+      error: parsedInput.error.issues[0]?.message ?? "Parameter batchId dan assesseeId wajib diisi.",
+    };
+  }
+  const { batchId, assesseeId } = parsedInput.data;
+
   const inputMasterKeyText = String(formData.get("masterKeyText") ?? "").trim();
   const inputStudentAnswerText = String(formData.get("studentAnswerText") ?? "").trim();
   const uploadedFile = formData.get("masterKeyFile");
-
-  if (!batchId || !assesseeId) {
-    return { ok: false, error: "Parameter batchId dan assesseeId wajib diisi." };
-  }
+  const rawPassword = formData.get("masterKeyPassword");
+  const runtimePassword =
+    typeof rawPassword === "string" && rawPassword.length > 0 ? rawPassword : undefined;
 
   const batch = await getBatchById(user.id, batchId);
   if (!batch) {
     return { ok: false, error: "Batch tidak ditemukan atau akses ditolak." };
   }
+
+  const files = await listDriveFilesForBatch(user.id, batch.id);
+  const existing06c = files.find(
+    (f) => f.assesseeId === assesseeId && f.docType.toLowerCase() === "06c",
+  );
+  const stored06cText = (existing06c?.extractedText ?? "").trim();
+  const manualAnswerEdited =
+    Boolean(inputStudentAnswerText) && inputStudentAnswerText !== stored06cText;
 
   let resolvedMasterKeyText = inputMasterKeyText;
   const hasUploadedFile = Boolean(
@@ -47,7 +72,7 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
   );
 
   if (hasUploadedFile) {
-    const parsed = await parseMasterKey06bFile(uploadedFile as File);
+    const parsed = await parseMasterKey06bFile(uploadedFile as File, runtimePassword);
     if (!parsed.ok) {
       return { ok: false, error: parsed.error };
     }
@@ -62,9 +87,9 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
       extractionMethod: parsed.extractionMethod,
       assesseeId,
       hasUploadedFile: true,
+      usedRuntimePassword: Boolean(runtimePassword),
     });
   } else if (resolvedMasterKeyText) {
-    const files = await listDriveFilesForBatch(user.id, batch.id);
     const has06b = files.some((f) => f.docType.toLowerCase() === "06b");
     if (!has06b) {
       await persistBatchMasterKey06b({
@@ -93,6 +118,32 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
 
   if (!jobRes.ok) {
     return { ok: false, error: jobRes.error };
+  }
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        lsp_id: batch.lspId,
+        actor_id: user.id,
+        action: "written.grading.run",
+        resource: "assessees",
+        resource_id: assesseeId,
+        after_summary: {
+          batchId,
+          jobId: jobRes.job.id,
+          jobStatus: jobRes.job.status,
+          hasUploadedKeyFile: hasUploadedFile,
+          usedRuntimePassword: Boolean(runtimePassword),
+          manualAnswerEdited,
+          stored06cChars: stored06cText.length,
+          submittedAnswerChars: inputStudentAnswerText.length,
+        },
+      },
+      supabase,
+    );
+  } catch (err) {
+    console.warn("[WrittenGradingAction] audit log failed:", err instanceof Error ? err.message : String(err));
   }
 
   if (jobRes.job.status === "failed") {

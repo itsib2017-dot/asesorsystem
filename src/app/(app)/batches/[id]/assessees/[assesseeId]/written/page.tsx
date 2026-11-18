@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { KeyRound, ShieldAlert, CheckCircle2 } from "lucide-react";
+import { KeyRound, ShieldAlert, CheckCircle2, Clock } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { getLatestWrittenGrading } from "@/repositories/assessment.repository";
 import { listDriveFilesForBatch } from "@/repositories/batches.repository";
@@ -129,8 +129,10 @@ export default async function WrittenGradingPage({
           <div className="flex items-center gap-2">
             {plagiarism?.status === "Waspada" ? (
               <ShieldAlert className="w-5 h-5 text-amber-600" />
-            ) : (
+            ) : plagiarism?.status === "Bersih" ? (
               <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+            ) : (
+              <Clock className="w-5 h-5 text-slate-400" />
             )}
             <span className="text-base font-bold text-slate-900">
               {plagiarism?.status ?? "Belum dianalisis"}

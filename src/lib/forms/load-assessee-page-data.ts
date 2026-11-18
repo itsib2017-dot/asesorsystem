@@ -35,7 +35,7 @@ export async function loadAssesseeCommonFormMeta(params: {
     "Asesor";
   const assessorRegNo =
     (profile?.regNoMet as string) || (profile?.reg_no_met as string) || "-";
-  const assessmentDate = batch.assessmentDate ?? new Date().toISOString().slice(0, 10);
+  const assessmentDate = batch.assessmentDate ?? "";
 
   return {
     batch,

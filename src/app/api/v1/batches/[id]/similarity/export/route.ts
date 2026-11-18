@@ -33,6 +33,7 @@ export async function GET(
     batchName: data.batch.name,
     schemeName: data.schemeName,
     thresholds: data.thresholds,
+    thresholdsUncalibrated: data.thresholdsUncalibrated,
     assessees: data.assesseeSummaries,
     flaggedPairs: data.flaggedPairs,
   });

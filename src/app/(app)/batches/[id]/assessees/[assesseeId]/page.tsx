@@ -136,23 +136,28 @@ export default async function AssesseeDetailPage({
       {/* Name Jury & KTP Verification */}
       <NameJuryCard
         assesseeId={assessee.id}
-        ktpOcrName={assessee.ktpNameOcr || assessee.displayName}
+        ktpOcrName={assessee.ktpNameOcr ?? ""}
         apl01Name={assessee.apl01Name || assessee.displayName}
         suratTugasName={assessee.suratTugasName || "-"}
         ijazahName={assessee.ijazahName || "-"}
-        ocrConfidence={Number(jury?.ocr_confidence ?? jury?.ocrConfidence ?? 0.92)}
+        ocrConfidence={
+          jury && (jury.ocr_confidence ?? jury.ocrConfidence) != null
+            ? Number(jury.ocr_confidence ?? jury.ocrConfidence)
+            : null
+        }
         verdict={
-          (jury?.verdict as "match" | "mismatch_resolved" | "needs_human") ?? "match"
+          (jury?.verdict as "match" | "mismatch_resolved" | "needs_human" | undefined) ??
+          "not_run"
         }
         proposedName={
           (jury?.proposed_certificate_name as string | null) ??
           (jury?.proposedCertificateName as string | null) ??
           assessee.ktpNameOcr ??
-          assessee.displayName
+          null
         }
         reasoning={
           (jury?.reasoning as string) ||
-          "Membandingkan sumber KTP OCR lokal dengan APL.01, Surat Tugas, dan Ijazah — menunggu konfirmasi asesor."
+          "Juri Nama / OCR KTP belum dijalankan. Periksa dokumen KTP asli dan konfirmasi nama sertifikat secara manual atau jalankan OCR."
         }
         confirmedName={assessee.certificateNameConfirmed}
         onConfirmAction={confirmCertificateNameAction}

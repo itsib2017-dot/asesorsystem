@@ -1,7 +1,7 @@
 export const DEFAULT_SIMILARITY_THRESHOLDS = {
-  exact: 0.9,
-  near: 0.75,
-  partial: 0.5,
+  exact: 0.85,
+  near: 0.65,
+  partial: 0.45,
 } as const;
 
 export interface SimilarityMetrics {
@@ -115,12 +115,13 @@ export function renderCombinedWrittenReportMarkdown(params: {
   batchName: string;
   schemeName: string;
   thresholds?: { exact: number; near: number; partial: number };
+  thresholdsUncalibrated?: boolean;
   assessees: Array<{
     assesseeId: string;
     realName: string;
     verdicts: Array<{ questionNo: number; verdict: string; explanation: string }>;
     ringkasanKesalahan: number[];
-    plagiarismStatus: "Bersih" | "Waspada";
+    plagiarismStatus: "Bersih" | "Waspada" | "Belum diperiksa";
     plagiarismReasoning: string;
   }>;
   flaggedPairs: Array<{
@@ -135,7 +136,10 @@ export function renderCombinedWrittenReportMarkdown(params: {
   }>;
 }): string {
   const th = params.thresholds ?? DEFAULT_SIMILARITY_THRESHOLDS;
-  const thresholdLabel = `Exact >= ${th.exact.toFixed(2)} (${Math.round(th.exact * 100)}%) | Near (Hampir Sama) >= ${th.near.toFixed(2)} (${Math.round(th.near * 100)}%) | Parsial >= ${th.partial.toFixed(2)} (${Math.round(th.partial * 100)}%)`;
+  const calibrationNote = params.thresholdsUncalibrated
+    ? " [Sementara / Belum Dikalibrasi — D19 / OQ-08]"
+    : "";
+  const thresholdLabel = `Exact >= ${th.exact.toFixed(2)} (${Math.round(th.exact * 100)}%) | Near (Hampir Sama) >= ${th.near.toFixed(2)} (${Math.round(th.near * 100)}%) | Parsial >= ${th.partial.toFixed(2)} (${Math.round(th.partial * 100)}%)${calibrationNote}`;
 
   const lines: string[] = [
     `# Laporan Gabungan Penilaian Tertulis & Kemiripan`,
@@ -151,13 +155,17 @@ export function renderCombinedWrittenReportMarkdown(params: {
 
   for (const a of params.assessees) {
     lines.push(`### ${a.realName} (ID: ${a.assesseeId})`);
-    lines.push(`- **Ringkasan Kesalahan (No. Soal):** ${a.ringkasanKesalahan.length > 0 ? a.ringkasanKesalahan.join(", ") : "Tidak ada"}`);
+    lines.push(`- **Ringkasan Kesalahan (No. Soal):** ${a.ringkasanKesalahan.length > 0 ? a.ringkasanKesalahan.join(", ") : a.verdicts.length > 0 ? "Tidak ada" : "Belum dinilai"}`);
     lines.push(`- **Status Analisis Kemiripan:** **${a.plagiarismStatus}** — ${a.plagiarismReasoning}`);
     lines.push(``);
-    lines.push(`| No | Putusan | Penjelasan (Bahasa Indonesia) |`);
-    lines.push(`|---|---|---|`);
-    for (const v of a.verdicts) {
-      lines.push(`| ${v.questionNo} | ${v.verdict} | ${v.explanation.replace(/\|/g, "\\|")} |`);
+    if (a.verdicts.length === 0) {
+      lines.push(`*Belum ada rincian putusan per soal (koreksi tertulis belum dijalankan).*`);
+    } else {
+      lines.push(`| No | Putusan | Penjelasan (Bahasa Indonesia) |`);
+      lines.push(`|---|---|---|`);
+      for (const v of a.verdicts) {
+        lines.push(`| ${v.questionNo} | ${v.verdict} | ${v.explanation.replace(/\|/g, "\\|")} |`);
+      }
     }
     lines.push(``);
   }

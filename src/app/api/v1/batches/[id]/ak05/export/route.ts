@@ -13,15 +13,8 @@ import { getAssessorProfile } from "@/repositories/auth.repository";
 import { getAk05ReportForBatch } from "@/repositories/assessment.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import { resolveAk05BatchRows } from "@/lib/ak05/rollup";
+import { extractSchemeMeta } from "@/lib/forms/assessee-forms";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-
-function extractSchemeNumber(name?: string, fallback?: string): string {
-  if (name) {
-    const match = name.match(/\((SKM\/[^)]+)\)/i);
-    if (match?.[1]) return match[1].trim();
-  }
-  return fallback || "-";
-}
 
 export async function GET(
   req: Request,
@@ -92,14 +85,8 @@ export async function GET(
     }
   }
 
-  const scheme = schemes.find((s) => s.id === batch.schemeId);
-  const schemeTitle = scheme
-    ? scheme.name.replace(/\s*\(SKM\/[^)]+\)/i, "").trim()
-    : "Skema Tersertifikasi";
-  const schemeNumber = extractSchemeNumber(
-    scheme?.name,
-    scheme?.manifest?.decisionRuleRef,
-  );
+  const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
+  const { schemeTitle, schemeNumber } = extractSchemeMeta(scheme);
 
   const rollupRows = await resolveAk05BatchRows(user.id, batchId, assessees);
 
@@ -111,7 +98,7 @@ export async function GET(
     tukType: (batch.tukType as "sewaktu" | "tempat_kerja" | "mandiri") ?? "sewaktu",
     assessorName: (profile?.fullName as string) || (profile?.full_name as string) || user.email || "Asesor",
     assessorRegNo: (profile?.regNoMet as string) || (profile?.reg_no_met as string) || "-",
-    assessmentDate: batch.assessmentDate ?? new Date().toISOString().slice(0, 10),
+    assessmentDate: batch.assessmentDate ?? "",
     rows: rollupRows.map((r) => ({
       no: r.no,
       assesseeName: r.assesseeName,

@@ -6,6 +6,7 @@ import {
   BlankoA4Sheet,
   BlankoDocxExportBar,
   BlankoMetadataTable,
+  BlankoSheetFooter,
   BlankoSignatureBlock,
   BlankoTitleBar,
 } from "@/components/forms/blanko-chrome";
@@ -204,6 +205,12 @@ export function Ia04bBlankoPreview(props: {
               </td>
             </tr>
           }
+        />
+
+        <BlankoSheetFooter
+          schemeTitle={displaySchemeTitle}
+          formCode="FR.IA.04B-2024"
+          pageNumber={1}
         />
       </BlankoA4Sheet>
     </div>

@@ -1620,11 +1620,14 @@ export async function generateSimilarityReportDocx(params: {
   batchName: string;
   schemeName: string;
   thresholds: { exact: number; near: number; partial: number };
+  thresholdsUncalibrated?: boolean;
   assessees: Array<{
     assesseeId: string;
     realName: string;
-    plagiarismStatus: "Bersih" | "Waspada";
+    plagiarismStatus: "Bersih" | "Waspada" | "Belum diperiksa";
     plagiarismReasoning: string;
+    verdicts?: Array<{ questionNo: number; verdict: string; explanation: string }>;
+    ringkasanKesalahan?: number[];
   }>;
   flaggedPairs: Array<{
     assesseeAName: string;
@@ -1634,13 +1637,22 @@ export async function generateSimilarityReportDocx(params: {
     verdict: string;
   }>;
 }): Promise<Buffer> {
-  const thresholdSummary = `Exact >= ${params.thresholds.exact.toFixed(2)} | Near >= ${params.thresholds.near.toFixed(2)} | Parsial >= ${params.thresholds.partial.toFixed(2)}`;
+  const thresholdSummary =
+    `Exact >= ${params.thresholds.exact.toFixed(2)} | Near >= ${params.thresholds.near.toFixed(2)} | Parsial >= ${params.thresholds.partial.toFixed(2)}` +
+    (params.thresholdsUncalibrated ? " (Sementara / Belum Dikalibrasi — D19 / OQ-08)" : "");
 
   const assesseeTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
       new TableRow({
-        children: ["No.", "Nama Asesi", "Status Kemiripan", "Catatan Analisis"].map(
+        children: [
+          "No.",
+          "Nama Asesi",
+          "Ringkasan Kesalahan (No. Soal)",
+          "Putusan Per Soal",
+          "Status Kemiripan",
+          "Catatan Analisis",
+        ].map(
           (header) =>
             new TableCell({
               children: [
@@ -1652,22 +1664,35 @@ export async function generateSimilarityReportDocx(params: {
         ),
       }),
       ...(params.assessees.length > 0
-        ? params.assessees.map(
-            (a, idx) =>
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph(String(idx + 1))] }),
-                  new TableCell({ children: [new Paragraph(a.realName)] }),
-                  new TableCell({ children: [new Paragraph(a.plagiarismStatus)] }),
-                  new TableCell({ children: [new Paragraph(a.plagiarismReasoning)] }),
-                ],
-              }),
-          )
+        ? params.assessees.map((a, idx) => {
+            const errText =
+              a.ringkasanKesalahan && a.ringkasanKesalahan.length > 0
+                ? a.ringkasanKesalahan.join(", ")
+                : a.verdicts && a.verdicts.length > 0
+                  ? "Tidak ada"
+                  : "Belum dinilai";
+            const verdictText =
+              a.verdicts && a.verdicts.length > 0
+                ? a.verdicts.map((v) => `#${v.questionNo}: ${v.verdict}`).join("; ")
+                : "Belum dinilai";
+            return new TableRow({
+              children: [
+                new TableCell({ children: [new Paragraph(String(idx + 1))] }),
+                new TableCell({ children: [new Paragraph(a.realName)] }),
+                new TableCell({ children: [new Paragraph(errText)] }),
+                new TableCell({ children: [new Paragraph(verdictText)] }),
+                new TableCell({ children: [new Paragraph(a.plagiarismStatus)] }),
+                new TableCell({ children: [new Paragraph(a.plagiarismReasoning)] }),
+              ],
+            });
+          })
         : [
             new TableRow({
               children: [
                 new TableCell({ children: [new Paragraph("-")] }),
                 new TableCell({ children: [new Paragraph("Belum ada asesi terdata")] }),
+                new TableCell({ children: [new Paragraph("-")] }),
+                new TableCell({ children: [new Paragraph("-")] }),
                 new TableCell({ children: [new Paragraph("-")] }),
                 new TableCell({ children: [new Paragraph("-")] }),
               ],

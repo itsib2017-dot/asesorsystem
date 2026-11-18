@@ -1,29 +1,82 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { writeAuditLog } from "@/lib/audit/write-audit-log";
+import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { getUser } from "@/lib/auth/get-session";
-import { updateDriveFileTriage } from "@/repositories/batches.repository";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getAssesseeById } from "@/repositories/assessees.repository";
+import {
+  getBatchById,
+  updateDriveFileTriage,
+} from "@/repositories/batches.repository";
+
+const triageSchema = z.object({
+  batchId: z.string().uuid(),
+  fileId: z.string().uuid(),
+  assesseeId: z.string().uuid().nullable(),
+  docType: z.string().trim().min(1).max(64).optional(),
+  triageStatus: z.enum(["assigned", "not_needed", "unmatched"]),
+});
 
 export async function assignDriveFileAction(formData: FormData) {
   const user = await getUser();
   if (!user) return;
 
-  const batchId = String(formData.get("batchId") ?? "");
-  const fileId = String(formData.get("fileId") ?? "");
-  const assesseeId = String(formData.get("assesseeId") ?? "") || null;
-  const docType = String(formData.get("docType") ?? "");
-  const status = String(formData.get("triageStatus") ?? "assigned") as
-    | "assigned"
-    | "not_needed"
-    | "unmatched";
+  const rawAssesseeId = String(formData.get("assesseeId") ?? "").trim();
+  const rawDocType = String(formData.get("docType") ?? "").trim();
+  const parsed = triageSchema.safeParse({
+    batchId: String(formData.get("batchId") ?? "").trim(),
+    fileId: String(formData.get("fileId") ?? "").trim(),
+    assesseeId: rawAssesseeId || null,
+    docType: rawDocType || undefined,
+    triageStatus: String(formData.get("triageStatus") ?? "assigned").trim(),
+  });
+
+  if (!parsed.success) return;
+
+  const { batchId, fileId, assesseeId, docType, triageStatus } = parsed.data;
+  const [batch, authz] = await Promise.all([
+    getBatchById(user.id, batchId),
+    resolveAuthorizedLsp(user.id, ["lsp_admin", "tuk_admin", "assessor"]),
+  ]);
+  if (!batch || !authz.allowed) return;
+
+  if (assesseeId) {
+    const assessee = await getAssesseeById(user.id, assesseeId);
+    if (!assessee || assessee.batchId !== batch.id) return;
+  }
 
   await updateDriveFileTriage({
     userId: user.id,
     fileId,
     assesseeId,
     ...(docType ? { docType } : {}),
-    triageStatus: status,
+    triageStatus,
   });
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        lsp_id: batch.lspId,
+        actor_id: user.id,
+        action: "triage.file.update",
+        resource: "batches",
+        resource_id: batchId,
+        after_summary: {
+          fileId,
+          assesseeId,
+          docType: docType ?? null,
+          triageStatus,
+        },
+      },
+      supabase,
+    );
+  } catch {
+    // non-fatal audit error
+  }
 
   revalidatePath(`/batches/${batchId}/triage`);
   revalidatePath(`/batches/${batchId}`);

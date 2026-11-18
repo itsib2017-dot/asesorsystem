@@ -1,7 +1,8 @@
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { decryptAgileOoxmlBuffer } from "@/lib/written/ooxml-decrypt";
 import { upsertDriveFilesForBatch } from "@/repositories/batches.repository";
-import { extractTextFromDocx } from "@/services/extract";
+import { extractTextFromDocx, isOleEncryptedBuffer } from "@/services/extract";
 
 export type MasterKeyParseResult =
   | {
@@ -17,6 +18,7 @@ const MAX_KEY_BYTES = 10 * 1024 * 1024;
 
 export async function parseMasterKey06bFile(
   fileObj: File,
+  runtimePassword?: string,
 ): Promise<MasterKeyParseResult> {
   if (fileObj.size <= 0) {
     return { ok: false, error: "Berkas kunci 06B kosong." };
@@ -34,7 +36,7 @@ export async function parseMasterKey06bFile(
   }
 
   try {
-    const buffer = Buffer.from(await fileObj.arrayBuffer());
+    let buffer: Buffer = Buffer.from(await fileObj.arrayBuffer());
     if (fileNameLower.endsWith(".txt")) {
       const text = buffer.toString("utf8").trim();
       if (!text) {
@@ -47,6 +49,10 @@ export async function parseMasterKey06bFile(
         text,
         extractionMethod: "raw_text",
       };
+    }
+
+    if (isOleEncryptedBuffer(buffer)) {
+      buffer = decryptAgileOoxmlBuffer(buffer, runtimePassword ?? "");
     }
 
     const parsed = await extractTextFromDocx(buffer);
@@ -80,6 +86,8 @@ export async function persistBatchMasterKey06b(params: {
   extractionMethod: "raw_text" | "ooxml_docx";
   assesseeId?: string;
   hasUploadedFile: boolean;
+  auditAction?: string;
+  usedRuntimePassword?: boolean;
 }): Promise<void> {
   await upsertDriveFilesForBatch({
     userId: params.userId,
@@ -107,19 +115,20 @@ export async function persistBatchMasterKey06b(params: {
       {
         lsp_id: params.lspId,
         actor_id: params.userId,
-        action: "written.key_06b.upload",
+        action: params.auditAction ?? "written.key_06b.upload",
         resource: "batches",
         resource_id: params.batchId,
         after_summary: {
           fileName: params.fileName,
           hasUploadedFile: params.hasUploadedFile,
           masterKeyChars: params.text.length,
+          usedRuntimePassword: Boolean(params.usedRuntimePassword),
           ...(params.assesseeId ? { assesseeId: params.assesseeId } : {}),
         },
       },
       supabase,
     );
-  } catch {
-    // non-fatal audit log error
+  } catch (err) {
+    console.warn("[MasterKey06b] audit log failed:", err instanceof Error ? err.message : String(err));
   }
 }

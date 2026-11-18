@@ -8,19 +8,12 @@ import { getAssessorProfile } from "@/repositories/auth.repository";
 import { getAk05ReportForBatch } from "@/repositories/assessment.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import { resolveAk05BatchRows } from "@/lib/ak05/rollup";
+import { extractSchemeMeta } from "@/lib/forms/assessee-forms";
 import { Ak05Preview } from "@/components/ak05/ak05-preview";
 
 export const metadata = {
   title: "Laporan FR.AK.05 — AsesorKompetensi",
 };
-
-function extractSchemeNumber(name?: string, fallback?: string): string {
-  if (name) {
-    const match = name.match(/\((SKM\/[^)]+)\)/i);
-    if (match?.[1]) return match[1].trim();
-  }
-  return fallback || "-";
-}
 
 export default async function Ak05Page({
   params,
@@ -42,14 +35,8 @@ export default async function Ak05Page({
     listSchemes(user.id, batch.lspId),
   ]);
 
-  const scheme = schemes.find((s) => s.id === batch.schemeId);
-  const schemeTitle = scheme
-    ? scheme.name.replace(/\s*\(SKM\/[^)]+\)/i, "").trim()
-    : "Skema Tersertifikasi (lihat Pengaturan Skema)";
-  const schemeNumber = extractSchemeNumber(
-    scheme?.name,
-    scheme?.manifest?.decisionRuleRef,
-  );
+  const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
+  const { schemeTitle, schemeNumber } = extractSchemeMeta(scheme);
 
   const unconfirmedCount = assessees.filter(
     (a) => !a.certificateNameConfirmed,
@@ -78,7 +65,7 @@ export default async function Ak05Page({
           (profile?.fullName as string) || (profile?.full_name as string) || user.email || "Asesor"
         }
         assessorRegNo={(profile?.regNoMet as string) || (profile?.reg_no_met as string) || "-"}
-        assessmentDate={batch.assessmentDate ?? new Date().toISOString().slice(0, 10)}
+        assessmentDate={batch.assessmentDate ?? ""}
         hasActiveSignature={Boolean(signature)}
         signatureUrl={signature?.signedUrl}
         unconfirmedNamesCount={unconfirmedCount}

@@ -19,8 +19,9 @@ const INDONESIAN_MONTHS = [
  */
 export function formatAk05DateIndonesia(raw: string): string {
   const trimmed = raw.trim();
+  if (!trimmed) return "Belum ditentukan";
   const m = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/);
-  if (!m) return trimmed || "-";
+  if (!m) return trimmed;
   const year = m[1];
   const monthIdx = Number(m[2]) - 1;
   const day = Number(m[3]);

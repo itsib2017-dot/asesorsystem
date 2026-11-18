@@ -9,7 +9,6 @@ import {
   FileCheck,
   GitMerge,
   Layers,
-  RefreshCw,
   Users,
 } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
@@ -21,6 +20,7 @@ import { getLatestJobForBatch } from "@/repositories/jobs.repository";
 import { enqueueJob } from "@/worker/queue";
 import { CompletenessMatrix, type CompletenessRow } from "@/components/batch/completeness-matrix";
 import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
+import { RescanDriveButton } from "./_components/rescan-drive-button";
 
 export const metadata = {
   title: "Detail Batch — AsesorKompetensi",
@@ -76,8 +76,11 @@ export default async function BatchDetailPage({
         },
         supabase,
       );
-    } catch {
-      // ignore non-critical audit error
+    } catch (err) {
+      console.warn(
+        "[RescanBatchDrive] audit log failed:",
+        err instanceof Error ? err.message : String(err),
+      );
     }
     revalidatePath(`/batches/${batchId}`);
     revalidatePath(`/batches/${batchId}/triage`);
@@ -126,13 +129,7 @@ export default async function BatchDetailPage({
         <div className="flex flex-wrap items-center gap-2">
           {batch.driveFolderUrl && (
             <form action={rescanBatchDriveAction}>
-              <button
-                type="submit"
-                className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-800 inline-flex items-center gap-1.5 cursor-pointer"
-              >
-                <RefreshCw className="w-3.5 h-3.5 text-teal-700" />
-                Pindai Ulang Drive
-              </button>
+              <RescanDriveButton />
             </form>
           )}
           {latestJob && (

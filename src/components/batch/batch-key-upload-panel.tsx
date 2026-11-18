@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, Upload } from "lucide-react";
+import { KeyRound, Lock, Upload } from "lucide-react";
 import { uploadBatchMasterKey06bAction } from "@/app/(app)/batches/[id]/actions";
 
 interface BatchKeyUploadPanelProps {
@@ -18,6 +18,7 @@ export function BatchKeyUploadPanel({
 }: BatchKeyUploadPanelProps) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
+  const [password, setPassword] = useState("");
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState<{
     type: "success" | "error";
@@ -40,6 +41,9 @@ export function BatchKeyUploadPanel({
       const fd = new FormData();
       fd.append("batchId", batchId);
       fd.append("masterKeyFile", file);
+      if (password.length > 0) {
+        fd.append("masterKeyPassword", password);
+      }
       const res = await uploadBatchMasterKey06bAction(fd);
       if (!res.ok) {
         setStatus({
@@ -52,6 +56,7 @@ export function BatchKeyUploadPanel({
           text: `Kunci 06B "${res.fileName}" tersimpan untuk seluruh asesi batch ini.`,
         });
         setFile(null);
+        setPassword("");
         router.refresh();
       }
     } catch (err) {
@@ -112,6 +117,19 @@ export function BatchKeyUploadPanel({
           />
         </label>
 
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-300 focus-within:border-teal-600">
+          <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="off"
+            aria-label="Kata sandi berkas 06B (opsional, hanya untuk dekripsi di memori)"
+            placeholder="Kata sandi file (jika terenkripsi)..."
+            className="text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none w-52 bg-transparent"
+          />
+        </div>
+
         <button
           type="submit"
           disabled={uploading}
@@ -120,6 +138,9 @@ export function BatchKeyUploadPanel({
           {uploading ? "Mengunggah..." : "Simpan Kunci 06B Batch"}
         </button>
       </form>
+      <p className="text-[11px] text-slate-500">
+        Jika file `.docx` diproteksi kata sandi (Office Agile Encryption), isi kata sandi pada kolom di atas. Kata sandi hanya dipakai di memori server untuk membuka berkas dan tidak pernah disimpan atau dicatat di log.
+      </p>
 
       {status && (
         <div

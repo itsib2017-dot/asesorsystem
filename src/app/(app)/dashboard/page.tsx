@@ -129,9 +129,13 @@ export default async function DashboardPage() {
           title="Aturan Keputusan"
           value="VATM (K / BK)"
           subtitle="Valid, Asli, Terkini, Memadai"
-          trend="up"
-          trendLabel="Otoritas KTP Aktif"
-          accent="emerald"
+          trend={batches.length > 0 ? "neutral" : "down"}
+          trendLabel={
+            batches.length > 0
+              ? "Konfirmasi KTP per asesi (D6)"
+              : "Menunggu data batch"
+          }
+          accent="teal"
           icon={<FileCheck2 className="w-5 h-5" />}
         />
       </div>

@@ -229,13 +229,13 @@ export function extractSchemeMeta(scheme?: SchemeRecord | null): {
 } {
   if (!scheme) {
     return {
-      schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
-      schemeNumber: "SKM/2037/00013/2/2021/1",
+      schemeTitle: "Skema Tersertifikasi (belum dipilih)",
+      schemeNumber: "-",
     };
   }
   const match = scheme.name.match(/\((SKM\/[^)]+)\)/i);
   const schemeTitle = scheme.name.replace(/\s*\(SKM\/[^)]+\)/i, "").trim() || scheme.name;
-  const schemeNumber = match?.[1]?.trim() || scheme.manifest?.decisionRuleRef || "-";
+  const schemeNumber = match?.[1]?.trim() || "-";
   return { schemeTitle, schemeNumber };
 }
 

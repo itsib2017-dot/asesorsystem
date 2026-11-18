@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { ShieldCheck, AlertTriangle, Check, Edit3, HelpCircle } from "lucide-react";
+import { ShieldCheck, AlertTriangle, Check, Edit3, HelpCircle, Clock } from "lucide-react";
 
 interface NameJuryCardProps {
   assesseeId: string;
@@ -9,8 +9,8 @@ interface NameJuryCardProps {
   apl01Name: string;
   suratTugasName: string;
   ijazahName: string;
-  ocrConfidence: number;
-  verdict: "match" | "mismatch_resolved" | "needs_human";
+  ocrConfidence: number | null;
+  verdict: "match" | "mismatch_resolved" | "needs_human" | "not_run";
   proposedName: string | null;
   reasoning: string;
   confirmedName: string | null;
@@ -51,7 +51,11 @@ export function NameJuryCard({
   };
 
   const verdictBadge =
-    verdict === "match" ? (
+    verdict === "not_run" ? (
+      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-300">
+        <Clock className="w-3.5 h-3.5" /> Belum dinilai
+      </span>
+    ) : verdict === "match" ? (
       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
         <Check className="w-3.5 h-3.5" /> Cocok
       </span>
@@ -78,7 +82,9 @@ export function NameJuryCard({
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
-            OCR Yakin: {Math.round(ocrConfidence * 100)}%
+            {ocrConfidence !== null
+              ? `OCR Yakin: ${Math.round(ocrConfidence * 100)}%`
+              : "OCR: Belum dijalankan"}
           </span>
           {verdictBadge}
         </div>
@@ -148,7 +154,9 @@ export function NameJuryCard({
       {/* Assessor Decision Controls */}
       {!customMode ? (
         <div className="flex flex-wrap items-center gap-3 pt-2">
-          {(proposedName || ktpOcrName) && verdict !== "needs_human" && (
+          {(proposedName || ktpOcrName) &&
+            verdict !== "needs_human" &&
+            (verdict !== "not_run" || Boolean(ktpOcrName.trim())) && (
             <button
               type="button"
               disabled={pending}

@@ -20,7 +20,7 @@ export default async function SimilarityReportPage({
   const data = await loadBatchSimilarityReportData(user.id, batchId);
   if (!data) return notFound();
 
-  const { batch, schemeName, thresholds, flaggedPairs, combinedMd } = data;
+  const { batch, schemeName, thresholds, thresholdsUncalibrated, flaggedPairs, combinedMd } = data;
 
   return (
     <div className="space-y-6">
@@ -55,10 +55,20 @@ export default async function SimilarityReportPage({
             <AlertTriangle className="w-4 h-4 text-amber-600" />
             Pasangan Kemiripan Terdeteksi ({flaggedPairs.length})
           </div>
-          <div className="px-3 py-1 rounded-lg bg-slate-100 border border-slate-200 text-[11px] font-mono text-slate-700">
-            Ambang batas numerik: Exact &ge; {thresholds.exact.toFixed(2)} ({Math.round(thresholds.exact * 100)}%) ·
-            Near &ge; {thresholds.near.toFixed(2)} ({Math.round(thresholds.near * 100)}%) ·
-            Parsial &ge; {thresholds.partial.toFixed(2)} ({Math.round(thresholds.partial * 100)}%)
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="px-3 py-1 rounded-lg bg-slate-100 border border-slate-200 text-[11px] font-mono text-slate-700">
+              Ambang batas numerik: Exact &ge; {thresholds.exact.toFixed(2)} ({Math.round(thresholds.exact * 100)}%) ·
+              Near &ge; {thresholds.near.toFixed(2)} ({Math.round(thresholds.near * 100)}%) ·
+              Parsial &ge; {thresholds.partial.toFixed(2)} ({Math.round(thresholds.partial * 100)}%)
+            </div>
+            {thresholdsUncalibrated && (
+              <span
+                className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] font-medium text-amber-800"
+                title="Ambang batas kemiripan bawaan belum dikalibrasi secara empiris oleh administrator LSP"
+              >
+                Sementara / Belum Dikalibrasi (D19 / OQ-08)
+              </span>
+            )}
           </div>
         </div>
         {flaggedPairs.length === 0 ? (
