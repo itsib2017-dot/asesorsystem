@@ -1,4 +1,6 @@
 import React from "react";
+import Link from "next/link";
+import { AlertTriangle, FileText } from "lucide-react";
 
 export function BlankoSheetHeader() {
   return (
@@ -136,3 +138,137 @@ export function BlankoMetadataTable({
     </table>
   );
 }
+
+export function BlankoDocxExportBar(props: {
+  batchId: string;
+  assesseeId: string;
+  formType: "ak02" | "ia04b" | "ia06";
+  formLabel: string;
+  caption: string;
+  hasActiveSignature: boolean;
+  isNameConfirmed: boolean;
+}) {
+  const blocked = !props.hasActiveSignature || !props.isNameConfirmed;
+  const href = blocked
+    ? undefined
+    : `/api/v1/batches/${props.batchId}/assessees/${props.assesseeId}/export?form=${props.formType}&format=docx`;
+
+  return (
+    <div className="space-y-3">
+      {blocked && (
+        <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 space-y-1.5 text-xs">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertTriangle className="w-4 h-4 text-amber-700" />
+            Ekspor {props.formLabel} (DOCX) Terkunci
+          </div>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {!props.hasActiveSignature && (
+              <li>
+                Tanda tangan asesor belum diunggah.{" "}
+                <Link href="/settings/profile" className="underline font-semibold">
+                  Unggah Tanda Tangan
+                </Link>
+              </li>
+            )}
+            {!props.isNameConfirmed && (
+              <li>
+                Nama sertifikat asesi (otoritas KTP) belum dikonfirmasi.{" "}
+                <Link
+                  href={`/batches/${props.batchId}/assessees/${props.assesseeId}`}
+                  className="underline font-semibold"
+                >
+                  Konfirmasi Nama Asesi
+                </Link>
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-xs text-slate-500">{props.caption}</div>
+        <a
+          href={href}
+          aria-disabled={blocked}
+          className={`px-4 py-2 rounded-xl text-sm font-medium inline-flex items-center gap-2 border ${
+            blocked
+              ? "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed pointer-events-none"
+              : "bg-teal-700 hover:bg-teal-800 border-teal-700 text-white shadow-sm"
+          }`}
+        >
+          <FileText className="w-4 h-4" /> Ekspor {props.formLabel} (DOCX)
+        </a>
+      </div>
+    </div>
+  );
+}
+
+export function BlankoSignatureBlock(props: {
+  assesseeName: string;
+  assessorName: string;
+  assessorRegNo: string;
+  displayDate: string;
+  hasActiveSignature: boolean;
+  signatureUrl?: string;
+  topRow?: React.ReactNode;
+}) {
+  return (
+    <table className="w-full text-xs border-collapse border border-black mt-2">
+      <tbody>
+        {props.topRow}
+        <tr>
+          <td colSpan={3} className="border border-black p-1.5 font-bold">
+            Asesi :
+          </td>
+        </tr>
+        <tr>
+          <td className="border border-black p-1.5 w-[32%]">Nama</td>
+          <td className="border border-black p-1.5 w-[3%] text-center">:</td>
+          <td className="border border-black p-1.5">{props.assesseeName}</td>
+        </tr>
+        <tr>
+          <td className="border border-black p-1.5">Tanda tangan &amp; tanggal</td>
+          <td className="border border-black p-1.5 text-center">:</td>
+          <td className="border border-black p-1.5 h-10 align-bottom">{props.displayDate}</td>
+        </tr>
+        <tr>
+          <td colSpan={3} className="border border-black p-1.5 font-bold">
+            Asesor :
+          </td>
+        </tr>
+        <tr>
+          <td className="border border-black p-1.5">Nama</td>
+          <td className="border border-black p-1.5 text-center">:</td>
+          <td className="border border-black p-1.5">{props.assessorName}</td>
+        </tr>
+        <tr>
+          <td className="border border-black p-1.5">No. Reg</td>
+          <td className="border border-black p-1.5 text-center">:</td>
+          <td className="border border-black p-1.5">{props.assessorRegNo}</td>
+        </tr>
+        <tr>
+          <td className="border border-black p-1.5 align-middle">Tanda tangan &amp; tanggal</td>
+          <td className="border border-black p-1.5 text-center">:</td>
+          <td className="border border-black p-2 text-center">
+            <div className="h-14 flex items-center justify-center">
+              {props.hasActiveSignature && props.signatureUrl ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={props.signatureUrl}
+                  alt="Tanda tangan asesor"
+                  className="max-h-12 w-auto object-contain"
+                />
+              ) : (
+                <span className="text-[11px] text-amber-700 italic">
+                  [Tanda tangan belum diunggah]
+                </span>
+              )}
+            </div>
+            <div className="mt-0.5">{props.displayDate}</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  );
+}
+

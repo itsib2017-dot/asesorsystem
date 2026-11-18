@@ -2,9 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { KeyRound, ShieldAlert, CheckCircle2 } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
-import { getAssesseeById } from "@/repositories/assessees.repository";
 import { getLatestWrittenGrading } from "@/repositories/assessment.repository";
 import { listDriveFilesForBatch } from "@/repositories/batches.repository";
+import { Ia06cBlankoPreview } from "@/components/forms/ia06c-blanko-preview";
+import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
+import { buildIa06cPayload } from "@/lib/forms/assessee-forms";
 import { WrittenKeyForm } from "./_components/written-key-form";
 
 export const metadata = {
@@ -20,13 +22,30 @@ export default async function WrittenGradingPage({
   if (!user) return notFound();
 
   const { id: batchId, assesseeId } = await params;
-  const assessee = await getAssesseeById(user.id, assesseeId);
-  if (!assessee) return notFound();
+  const common = await loadAssesseeCommonFormMeta({
+    userId: user.id,
+    userEmail: user.email,
+    batchId,
+    assesseeId,
+  });
+  if (!common) return notFound();
+  const { assessee } = common;
 
   const [grading, batchFiles] = await Promise.all([
     getLatestWrittenGrading(user.id, assesseeId),
     listDriveFilesForBatch(user.id, batchId),
   ]);
+
+  const ia06cPayload = buildIa06cPayload({
+    schemeTitle: common.schemeTitle,
+    schemeNumber: common.schemeNumber,
+    tukType: common.batch.tukType,
+    assessorName: common.assessorName,
+    assessorRegNo: common.assessorRegNo,
+    assesseeName: common.officialAssesseeName,
+    assessmentDate: common.assessmentDate,
+    writtenGrading: grading as Record<string, unknown> | null,
+  });
 
   const masterKeyFile =
     batchFiles.find(
@@ -185,6 +204,26 @@ export default async function WrittenGradingPage({
           ))}
         </div>
       )}
+
+      {/* Official Unaltered FR.IA.06C Blanko Preview & DOCX Export */}
+      <div className="glass-card rounded-2xl p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Formulir Resmi FR.IA.06C (Lembar Jawaban Pertanyaan Tertulis Esai)
+          </h2>
+          <p className="text-xs text-slate-500">
+            Tampilan blanko asli BNSP beserta pencapaian Ya/Tidak dan umpan balik untuk asesi.
+          </p>
+        </div>
+        <Ia06cBlankoPreview
+          batchId={batchId}
+          assesseeId={assesseeId}
+          hasActiveSignature={common.hasActiveSignature}
+          signatureUrl={common.signatureUrl}
+          isNameConfirmed={common.isNameConfirmed}
+          payload={ia06cPayload}
+        />
+      </div>
     </div>
   );
 }

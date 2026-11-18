@@ -2,10 +2,15 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertCircle, CheckCircle2, Lock } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
-import { getAssesseeById } from "@/repositories/assessees.repository";
 import { listDriveFilesForBatch } from "@/repositories/batches.repository";
-import { getLatestDitAnalysis } from "@/repositories/assessment.repository";
+import {
+  getLatestDitAnalysis,
+  listDecisionsForAssessee,
+} from "@/repositories/assessment.repository";
 import { checkDitCompletenessGate } from "@/services/dit";
+import { Ia04bBlankoPreview } from "@/components/forms/ia04b-blanko-preview";
+import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
+import { buildIa04bPayload, type RawDecisionRow } from "@/lib/forms/assessee-forms";
 
 export const metadata = {
   title: "Analisis DIT — AsesorKompetensi",
@@ -20,10 +25,20 @@ export default async function DitAnalysisPage({
   if (!user) return notFound();
 
   const { id: batchId, assesseeId } = await params;
-  const assessee = await getAssesseeById(user.id, assesseeId);
-  if (!assessee) return notFound();
+  const common = await loadAssesseeCommonFormMeta({
+    userId: user.id,
+    userEmail: user.email,
+    batchId,
+    assesseeId,
+  });
+  if (!common) return notFound();
+  const { assessee } = common;
 
-  const files = await listDriveFilesForBatch(user.id, batchId);
+  const [files, analysis, decisions] = await Promise.all([
+    listDriveFilesForBatch(user.id, batchId),
+    getLatestDitAnalysis(user.id, assesseeId),
+    listDecisionsForAssessee(user.id, assesseeId),
+  ]);
   const assesseeFiles = files.filter((f) => f.assesseeId === assesseeId);
   const fr04a = assesseeFiles.find((f) => f.docType === "04a")?.extractedText ?? null;
   const presentation = assesseeFiles.find((f) => f.docType === "04b")?.extractedText ?? null;
@@ -35,7 +50,17 @@ export default async function DitAnalysisPage({
     candidateProfileSummary: cv,
   });
 
-  const analysis = await getLatestDitAnalysis(user.id, assesseeId);
+  const ia04bPayload = buildIa04bPayload({
+    schemeTitle: common.schemeTitle,
+    schemeNumber: common.schemeNumber,
+    tukType: common.batch.tukType,
+    assessorName: common.assessorName,
+    assessorRegNo: common.assessorRegNo,
+    assesseeName: common.officialAssesseeName,
+    assessmentDate: common.assessmentDate,
+    ditAnalysis: analysis as Record<string, unknown> | null,
+    decisions: decisions as unknown as RawDecisionRow[],
+  });
   const coverageMatrix = Array.isArray(analysis?.coverage_matrix ?? analysis?.coverageMatrix)
     ? ((analysis?.coverage_matrix ?? analysis?.coverageMatrix) as Array<Record<string, unknown>>)
     : [];
@@ -104,33 +129,45 @@ export default async function DitAnalysisPage({
           )}
         </div>
 
-        {coverageMatrix.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left border-collapse border border-slate-200">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="p-2 border border-slate-200">No</th>
-                  <th className="p-2 border border-slate-200">Kelompok Pekerjaan</th>
-                  <th className="p-2 border border-slate-200">Titik Fokus</th>
-                  <th className="p-2 border border-slate-200">Status</th>
-                  <th className="p-2 border border-slate-200">Kutipan Bukti</th>
-                </tr>
-              </thead>
-              <tbody>
-                {coverageMatrix.map((row, idx) => (
-                  <tr key={idx}>
-                    <td className="p-2 border border-slate-200">{String(row.no ?? idx + 1)}</td>
-                    <td className="p-2 border border-slate-200">{String(row.kelompokPekerjaan ?? "-")}</td>
-                    <td className="p-2 border border-slate-200">{String(row.focusPoint ?? "-")}</td>
-                    <td className="p-2 border border-slate-200 font-semibold">{String(row.status ?? "-")}</td>
-                    <td className="p-2 border border-slate-200 italic">{String(row.evidenceSpan ?? "-")}</td>
+        <Ia04bBlankoPreview
+          batchId={batchId}
+          assesseeId={assesseeId}
+          hasActiveSignature={common.hasActiveSignature}
+          signatureUrl={common.signatureUrl}
+          isNameConfirmed={common.isNameConfirmed}
+          payload={ia04bPayload}
+        />
+
+        {coverageMatrix.length > 0 && (
+          <details className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-xs">
+            <summary className="cursor-pointer font-semibold text-slate-700">
+              Catatan Matriks Cakupan AI ({coverageMatrix.length} poin fokus — Alat Bantu Asesor)
+            </summary>
+            <div className="overflow-x-auto mt-3">
+              <table className="w-full text-xs text-left border-collapse border border-slate-200 bg-white">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="p-2 border border-slate-200">No</th>
+                    <th className="p-2 border border-slate-200">Kelompok Pekerjaan</th>
+                    <th className="p-2 border border-slate-200">Titik Fokus</th>
+                    <th className="p-2 border border-slate-200">Status</th>
+                    <th className="p-2 border border-slate-200">Kutipan Bukti</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-xs text-slate-500">Belum ada matriks cakupan DIT untuk asesi ini.</p>
+                </thead>
+                <tbody>
+                  {coverageMatrix.map((row, idx) => (
+                    <tr key={idx}>
+                      <td className="p-2 border border-slate-200">{String(row.no ?? idx + 1)}</td>
+                      <td className="p-2 border border-slate-200">{String(row.kelompokPekerjaan ?? "-")}</td>
+                      <td className="p-2 border border-slate-200">{String(row.focusPoint ?? "-")}</td>
+                      <td className="p-2 border border-slate-200 font-semibold">{String(row.status ?? "-")}</td>
+                      <td className="p-2 border border-slate-200 italic">{String(row.evidenceSpan ?? "-")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
         )}
       </div>
 

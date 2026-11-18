@@ -2,10 +2,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FileSearch, FileSpreadsheet } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
-import { getAssesseeById, getLatestNameJuryVerdict } from "@/repositories/assessees.repository";
-import { listDecisionsForAssessee } from "@/repositories/assessment.repository";
+import { getLatestNameJuryVerdict } from "@/repositories/assessees.repository";
+import {
+  getLatestDitAnalysis,
+  getLatestWrittenGrading,
+  listDecisionsForAssessee,
+} from "@/repositories/assessment.repository";
 import { NameJuryCard } from "@/components/identity/name-jury-card";
 import { DecisionToggle } from "@/components/ak05/decision-toggle";
+import { Ak02BlankoPreview } from "@/components/forms/ak02-blanko-preview";
+import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
+import { buildAk02Payload, type RawDecisionRow } from "@/lib/forms/assessee-forms";
 import { confirmCertificateNameAction, saveUnitDecisionAction } from "./actions";
 
 export const metadata = {
@@ -21,11 +28,34 @@ export default async function AssesseeDetailPage({
   if (!user) return notFound();
 
   const { id: batchId, assesseeId } = await params;
-  const assessee = await getAssesseeById(user.id, assesseeId);
-  if (!assessee) return notFound();
+  const common = await loadAssesseeCommonFormMeta({
+    userId: user.id,
+    userEmail: user.email,
+    batchId,
+    assesseeId,
+  });
+  if (!common) return notFound();
+  const { assessee } = common;
 
-  const jury = await getLatestNameJuryVerdict(user.id, assesseeId);
-  const decisions = await listDecisionsForAssessee(user.id, assesseeId);
+  const [jury, decisions, ditAnalysis, writtenGrading] = await Promise.all([
+    getLatestNameJuryVerdict(user.id, assesseeId),
+    listDecisionsForAssessee(user.id, assesseeId),
+    getLatestDitAnalysis(user.id, assesseeId),
+    getLatestWrittenGrading(user.id, assesseeId),
+  ]);
+
+  const ak02Payload = buildAk02Payload({
+    schemeTitle: common.schemeTitle,
+    schemeNumber: common.schemeNumber,
+    tukType: common.batch.tukType,
+    assessorName: common.assessorName,
+    assessorRegNo: common.assessorRegNo,
+    assesseeName: common.officialAssesseeName,
+    assessmentDate: common.assessmentDate,
+    decisions: decisions as unknown as RawDecisionRow[],
+    hasDit: Boolean(ditAnalysis),
+    hasWritten: Boolean(writtenGrading),
+  });
 
   return (
     <div className="space-y-6">
@@ -118,6 +148,26 @@ export default async function AssesseeDetailPage({
             ))}
           </div>
         )}
+      </div>
+
+      {/* Official Unaltered FR.AK.02 Blanko Preview & DOCX Export */}
+      <div className="glass-card rounded-2xl p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Formulir Resmi FR.AK.02 (Rekaman Asesmen Kompetensi)
+          </h2>
+          <p className="text-xs text-slate-500">
+            Tampilan blanko asli BNSP untuk pencetakan &amp; arsip rekaman asesmen per asesi.
+          </p>
+        </div>
+        <Ak02BlankoPreview
+          batchId={batchId}
+          assesseeId={assesseeId}
+          hasActiveSignature={common.hasActiveSignature}
+          signatureUrl={common.signatureUrl}
+          isNameConfirmed={common.isNameConfirmed}
+          payload={ak02Payload}
+        />
       </div>
     </div>
   );
