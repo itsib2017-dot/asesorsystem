@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { hasDatabaseUrl, isUuid, withRlsTransaction } from "@/db";
-import { batches, batchAssessors, driveFiles } from "@/db/schema";
+import { assessees, batches, batchAssessors, driveFiles } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export interface BatchSummary {
@@ -454,4 +454,55 @@ export async function updateDriveFileExtraction(params: {
       updated_at: now.toISOString(),
     })
     .eq("id", params.fileId);
+}
+
+export interface BatchResourceCounts {
+  assesseeCount: number;
+  fileCount: number;
+}
+
+export async function listBatchResourceCountsForUser(
+  userId: string,
+): Promise<Map<string, BatchResourceCounts>> {
+  const counts = new Map<string, BatchResourceCounts>();
+  const bump = (batchId: string, field: keyof BatchResourceCounts) => {
+    const entry = counts.get(batchId) ?? { assesseeCount: 0, fileCount: 0 };
+    entry[field] += 1;
+    counts.set(batchId, entry);
+  };
+
+  if (hasDatabaseUrl()) {
+    try {
+      const { aRows, fRows } = await withRlsTransaction(userId, async (tx) => {
+        const [aRows, fRows] = await Promise.all([
+          tx.select({ batchId: assessees.batchId }).from(assessees),
+          tx.select({ batchId: driveFiles.batchId }).from(driveFiles),
+        ]);
+        return { aRows, fRows };
+      });
+      for (const r of aRows) bump(r.batchId, "assesseeCount");
+      for (const r of fRows) bump(r.batchId, "fileCount");
+      return counts;
+    } catch (err) {
+      console.warn(
+        "[BatchesRepository Warning] Direct DB listBatchResourceCounts fallback to Supabase REST:",
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
+  }
+
+  const supabase = await getSupabaseServerClient();
+  const [{ data: aRows }, { data: fRows }] = await Promise.all([
+    supabase.from("assessees").select("batch_id"),
+    supabase.from("drive_files").select("batch_id"),
+  ]);
+
+  for (const r of aRows ?? []) {
+    if (r.batch_id) bump(String(r.batch_id), "assesseeCount");
+  }
+  for (const r of fRows ?? []) {
+    if (r.batch_id) bump(String(r.batch_id), "fileCount");
+  }
+
+  return counts;
 }

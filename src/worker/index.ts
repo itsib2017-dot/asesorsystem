@@ -40,7 +40,10 @@ import {
 } from "@/services/extract";
 import { resolveWrittenTestFiles, runWrittenGradingPipeline } from "@/services/grading";
 import { runNameJury } from "@/services/name-jury";
-import { evaluateSimilarityPair } from "@/services/similarity";
+import {
+  DEFAULT_SIMILARITY_THRESHOLDS,
+  evaluateSimilarityPair,
+} from "@/services/similarity";
 import { handleHelloJob } from "./handlers/hello.handler";
 
 export interface WorkerJobInput {
@@ -184,7 +187,16 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
       : await listAssesseesByBatch(userId, batch.id);
 
   const enrichedFiles = inferredPerFile.map(({ file, candidateName }) => {
-    if (!candidateName) return file;
+    if (!candidateName) {
+      return {
+        ...file,
+        assesseeId: null,
+        triageStatus:
+          file.docType === "materi_pelatihan"
+            ? ("not_needed" as const)
+            : ("unmatched" as const),
+      };
+    }
     const candNorm = normalisePersonName(candidateName);
     const matched = assesseeRecords.find((a) => {
       const aNorm = normalisePersonName(a.displayName);
@@ -512,7 +524,7 @@ async function handleSimilarityRunJob(job: WorkerJobInput): Promise<WorkerJobRes
 
   const thresholds = (await getConfig("similarity.flag_thresholds", {
     lspId: batch.lspId,
-  })) ?? { exact: 0.9, near: 0.75, partial: 0.5 };
+  })) ?? { ...DEFAULT_SIMILARITY_THRESHOLDS };
 
   const files = await listDriveFilesForBatch(userId, batchId);
   const assessees = await listAssesseesByBatch(userId, batchId);

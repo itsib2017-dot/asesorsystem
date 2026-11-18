@@ -33,61 +33,103 @@ export function extractGoogleSheetId(url: string): string | null {
 /**
  * Classifies messy BNSP Drive filenames into normalized document types (M1.2).
  * Handles duplicate markers (1), -2, -v2 and double extensions (.jpg.jpeg).
+ * Evaluates filename tokens with strict word boundaries first so parent folders
+ * like "Persyaratan Pelatihan" never override individual assessee documents, and
+ * separates instructional "Materi" handouts from trainee forms/certificates.
  */
 export function classifyDriveFileName(
   fileName: string,
   parentPath = "",
 ): { docType: string; confidence: number } {
-  const normalized = `${parentPath}/${fileName}`
-    .toLowerCase()
-    .replace(/\(\d+\)|-v\d+|-\d+(?=\.)/g, "")
+  const fnLower = fileName.toLowerCase();
+  const fnBase = fnLower
+    .replace(/\.[a-z0-9]{2,5}(?:\.[a-z0-9]{2,5})?$/i, "")
+    .replace(/\(\d+\)|-v\d+|-\d+(?=$|\s)/g, "")
     .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const ppNorm = parentPath
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 
-  if (/\bktp\b|kartu tanda penduduk|nik/i.test(normalized)) {
+  // 1. Training materials & syllabus live in Materi folders or carry module prefixes
+  if (
+    /(?:^|\/)\s*materi(?:\s|$|\/)/i.test(ppNorm) ||
+    /^(?:cover\s+materi|silabus|tata\s*tertib|\d+(?:\s*&\s*\d+)?\.\s*ahli\s*k3|modul\b|materi\b|handout\b|bahan\s*ajar\b)/i.test(
+      fnBase,
+    )
+  ) {
+    return { docType: "materi_pelatihan", confidence: 0.92 };
+  }
+
+  // 2. Identity & BNSP administrative forms (filename-authoritative with strict boundaries)
+  if (/\bktpp?\b|kartu\s*tanda\s*penduduk|\bnik\b/i.test(fnBase)) {
     return { docType: "ktp", confidence: 0.95 };
   }
-  if (/\bapl[\s.]*0?1\b/i.test(normalized)) {
+  if (/\bapl[\s.]*0?1\b|permohonan\s*sertifikasi/i.test(fnBase)) {
     return { docType: "apl01", confidence: 0.95 };
   }
-  if (/\bapl[\s.]*0?2\b/i.test(normalized)) {
+  if (/\bapl[\s.]*0?2\b|asesmen\s*mandiri/i.test(fnBase)) {
     return { docType: "apl02", confidence: 0.95 };
   }
-  if (/ijazah|transkrip nilai|sertifikat kelulusan/i.test(normalized)) {
-    return { docType: "ijazah", confidence: 0.9 };
-  }
-  if (/pas\s*foto|foto\s*3x4|photo/i.test(normalized)) {
-    return { docType: "pas_foto", confidence: 0.85 };
-  }
-  if (/\bcv\b|curriculum vitae|daftar riwayat hidup/i.test(normalized)) {
-    return { docType: "cv", confidence: 0.9 };
-  }
-  if (/surat\s*tugas|st\b/i.test(normalized)) {
-    return { docType: "surat_tugas", confidence: 0.9 };
-  }
-  if (/\b04a\b|ia[\s.]*04a|\bdit\b|instruksi terstruktur/i.test(normalized)) {
+  if (/\b04a\b|ia[\s.]*04a|\bdit\b|instruksi\s*terstruktur/i.test(fnBase)) {
     return { docType: "04a", confidence: 0.92 };
   }
-  if (/\b04b\b|ia[\s.]*04b|presentasi/i.test(normalized)) {
+  if (/\b04b\b|ia[\s.]*04b|observasi\s*demonstrasi/i.test(fnBase)) {
     return { docType: "04b", confidence: 0.9 };
   }
-  if (/\b06a\b|ia[\s.]*06a/i.test(normalized)) {
+  if (/\b06a\b|ia[\s.]*06a/i.test(fnBase)) {
     return { docType: "06a", confidence: 0.92 };
   }
-  if (/\b06b\b|ia[\s.]*06b|kunci/i.test(normalized)) {
+  if (/\b06b\b|ia[\s.]*06b|\bkunci\b/i.test(fnBase)) {
     return { docType: "06b", confidence: 0.92 };
   }
-  if (/\b06c\b|ia[\s.]*06c|jawaban/i.test(normalized)) {
+  if (/\b06c\b|ia[\s.]*06c|\bjawaban\b/i.test(fnBase)) {
     return { docType: "06c", confidence: 0.92 };
   }
-  if (/\b09\b|ia[\s.]*09|wawancara/i.test(normalized)) {
+  if (/\bfr[\s._-]*ia[\s._-]*09\b|\bia[\s._-]*09\b|wawancara/i.test(fnBase)) {
     return { docType: "09", confidence: 0.88 };
   }
-  if (/sertifikat|pelatihan|pembinaan/i.test(normalized)) {
+  if (
+    /ijaz?ah|ijasah|ijajah|transkrip\s*nilai|sertifikat\s*kelulusan|surat\s*keterangan\s*ll?ulus|\bsket\s*lulus|\bs\s*1\b/i.test(
+      fnBase,
+    )
+  ) {
+    return { docType: "ijazah", confidence: 0.9 };
+  }
+  if (/\bcv\b|curr?iculum\s*vitae|daftar\s*riwayat\s*hidup/i.test(fnBase)) {
+    return { docType: "cv", confidence: 0.9 };
+  }
+  if (
+    /surat\s*(?:tugas|perintah|ket(?:erangan)?\s*(?:be)?kerja|ke\s*kerja|pengalaman)|\bsk\s*(?:kerja|pns|pppk|kepangkatan|gol|3[ab])\b|\bketerangan\s*(?:be)?kerja\b|^sk$|\bst\b/i.test(
+      fnBase,
+    )
+  ) {
+    return { docType: "surat_tugas", confidence: 0.9 };
+  }
+  if (
+    /portofolio|ibpr|hiradc|\berp\b|work\s*permit|inspeksi|investigasi|paklaring|jobdesc|laporan\s*kerja/i.test(
+      fnBase,
+    )
+  ) {
+    return { docType: "portofolio", confidence: 0.85 };
+  }
+  if (
+    /pas+\s*p?foto|foto\s*3x4|\bphoto\b|\bfoto\b|latar\s*merah|bg\s*merah|merah\s*batik|fococlipping/i.test(
+      fnBase,
+    )
+  ) {
+    return { docType: "pas_foto", confidence: 0.88 };
+  }
+  if (/sertifikat|pelatihan|pembinaan/i.test(fnBase)) {
     return { docType: "sertifikat_pelatihan", confidence: 0.82 };
   }
-  if (/portofolio|sk kerja|paklaring|jobdesc|laporan kerja/i.test(normalized)) {
-    return { docType: "portofolio", confidence: 0.8 };
+
+  // 3. Safe folder fallback for trainee DIT slides without 04A in filename
+  if (/tugas\s*dit/i.test(ppNorm) && /\.(pptx?|pdf|docx?)$/i.test(fnLower)) {
+    return { docType: "04a", confidence: 0.85 };
   }
 
   return { docType: "unknown", confidence: 0.1 };

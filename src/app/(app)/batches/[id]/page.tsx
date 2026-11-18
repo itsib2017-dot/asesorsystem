@@ -20,6 +20,7 @@ import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { getLatestJobForBatch } from "@/repositories/jobs.repository";
 import { enqueueJob } from "@/worker/queue";
 import { CompletenessMatrix, type CompletenessRow } from "@/components/batch/completeness-matrix";
+import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
 
 export const metadata = {
   title: "Detail Batch — AsesorKompetensi",
@@ -107,6 +108,7 @@ export default async function BatchDetailPage({
   });
 
   const unmatchedCount = files.filter((f) => f.triageStatus === "unmatched").length;
+  const active06bFile = files.find((f) => f.docType.toLowerCase() === "06b") ?? null;
 
   return (
     <div className="space-y-6">
@@ -238,6 +240,13 @@ export default async function BatchDetailPage({
           </div>
         )}
       </div>
+
+      {/* Batch-level 06B Master Answer Key Upload */}
+      <BatchKeyUploadPanel
+        batchId={batch.id}
+        activeKeyFileName={active06bFile?.fileName ?? null}
+        activeKeySource={active06bFile?.drivePath ?? null}
+      />
 
       {/* Completeness Matrix */}
       <div className="space-y-3">

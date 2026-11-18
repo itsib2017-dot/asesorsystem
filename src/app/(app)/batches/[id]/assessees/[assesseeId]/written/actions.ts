@@ -2,14 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { getUser } from "@/lib/auth/get-session";
-import { writeAuditLog } from "@/lib/audit/write-audit-log";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  parseMasterKey06bFile,
+  persistBatchMasterKey06b,
+} from "@/lib/written/master-key";
 import {
   getBatchById,
   listDriveFilesForBatch,
-  upsertDriveFilesForBatch,
 } from "@/repositories/batches.repository";
-import { extractTextFromDocx } from "@/services/extract";
 import { enqueueJob } from "@/worker/queue";
 
 export async function runWrittenGradingWithKeyAction(formData: FormData): Promise<{
@@ -39,117 +39,46 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
   }
 
   let resolvedMasterKeyText = inputMasterKeyText;
+  const hasUploadedFile = Boolean(
+    uploadedFile &&
+      typeof uploadedFile === "object" &&
+      "arrayBuffer" in uploadedFile &&
+      (uploadedFile as File).size > 0,
+  );
 
-  if (uploadedFile && typeof uploadedFile === "object" && "arrayBuffer" in uploadedFile) {
-    const fileObj = uploadedFile as File;
-    if (fileObj.size > 0) {
-      if (fileObj.size > 10 * 1024 * 1024) {
-        return { ok: false, error: "Ukuran file kunci 06B maksimal 10 MB." };
-      }
-
-      const fileNameLower = fileObj.name.toLowerCase();
-      if (!fileNameLower.endsWith(".docx") && !fileNameLower.endsWith(".txt")) {
-        return {
-          ok: false,
-          error: "Format berkas kunci 06B harus .docx atau .txt.",
-        };
-      }
-
-      try {
-        const buffer = Buffer.from(await fileObj.arrayBuffer());
-        if (fileNameLower.endsWith(".txt")) {
-          resolvedMasterKeyText = buffer.toString("utf8").trim();
-        } else {
-          const parsed = await extractTextFromDocx(buffer);
-          resolvedMasterKeyText = parsed.text;
-        }
-      } catch (err) {
-        return {
-          ok: false,
-          error:
-            err instanceof Error
-              ? err.message
-              : "Gagal membaca berkas kunci 06B.",
-        };
-      }
-
-      if (!resolvedMasterKeyText) {
-        return {
-          ok: false,
-          error: "Teks kunci jawaban 06B tidak ditemukan di dalam berkas.",
-        };
-      }
-
-      await upsertDriveFilesForBatch({
-        userId: user.id,
-        lspId: batch.lspId,
-        batchId: batch.id,
-        files: [
-          {
-            driveFileId: `manual-06b-${batch.id}`,
-            fileName: fileObj.name,
-            mimeType:
-              fileObj.type ||
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            drivePath: `Manual Upload/${fileObj.name}`,
-            docType: "06b",
-            confidence: 1,
-            assesseeId: null,
-            triageStatus: "assigned",
-            extractedText: resolvedMasterKeyText,
-            extractionMethod: fileNameLower.endsWith(".txt") ? "raw_text" : "ooxml_docx",
-          },
-        ],
-      });
+  if (hasUploadedFile) {
+    const parsed = await parseMasterKey06bFile(uploadedFile as File);
+    if (!parsed.ok) {
+      return { ok: false, error: parsed.error };
     }
+    resolvedMasterKeyText = parsed.text;
+    await persistBatchMasterKey06b({
+      userId: user.id,
+      lspId: batch.lspId,
+      batchId: batch.id,
+      fileName: parsed.fileName,
+      mimeType: parsed.mimeType,
+      text: parsed.text,
+      extractionMethod: parsed.extractionMethod,
+      assesseeId,
+      hasUploadedFile: true,
+    });
   } else if (resolvedMasterKeyText) {
-    // Also persist text override to shared 06B slot if no 06B file exists yet
     const files = await listDriveFilesForBatch(user.id, batch.id);
     const has06b = files.some((f) => f.docType.toLowerCase() === "06b");
     if (!has06b) {
-      await upsertDriveFilesForBatch({
+      await persistBatchMasterKey06b({
         userId: user.id,
         lspId: batch.lspId,
         batchId: batch.id,
-        files: [
-          {
-            driveFileId: `manual-06b-${batch.id}`,
-            fileName: "FR.IA.06B_Kunci_Manual.txt",
-            mimeType: "text/plain",
-            drivePath: "Manual Upload/FR.IA.06B_Kunci_Manual.txt",
-            docType: "06b",
-            confidence: 1,
-            assesseeId: null,
-            triageStatus: "assigned",
-            extractedText: resolvedMasterKeyText,
-            extractionMethod: "raw_text",
-          },
-        ],
+        fileName: "FR.IA.06B_Kunci_Manual.txt",
+        mimeType: "text/plain",
+        text: resolvedMasterKeyText,
+        extractionMethod: "raw_text",
+        assesseeId,
+        hasUploadedFile: false,
       });
     }
-  }
-
-  try {
-    const supabase = await getSupabaseServerClient();
-    await writeAuditLog(
-      {
-        lsp_id: batch.lspId,
-        actor_id: user.id,
-        action: "written.key_06b.upload",
-        resource: "batches",
-        resource_id: batch.id,
-        after_summary: {
-          assesseeId,
-          hasUploadedFile: Boolean(
-            uploadedFile && typeof uploadedFile === "object" && "size" in uploadedFile && (uploadedFile as File).size > 0,
-          ),
-          masterKeyChars: resolvedMasterKeyText.length,
-        },
-      },
-      supabase,
-    );
-  } catch {
-    // non-fatal audit log failure
   }
 
   const jobRes = await enqueueJob({

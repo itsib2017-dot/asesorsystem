@@ -43,6 +43,51 @@ describe("Drive folder crawling & BNSP path classification", () => {
     expect(classifyDriveFileName("FR.IA.06C Jawaban.docx").docType).toBe("06c");
   });
 
+  it("classifies Materi PDFs as materi_pelatihan and avoids parent-folder false positives", () => {
+    expect(
+      classifyDriveFileName(
+        "04. Ahli K3 U Komunikasi K3.pdf",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Materi",
+      ).docType,
+    ).toBe("materi_pelatihan");
+    expect(
+      classifyDriveFileName(
+        "09. Ahli K3 U Evaluasi Pemenuhan persyaratan dan Prosedur K3.pdf",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Materi",
+      ).docType,
+    ).toBe("materi_pelatihan");
+    expect(
+      classifyDriveFileName(
+        "FR_IA_04A_Kelompok_3_Komunikasi_Dokumentasi_K3.pptx",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT/Syaeful",
+      ).docType,
+    ).toBe("04a");
+    expect(
+      classifyDriveFileName(
+        "foto kiki.jpeg",
+        "Persyaratan Pelatihan AK3 umum BNSP/10. Kiki Triyana",
+      ).docType,
+    ).toBe("pas_foto");
+    expect(
+      classifyDriveFileName(
+        "ijasah.pdf",
+        "Persyaratan Pelatihan AK3 umum BNSP/10. Kiki Triyana",
+      ).docType,
+    ).toBe("ijazah");
+    expect(
+      classifyDriveFileName(
+        "Curiculum Vitae.pdf",
+        "Persyaratan Pelatihan AK3 umum BNSP/11. Lintang",
+      ).docType,
+    ).toBe("cv");
+    expect(
+      classifyDriveFileName(
+        "SK Kerja.pdf",
+        "Persyaratan Pelatihan AK3 umum BNSP/12. Luat",
+      ).docType,
+    ).toBe("surat_tugas");
+  });
+
   it("falls back to keyless embeddedfolderview when API key returns 403", async () => {
     const html = `
       <div class="flip-entry" id="entry-sub1">

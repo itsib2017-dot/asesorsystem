@@ -1,5 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  Document,
+  HeadingLevel,
+  Packer,
+  Paragraph,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+  WidthType,
+} from "docx";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { PDFDocument, StandardFonts, rgb, type PDFImage, type PDFPage, type PDFFont } from "pdf-lib";
@@ -966,4 +977,165 @@ export async function generateTabularXlsx(
   }
   const arrBuf = await wb.xlsx.writeBuffer();
   return Buffer.from(arrBuf);
+}
+
+/**
+ * Generates combined written assessment & similarity report DOCX (Rule D8: DOCX only).
+ */
+export async function generateSimilarityReportDocx(params: {
+  batchName: string;
+  schemeName: string;
+  thresholds: { exact: number; near: number; partial: number };
+  assessees: Array<{
+    assesseeId: string;
+    realName: string;
+    plagiarismStatus: "Bersih" | "Waspada";
+    plagiarismReasoning: string;
+  }>;
+  flaggedPairs: Array<{
+    assesseeAName: string;
+    assesseeBName: string;
+    jaccardScore: number;
+    tfidfCosine: number;
+    verdict: string;
+  }>;
+}): Promise<Buffer> {
+  const thresholdSummary = `Exact >= ${params.thresholds.exact.toFixed(2)} | Near >= ${params.thresholds.near.toFixed(2)} | Parsial >= ${params.thresholds.partial.toFixed(2)}`;
+
+  const assesseeTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({
+        children: ["No.", "Nama Asesi", "Status Kemiripan", "Catatan Analisis"].map(
+          (header) =>
+            new TableCell({
+              children: [
+                new Paragraph({
+                  children: [new TextRun({ text: header, bold: true })],
+                }),
+              ],
+            }),
+        ),
+      }),
+      ...(params.assessees.length > 0
+        ? params.assessees.map(
+            (a, idx) =>
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph(String(idx + 1))] }),
+                  new TableCell({ children: [new Paragraph(a.realName)] }),
+                  new TableCell({ children: [new Paragraph(a.plagiarismStatus)] }),
+                  new TableCell({ children: [new Paragraph(a.plagiarismReasoning)] }),
+                ],
+              }),
+          )
+        : [
+            new TableRow({
+              children: [
+                new TableCell({ children: [new Paragraph("-")] }),
+                new TableCell({ children: [new Paragraph("Belum ada asesi terdata")] }),
+                new TableCell({ children: [new Paragraph("-")] }),
+                new TableCell({ children: [new Paragraph("-")] }),
+              ],
+            }),
+          ]),
+    ],
+  });
+
+  const pairTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({
+        children: ["Asesi A", "Asesi B", "Jaccard", "Cosine TF-IDF", "Status"].map(
+          (header) =>
+            new TableCell({
+              children: [
+                new Paragraph({
+                  children: [new TextRun({ text: header, bold: true })],
+                }),
+              ],
+            }),
+        ),
+      }),
+      ...(params.flaggedPairs.length > 0
+        ? params.flaggedPairs.map(
+            (p) =>
+              new TableRow({
+                children: [
+                  new TableCell({ children: [new Paragraph(p.assesseeAName)] }),
+                  new TableCell({ children: [new Paragraph(p.assesseeBName)] }),
+                  new TableCell({ children: [new Paragraph(p.jaccardScore.toFixed(4))] }),
+                  new TableCell({ children: [new Paragraph(p.tfidfCosine.toFixed(4))] }),
+                  new TableCell({ children: [new Paragraph(p.verdict)] }),
+                ],
+              }),
+          )
+        : [
+            new TableRow({
+              children: [
+                new TableCell({ children: [new Paragraph("-")] }),
+                new TableCell({
+                  children: [
+                    new Paragraph(
+                      "Tidak ada pasangan melebihi ambang batas deteksi.",
+                    ),
+                  ],
+                }),
+                new TableCell({ children: [new Paragraph("-")] }),
+                new TableCell({ children: [new Paragraph("-")] }),
+                new TableCell({ children: [new Paragraph("Bersih")] }),
+              ],
+            }),
+          ]),
+    ],
+  });
+
+  const doc = new Document({
+    sections: [
+      {
+        children: [
+          new Paragraph({
+            text: "Laporan Gabungan Penilaian Tertulis & Analisis Kemiripan",
+            heading: HeadingLevel.HEADING_1,
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({ text: "Batch: ", bold: true }),
+              new TextRun(params.batchName),
+            ],
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({ text: "Skema Sertifikasi: ", bold: true }),
+              new TextRun(params.schemeName),
+            ],
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({ text: "Ambang Batas Deteksi: ", bold: true }),
+              new TextRun(thresholdSummary),
+            ],
+          }),
+          new Paragraph({
+            text: "Catatan: Skor kemiripan hanyalah indikator peninjauan bagi asesor (flag only — bukan vonis otomatis).",
+          }),
+          new Paragraph({ text: "" }),
+          new Paragraph({
+            text: "1. Ringkasan Penilaian Per Asesi",
+            heading: HeadingLevel.HEADING_2,
+          }),
+          assesseeTable,
+          new Paragraph({ text: "" }),
+          new Paragraph({
+            text: "2. Pasangan Kemiripan Terdeteksi",
+            heading: HeadingLevel.HEADING_2,
+          }),
+          pairTable,
+        ],
+      },
+    ],
+  });
+
+  const buf = await Packer.toBuffer(doc);
+  return Buffer.from(buf);
 }

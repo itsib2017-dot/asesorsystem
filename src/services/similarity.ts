@@ -1,3 +1,9 @@
+export const DEFAULT_SIMILARITY_THRESHOLDS = {
+  exact: 0.9,
+  near: 0.75,
+  partial: 0.5,
+} as const;
+
 export interface SimilarityMetrics {
   jaccardScore: number;
   tfidfCosine: number;
@@ -108,6 +114,7 @@ export function evaluateSimilarityPair(
 export function renderCombinedWrittenReportMarkdown(params: {
   batchName: string;
   schemeName: string;
+  thresholds?: { exact: number; near: number; partial: number };
   assessees: Array<{
     assesseeId: string;
     realName: string;
@@ -127,11 +134,15 @@ export function renderCombinedWrittenReportMarkdown(params: {
     verdict: string;
   }>;
 }): string {
+  const th = params.thresholds ?? DEFAULT_SIMILARITY_THRESHOLDS;
+  const thresholdLabel = `Exact >= ${th.exact.toFixed(2)} (${Math.round(th.exact * 100)}%) | Near (Hampir Sama) >= ${th.near.toFixed(2)} (${Math.round(th.near * 100)}%) | Parsial >= ${th.partial.toFixed(2)} (${Math.round(th.partial * 100)}%)`;
+
   const lines: string[] = [
     `# Laporan Gabungan Penilaian Tertulis & Kemiripan`,
     ``,
     `- **Batch:** ${params.batchName}`,
     `- **Skema:** ${params.schemeName}`,
+    `- **Ambang Batas Deteksi:** ${thresholdLabel}`,
     `- **Catatan:** Dokumen ini bersifat rekomendasi AI dan memerlukan konfirmasi asesor. Kemiripan adalah indikator peninjauan, bukan keputusan otomatis.`,
     ``,
     `## 1. Ringkasan Penilaian Per Asesi`,

@@ -8,7 +8,10 @@ import {
   Cpu,
 } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
-import { listBatchesForUser } from "@/repositories/batches.repository";
+import {
+  listBatchesForUser,
+  listBatchResourceCountsForUser,
+} from "@/repositories/batches.repository";
 import { listJobsForUser } from "@/repositories/jobs.repository";
 import { getActiveSignature } from "@/repositories/signatures.repository";
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
@@ -20,14 +23,15 @@ export const metadata = {
 
 export default async function DashboardPage() {
   const user = await getUser();
-  const [batches, recentJobs, activeSignature, providerCfg] = user
+  const [batches, batchCountsMap, recentJobs, activeSignature, providerCfg] = user
     ? await Promise.all([
         listBatchesForUser(user.id),
+        listBatchResourceCountsForUser(user.id),
         listJobsForUser(user.id, 100),
         getActiveSignature(user.id),
         getLatestProviderConfigForAssessor(user.id),
       ])
-    : [[], [], null, null];
+    : [[], new Map(), [], null, null];
 
   const batchJobMap = new Map(
     batches.map((b) => [
@@ -38,16 +42,23 @@ export default async function DashboardPage() {
     ]),
   );
 
-  const readyBatchCount = batches.filter(
-    (b) => batchJobMap.get(b.id)?.status === "done",
-  ).length;
+  const readyBatchCount = batches.filter((b) => {
+    const counts = batchCountsMap.get(b.id) ?? { assesseeCount: 0, fileCount: 0 };
+    return (
+      batchJobMap.get(b.id)?.status === "done" &&
+      (counts.assesseeCount > 0 || counts.fileCount > 0)
+    );
+  }).length;
+  const pendingOrEmptyCount = batches.length - readyBatchCount;
 
   const batchTrendLabel =
     batches.length === 0
       ? "Belum ada batch"
-      : readyBatchCount === batches.length
-        ? "Siap diproses"
-        : `${readyBatchCount}/${batches.length} selesai pindai`;
+      : readyBatchCount === 0
+        ? "Perlu pemindaian Drive"
+        : pendingOrEmptyCount === 0
+          ? "Semua siap diproses"
+          : `${readyBatchCount} siap · ${pendingOrEmptyCount} belum siap`;
 
   const batchTrend: "up" | "down" | "neutral" =
     batches.length === 0 ? "neutral" : readyBatchCount > 0 ? "up" : "down";
@@ -84,9 +95,13 @@ export default async function DashboardPage() {
       {/* D20 Glassmorphism Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <StatsCard
-          title="Batch Aktif"
-          value={batches.length}
-          subtitle="Terdaftar di LSP Anda"
+          title="Batch Siap Asesmen"
+          value={readyBatchCount}
+          subtitle={
+            batches.length === 0
+              ? "Terdaftar di LSP Anda"
+              : `Dari ${batches.length} batch terdaftar di LSP`
+          }
           trend={batchTrend}
           trendLabel={batchTrendLabel}
           accent="blue"
@@ -152,21 +167,27 @@ export default async function DashboardPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {batches.slice(0, 6).map((b) => {
                 const scanJob = batchJobMap.get(b.id) ?? null;
-                const scanBadge =
-                  scanJob?.status === "done"
+                const counts = batchCountsMap.get(b.id) ?? {
+                  assesseeCount: 0,
+                  fileCount: 0,
+                };
+                const isReady =
+                  scanJob?.status === "done" &&
+                  (counts.assesseeCount > 0 || counts.fileCount > 0);
+                const scanBadge = isReady
+                  ? {
+                      label: `Siap (${counts.assesseeCount} asesi · ${counts.fileCount} berkas)`,
+                      cls: "bg-emerald-50 text-emerald-700 border-emerald-200",
+                    }
+                  : scanJob?.status === "failed"
                     ? {
-                        label: "Pindai selesai",
-                        cls: "bg-emerald-50 text-emerald-700 border-emerald-200",
+                        label: "Pindai gagal (0 berkas)",
+                        cls: "bg-rose-50 text-rose-700 border-rose-200",
                       }
-                    : scanJob?.status === "failed"
-                      ? {
-                          label: "Pindai gagal",
-                          cls: "bg-rose-50 text-rose-700 border-rose-200",
-                        }
-                      : {
-                          label: "Menunggu pindai",
-                          cls: "bg-amber-50 text-amber-800 border-amber-200",
-                        };
+                    : {
+                        label: `Perlu pindai (${counts.assesseeCount} · ${counts.fileCount})`,
+                        cls: "bg-amber-50 text-amber-800 border-amber-200",
+                      };
 
                 return (
                   <Link
@@ -234,8 +255,12 @@ export default async function DashboardPage() {
               </li>
             )}
             <li className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs text-slate-700">
-              <span>Total batch menunggu asesmen</span>
-              <span className="font-bold text-slate-900">{batches.length}</span>
+              <span>Batch siap asesmen</span>
+              <span className="font-bold text-emerald-700">{readyBatchCount}</span>
+            </li>
+            <li className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs text-slate-700">
+              <span>Batch kosong / perlu pindai ulang</span>
+              <span className="font-bold text-amber-700">{pendingOrEmptyCount}</span>
             </li>
           </ul>
         </div>

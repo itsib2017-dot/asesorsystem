@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Save, Zap, Info } from "lucide-react";
 import {
@@ -431,6 +432,22 @@ export default function ProviderSettingsForm({ initialConfig }: Props) {
               {showDriveKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
+        </div>
+
+        {/* 06B Answer Key Upload Location Callout */}
+        <div className="p-3.5 rounded-xl bg-slate-800/70 border border-slate-700 text-xs text-slate-300 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <strong className="text-slate-100">Mencari form unggah kunci jawaban FR.IA.06B?</strong>{" "}
+            Berkas kunci <span className="font-mono">06B (.docx / .txt)</span> bersifat per-batch/skema dan diunggah di{" "}
+            <strong className="text-slate-100">Detail Batch &rarr; Kunci Jawaban Tertulis (FR.IA.06B)</strong> atau halaman{" "}
+            <strong className="text-slate-100">Penilaian Tertulis</strong> asesi.
+          </div>
+          <Link
+            href="/batches"
+            className="text-teal-300 hover:text-teal-200 underline font-medium shrink-0"
+          >
+            Buka Daftar Batch &rarr;
+          </Link>
         </div>
 
         {/* Actions */}

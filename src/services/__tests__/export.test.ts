@@ -5,6 +5,7 @@ import {
   validateExportFormat,
   generateAk05Docx,
   generateAk05Pdf,
+  generateSimilarityReportDocx,
   generateTabularXlsx,
 } from "../export";
 
@@ -130,5 +131,30 @@ describe("Export Format Rule D8 & Document Generators", () => {
     expect(docXml).toContain("Peserta Uji 1");
     expect(docXml).toContain("Peserta Uji 20");
     expect(docXml).toContain("K3.001");
+  });
+
+  it("generates combined similarity DOCX report with scheme and numeric thresholds", async () => {
+    const buf = await generateSimilarityReportDocx({
+      batchName: "Demo Audit R4",
+      schemeName: "AK3U — Okupasi Ahli Keselamatan dan Kesehatan Kerja Umum (SKM/2037/00013/2/2021/1)",
+      thresholds: { exact: 0.9, near: 0.75, partial: 0.5 },
+      assessees: [
+        {
+          assesseeId: "a1",
+          realName: "Budi Santoso",
+          plagiarismStatus: "Bersih",
+          plagiarismReasoning: "Bersih",
+        },
+      ],
+      flaggedPairs: [],
+    });
+
+    expect(buf.subarray(0, 2).toString("utf8")).toBe("PK");
+    const zip = await JSZip.loadAsync(buf);
+    const docXml = await zip.file("word/document.xml")!.async("string");
+    expect(docXml).toContain("AK3U");
+    expect(docXml).toContain("0.90");
+    expect(docXml).toContain("0.75");
+    expect(docXml).toContain("0.50");
   });
 });
