@@ -3,6 +3,7 @@ import { formatAk05DateIndonesia, formatAk05SchemeTitle } from "@/lib/ak05/forma
 import { IA04B_KELOMPOK_PEKERJAAN } from "@/lib/forms/assessee-forms";
 import type { Ia04bExportPayload } from "@/services/export";
 import {
+  BlankoA4Sheet,
   BlankoDocxExportBar,
   BlankoMetadataTable,
   BlankoSignatureBlock,
@@ -34,7 +35,7 @@ export function Ia04bBlankoPreview(props: {
         isNameConfirmed={props.isNameConfirmed}
       />
 
-      <div className="bg-white border border-slate-300 shadow-sm text-black max-w-[794px] mx-auto px-10 py-8 flex flex-col space-y-3">
+      <BlankoA4Sheet className="space-y-3">
         <BlankoTitleBar
           code="FR.IA.04B."
           title="DIT – PENILAIAN PROYEK SINGKAT ATAU KEGIATAN TERSTRUKTUR LAINNYA"
@@ -204,7 +205,7 @@ export function Ia04bBlankoPreview(props: {
             </tr>
           }
         />
-      </div>
+      </BlankoA4Sheet>
     </div>
   );
 }

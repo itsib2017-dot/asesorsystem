@@ -2,6 +2,7 @@ import React from "react";
 import { formatAk05DateIndonesia, formatAk05SchemeTitle } from "@/lib/ak05/format";
 import type { Ia06cExportPayload } from "@/services/export";
 import {
+  BlankoA4Sheet,
   BlankoDocxExportBar,
   BlankoMetadataTable,
   BlankoSignatureBlock,
@@ -33,7 +34,7 @@ export function Ia06cBlankoPreview(props: {
         isNameConfirmed={props.isNameConfirmed}
       />
 
-      <div className="bg-white border border-slate-300 shadow-sm text-black max-w-[794px] mx-auto px-10 py-8 flex flex-col space-y-2.5">
+      <BlankoA4Sheet>
         <BlankoTitleBar code="FR.IA.06C." title="LEMBAR JAWABAN PERTANYAAN TERTULIS ESAI" />
 
         <BlankoMetadataTable
@@ -134,7 +135,7 @@ export function Ia06cBlankoPreview(props: {
           hasActiveSignature={props.hasActiveSignature}
           signatureUrl={props.signatureUrl}
         />
-      </div>
+      </BlankoA4Sheet>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import {
   formatAk05SchemeTitle,
 } from "@/lib/ak05/format";
 import {
+  BlankoA4Sheet,
   BlankoMetadataTable,
   BlankoSheetFooter,
   BlankoSheetHeader,
@@ -131,7 +132,7 @@ export function Ak05Preview(props: Ak05PreviewProps) {
       </div>
 
       {/* Sheet 1: Faithful Official Blanko FR.AK.05 Page 1 */}
-      <div className="bg-white border border-slate-300 shadow-sm text-black max-w-[794px] mx-auto px-10 py-8 flex flex-col space-y-2.5">
+      <BlankoA4Sheet>
         <BlankoSheetHeader />
 
         {/* Borderless Table 0: FR.AK.05.   LAPORAN ASESMEN */}
@@ -205,10 +206,10 @@ export function Ak05Preview(props: Ak05PreviewProps) {
         {notesTable}
 
         <BlankoSheetFooter schemeTitle={displaySchemeTitle} pageNumber={1} />
-      </div>
+      </BlankoA4Sheet>
 
       {/* Sheet 2: Faithful Official Blanko FR.AK.05 Page 2 (Table 4 Assessor Block) */}
-      <div className="bg-white border border-slate-300 shadow-sm text-black max-w-[794px] mx-auto px-10 py-8 min-h-[680px] flex flex-col">
+      <BlankoA4Sheet className="min-h-[680px]">
         <BlankoSheetHeader />
 
         <table className="w-full text-xs border-collapse border border-black mt-2">
@@ -256,7 +257,7 @@ export function Ak05Preview(props: Ak05PreviewProps) {
         </table>
 
         <BlankoSheetFooter schemeTitle={displaySchemeTitle} pageNumber={2} />
-      </div>
+      </BlankoA4Sheet>
     </div>
   );
 }

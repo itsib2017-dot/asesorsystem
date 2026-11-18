@@ -2,6 +2,24 @@ import React from "react";
 import Link from "next/link";
 import { AlertTriangle, FileText } from "lucide-react";
 
+export function BlankoA4Sheet({
+  children,
+  className = "space-y-2.5",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className="w-full overflow-x-auto pb-1">
+      <div
+        className={`bg-white border border-slate-300 shadow-sm text-black w-[794px] mx-auto px-10 py-8 flex flex-col ${className}`}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function BlankoSheetHeader() {
   return (
     <div className="flex items-center justify-between gap-4 pb-3">

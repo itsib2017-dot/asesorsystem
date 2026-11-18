@@ -2,6 +2,7 @@ import React from "react";
 import { formatAk05DateIndonesia, formatAk05SchemeTitle } from "@/lib/ak05/format";
 import type { Ak02ExportPayload, Ak02EvidenceType } from "@/services/export";
 import {
+  BlankoA4Sheet,
   BlankoDocxExportBar,
   BlankoMetadataTable,
   BlankoSheetFooter,
@@ -45,7 +46,7 @@ export function Ak02BlankoPreview(props: {
         isNameConfirmed={props.isNameConfirmed}
       />
 
-      <div className="bg-white border border-slate-300 shadow-sm text-black max-w-[794px] mx-auto px-10 py-8 flex flex-col space-y-2.5">
+      <BlankoA4Sheet>
         <BlankoSheetHeader />
         <BlankoTitleBar code="FR.AK.02." title="REKAMAN ASESMEN KOMPETENSI" />
 
@@ -152,7 +153,7 @@ export function Ak02BlankoPreview(props: {
           formCode="FR.AK.02-2024"
           pageNumber={1}
         />
-      </div>
+      </BlankoA4Sheet>
     </div>
   );
 }
