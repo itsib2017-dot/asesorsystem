@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import { motion, useReducedMotion } from "framer-motion";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 
 interface StatsCardProps {
@@ -30,14 +29,8 @@ export function StatsCard({
   accent = "blue",
   icon,
 }: StatsCardProps) {
-  const prefersReducedMotion = useReducedMotion();
-
   return (
-    <motion.div
-      whileHover={prefersReducedMotion ? undefined : { y: -5 }}
-      transition={{ duration: 0.15 }}
-      className="glass-card p-6 rounded-2xl flex flex-col justify-between"
-    >
+    <div className="glass-card p-6 rounded-2xl flex flex-col justify-between transition-transform duration-150 hover:-translate-y-1 motion-reduce:transition-none motion-reduce:hover:translate-y-0">
       <div className="flex items-start justify-between gap-3">
         <div>
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -73,6 +66,6 @@ export function StatsCard({
           </span>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }

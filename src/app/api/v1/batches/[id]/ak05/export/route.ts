@@ -59,9 +59,7 @@ export async function GET(
     getAk05ReportForBatch(user.id, batchId),
   ]);
 
-  const unconfirmed = assessees.filter(
-    (a) => a.status === "needs_human" && !a.certificateNameConfirmed,
-  );
+  const unconfirmed = assessees.filter((a) => !a.certificateNameConfirmed);
   if (unconfirmed.length > 0) {
     return apiError(
       "UNPROCESSABLE",
@@ -96,7 +94,7 @@ export async function GET(
   const scheme = schemes.find((s) => s.id === batch.schemeId);
   const schemeTitle = scheme
     ? scheme.name.replace(/\s*\(SKM\/[^)]+\)/i, "").trim()
-    : batch.name;
+    : "Skema Tersertifikasi";
   const schemeNumber = extractSchemeNumber(
     scheme?.name,
     scheme?.manifest?.decisionRuleRef,

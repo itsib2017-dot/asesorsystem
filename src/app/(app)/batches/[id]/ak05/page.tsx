@@ -44,14 +44,14 @@ export default async function Ak05Page({
   const scheme = schemes.find((s) => s.id === batch.schemeId);
   const schemeTitle = scheme
     ? scheme.name.replace(/\s*\(SKM\/[^)]+\)/i, "").trim()
-    : batch.name;
+    : "Skema Tersertifikasi (lihat Pengaturan Skema)";
   const schemeNumber = extractSchemeNumber(
     scheme?.name,
     scheme?.manifest?.decisionRuleRef,
   );
 
   const unconfirmedCount = assessees.filter(
-    (a) => a.status === "needs_human" && !a.certificateNameConfirmed,
+    (a) => !a.certificateNameConfirmed,
   ).length;
 
   return (

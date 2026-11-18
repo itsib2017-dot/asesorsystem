@@ -18,7 +18,11 @@ export const metadata: Metadata = {
     "Platform manajemen asesmen kompetensi, verifikasi KTP, analisis DIT, penilaian tertulis FR.IA.06, dan pelaporan FR.AK.05.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html
       lang="id"
