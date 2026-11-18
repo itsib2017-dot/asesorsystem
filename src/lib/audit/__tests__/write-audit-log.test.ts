@@ -29,6 +29,35 @@ describe("writeAuditLog", () => {
     expect(correlationId).toBeDefined();
   });
 
+  it("resolves lsp_id automatically via lsp_memberships when omitted", async () => {
+    const mockInsert = vi.fn().mockResolvedValue({ error: null });
+    const mockMaybeSingle = vi.fn().mockResolvedValue({ data: { lsp_id: "lsp-99" } });
+    const mockLimit = vi.fn().mockReturnValue({ maybeSingle: mockMaybeSingle });
+    const mockEq = vi.fn().mockReturnValue({ limit: mockLimit });
+    const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+    const mockFrom = vi.fn((table: string) =>
+      table === "lsp_memberships" ? { select: mockSelect } : { insert: mockInsert },
+    );
+    const mockClient = { from: mockFrom } as unknown as SupabaseClient;
+
+    await writeAuditLog(
+      {
+        action: "provider_settings.update",
+        resource: "assessor_llm_config",
+        actor_id: "user-99",
+      },
+      mockClient,
+    );
+
+    expect(mockInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lsp_id: "lsp-99",
+        actor_id: "user-99",
+        action: "provider_settings.update",
+      }),
+    );
+  });
+
   it("does not throw if insert returns a database error", async () => {
     const mockInsert = vi.fn().mockResolvedValue({
       error: { message: "database offline" },

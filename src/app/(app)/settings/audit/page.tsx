@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
+import { isUuid } from "@/db";
 import { getUser } from "@/lib/auth/get-session";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { listAuditLogsForUser } from "@/repositories/audit.repository";
@@ -7,6 +8,22 @@ import { listAuditLogsForUser } from "@/repositories/audit.repository";
 export const metadata = {
   title: "Log Audit Aktivitas — AsesorKompetensi",
 };
+
+function formatAuditSummary(summary: Record<string, unknown> | null): string {
+  if (!summary) return "-";
+  const preferredKeys = ["name", "code", "provider", "model", "mimeType", "scannedFiles", "status"];
+  const parts: string[] = [];
+  for (const key of preferredKeys) {
+    if (summary[key] !== undefined && summary[key] !== null && summary[key] !== "") {
+      parts.push(`${key}: ${String(summary[key])}`);
+    }
+  }
+  if (parts.length > 0) return parts.join(" · ");
+  const entries = Object.entries(summary).slice(0, 3);
+  return entries.length > 0
+    ? entries.map(([k, v]) => `${k}: ${String(v)}`).join(" · ")
+    : "-";
+}
 
 export default async function AuditLogPage() {
   const user = await getUser();
@@ -51,37 +68,57 @@ export default async function AuditLogPage() {
           <table className="w-full text-xs text-left table-fixed">
             <thead className="bg-slate-50 border-b border-slate-200 uppercase text-slate-600">
               <tr>
-                <th className="py-3 px-3 w-36">Waktu (UTC)</th>
-                <th className="py-3 px-3 w-24">Aktor</th>
+                <th className="py-3 px-3 w-36">Waktu</th>
+                <th className="py-3 px-3 w-32">Aktor</th>
                 <th className="py-3 px-3 w-40">Aksi</th>
-                <th className="py-3 px-3 w-32">Resource</th>
+                <th className="py-3 px-3 w-28">Resource</th>
                 <th className="py-3 px-3 w-44">Resource ID</th>
-                <th className="py-3 px-3">Correlation ID</th>
+                <th className="py-3 px-3">Ringkasan / Correlation ID</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {logs.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-50/60 align-top">
-                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600 break-words">
-                    {row.createdAt}
-                  </td>
-                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700" title={row.actorId || undefined}>
-                    {row.actorId ? row.actorId.slice(0, 8) : "-"}
-                  </td>
-                  <td className="py-2.5 px-3 font-semibold text-slate-900 break-words">
-                    {row.action}
-                  </td>
-                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700 break-words">
-                    {row.resource}
-                  </td>
-                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-500 break-all">
-                    {row.resourceId || "-"}
-                  </td>
-                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 break-all">
-                    {row.correlationId}
-                  </td>
-                </tr>
-              ))}
+              {logs.map((row) => {
+                const isBatchLink = row.resource === "batches" && isUuid(row.resourceId);
+                return (
+                  <tr key={row.id} className="hover:bg-slate-50/60 align-top">
+                    <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600 break-words">
+                      {row.createdAt}
+                    </td>
+                    <td className="py-2.5 px-3 text-[11px] text-slate-700 break-words" title={row.actorId || undefined}>
+                      <div className="font-medium text-slate-900">
+                        {row.actorName || "Sistem"}
+                      </div>
+                      <div className="font-mono text-[10px] text-slate-500">
+                        {row.actorId ? row.actorId.slice(0, 8) : "-"}
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-3 font-semibold text-slate-900 break-words">
+                      {row.action}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700 break-words">
+                      {row.resource}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono text-[11px] text-slate-500 break-all">
+                      {isBatchLink && row.resourceId ? (
+                        <Link
+                          href={`/batches/${row.resourceId}`}
+                          className="text-teal-700 hover:underline font-medium"
+                        >
+                          {row.resourceId}
+                        </Link>
+                      ) : (
+                        row.resourceId || "-"
+                      )}
+                    </td>
+                    <td className="py-2.5 px-3 text-[11px] text-slate-600 break-words space-y-0.5">
+                      <div>{formatAuditSummary(row.afterSummary)}</div>
+                      <div className="font-mono text-[10px] text-slate-400 break-all">
+                        corr: {row.correlationId}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
