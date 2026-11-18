@@ -1,5 +1,5 @@
 import { desc, eq } from "drizzle-orm";
-import { hasDatabaseUrl, isUuid, withRlsTransaction } from "@/db";
+import { hasDatabaseUrl, isUuid, runRepositoryDualPath, withRlsTransaction } from "@/db";
 import { assessees, batches, batchAssessors, driveFiles } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -421,39 +421,34 @@ export async function updateDriveFileExtraction(params: {
   ocrConfidence?: number | null;
 }): Promise<void> {
   const now = new Date();
-  if (hasDatabaseUrl()) {
-    try {
-      await withRlsTransaction(params.userId, (tx) =>
-        tx
-          .update(driveFiles)
-          .set({
-            extractedText: params.extractedText,
-            extractionMethod: params.extractionMethod,
-            ocrConfidence:
-              params.ocrConfidence != null ? params.ocrConfidence.toFixed(4) : null,
-            updatedAt: now,
-          })
-          .where(eq(driveFiles.id, params.fileId)),
-      );
-      return;
-    } catch (err) {
-      console.warn(
-        "[BatchesRepository Warning] Direct DB updateDriveFileExtraction fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
-
-  const supabase = await getSupabaseServerClient();
-  await supabase
-    .from("drive_files")
-    .update({
-      extracted_text: params.extractedText,
-      extraction_method: params.extractionMethod,
-      ocr_confidence: params.ocrConfidence ?? null,
-      updated_at: now.toISOString(),
-    })
-    .eq("id", params.fileId);
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "BatchesRepository.updateDriveFileExtraction",
+    drizzle: async (tx) => {
+      await tx
+        .update(driveFiles)
+        .set({
+          extractedText: params.extractedText,
+          extractionMethod: params.extractionMethod,
+          ocrConfidence:
+            params.ocrConfidence != null ? params.ocrConfidence.toFixed(4) : null,
+          updatedAt: now,
+        })
+        .where(eq(driveFiles.id, params.fileId));
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase
+        .from("drive_files")
+        .update({
+          extracted_text: params.extractedText,
+          extraction_method: params.extractionMethod,
+          ocr_confidence: params.ocrConfidence ?? null,
+          updated_at: now.toISOString(),
+        })
+        .eq("id", params.fileId);
+    },
+  });
 }
 
 export interface BatchResourceCounts {
@@ -471,38 +466,33 @@ export async function listBatchResourceCountsForUser(
     counts.set(batchId, entry);
   };
 
-  if (hasDatabaseUrl()) {
-    try {
-      const { aRows, fRows } = await withRlsTransaction(userId, async (tx) => {
-        const [aRows, fRows] = await Promise.all([
-          tx.select({ batchId: assessees.batchId }).from(assessees),
-          tx.select({ batchId: driveFiles.batchId }).from(driveFiles),
-        ]);
-        return { aRows, fRows };
-      });
+  return runRepositoryDualPath({
+    userId,
+    label: "BatchesRepository.listBatchResourceCounts",
+    drizzle: async (tx) => {
+      const [aRows, fRows] = await Promise.all([
+        tx.select({ batchId: assessees.batchId }).from(assessees),
+        tx.select({ batchId: driveFiles.batchId }).from(driveFiles),
+      ]);
       for (const r of aRows) bump(r.batchId, "assesseeCount");
       for (const r of fRows) bump(r.batchId, "fileCount");
       return counts;
-    } catch (err) {
-      console.warn(
-        "[BatchesRepository Warning] Direct DB listBatchResourceCounts fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const [{ data: aRows }, { data: fRows }] = await Promise.all([
+        supabase.from("assessees").select("batch_id"),
+        supabase.from("drive_files").select("batch_id"),
+      ]);
 
-  const supabase = await getSupabaseServerClient();
-  const [{ data: aRows }, { data: fRows }] = await Promise.all([
-    supabase.from("assessees").select("batch_id"),
-    supabase.from("drive_files").select("batch_id"),
-  ]);
+      for (const r of aRows ?? []) {
+        if (r.batch_id) bump(String(r.batch_id), "assesseeCount");
+      }
+      for (const r of fRows ?? []) {
+        if (r.batch_id) bump(String(r.batch_id), "fileCount");
+      }
 
-  for (const r of aRows ?? []) {
-    if (r.batch_id) bump(String(r.batch_id), "assesseeCount");
-  }
-  for (const r of fRows ?? []) {
-    if (r.batch_id) bump(String(r.batch_id), "fileCount");
-  }
-
-  return counts;
+      return counts;
+    },
+  });
 }

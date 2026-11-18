@@ -1,5 +1,5 @@
 import { desc, eq } from "drizzle-orm";
-import { hasDatabaseUrl, isUuid, withRlsTransaction } from "@/db";
+import { hasDatabaseUrl, isUuid, runRepositoryDualPath, withRlsTransaction } from "@/db";
 import { jobs } from "@/db/schema";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -53,52 +53,47 @@ export async function enqueueJobRecord(params: {
   type: string;
   payload: Record<string, unknown>;
 }): Promise<{ ok: true; job: JobRecord } | { ok: false; error: string }> {
-  if (hasDatabaseUrl()) {
-    try {
-      const [row] = await withRlsTransaction(params.createdBy, (tx) =>
-        tx
-          .insert(jobs)
-          .values({
-            createdBy: params.createdBy,
-            type: params.type,
-            status: "pending",
-            payload: params.payload,
-            progress: 0,
-          })
-          .returning(),
-      );
-      if (row) {
-        return { ok: true, job: mapDrizzleJobRow(row) };
+  return runRepositoryDualPath({
+    userId: params.createdBy,
+    label: "JobsRepository.enqueueJob",
+    drizzle: async (tx) => {
+      const [row] = await tx
+        .insert(jobs)
+        .values({
+          createdBy: params.createdBy,
+          type: params.type,
+          status: "pending",
+          payload: params.payload,
+          progress: 0,
+        })
+        .returning();
+      if (!row) throw new Error("Empty returning row");
+      return { ok: true as const, job: mapDrizzleJobRow(row) };
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data, error } = await supabase
+        .from("jobs")
+        .insert({
+          created_by: params.createdBy,
+          type: params.type,
+          status: "pending",
+          payload: params.payload,
+          progress: 0,
+        })
+        .select("*")
+        .single();
+
+      if (error || !data) {
+        return { ok: false as const, error: error?.message ?? "Failed to enqueue job" };
       }
-    } catch (err) {
-      console.warn(
-        "[JobsRepository Warning] Direct DB enqueue fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
 
-  const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .insert({
-      created_by: params.createdBy,
-      type: params.type,
-      status: "pending",
-      payload: params.payload,
-      progress: 0,
-    })
-    .select("*")
-    .single();
-
-  if (error || !data) {
-    return { ok: false, error: error?.message ?? "Failed to enqueue job" };
-  }
-
-  return {
-    ok: true,
-    job: mapSupabaseJobRow(data as Record<string, unknown>),
-  };
+      return {
+        ok: true as const,
+        job: mapSupabaseJobRow(data as Record<string, unknown>),
+      };
+    },
+  });
 }
 
 export async function getJobRecordById(
@@ -106,64 +101,56 @@ export async function getJobRecordById(
   jobId: string,
 ): Promise<JobRecord | null> {
   if (!isUuid(jobId)) return null;
-  if (hasDatabaseUrl()) {
-    try {
-      const rows = await withRlsTransaction(userId, (tx) =>
-        tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1),
-      );
+  return runRepositoryDualPath({
+    userId,
+    label: "JobsRepository.getJob",
+    drizzle: async (tx) => {
+      const rows = await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
       const row = rows[0];
       return row ? mapDrizzleJobRow(row) : null;
-    } catch (err) {
-      console.warn(
-        "[JobsRepository Warning] Direct DB getJob fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data, error } = await supabase
+        .from("jobs")
+        .select("*")
+        .eq("id", jobId)
+        .maybeSingle();
 
-  const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("*")
-    .eq("id", jobId)
-    .maybeSingle();
-
-  if (error || !data) return null;
-  return mapSupabaseJobRow(data as Record<string, unknown>);
+      if (error || !data) return null;
+      return mapSupabaseJobRow(data as Record<string, unknown>);
+    },
+  });
 }
 
 export async function listJobsForUser(
   userId: string,
   limit = 20,
 ): Promise<JobRecord[]> {
-  if (hasDatabaseUrl()) {
-    try {
-      const rows = await withRlsTransaction(userId, (tx) =>
-        tx
-          .select()
-          .from(jobs)
-          .where(eq(jobs.createdBy, userId))
-          .orderBy(desc(jobs.createdAt))
-          .limit(limit),
-      );
+  return runRepositoryDualPath({
+    userId,
+    label: "JobsRepository.listJobs",
+    drizzle: async (tx) => {
+      const rows = await tx
+        .select()
+        .from(jobs)
+        .where(eq(jobs.createdBy, userId))
+        .orderBy(desc(jobs.createdAt))
+        .limit(limit);
       return rows.map(mapDrizzleJobRow);
-    } catch (err) {
-      console.warn(
-        "[JobsRepository Warning] Direct DB listJobs fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("jobs")
+        .select("*")
+        .eq("created_by", userId)
+        .order("created_at", { ascending: false })
+        .limit(limit);
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase
-    .from("jobs")
-    .select("*")
-    .eq("created_by", userId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  return (data ?? []).map((row) => mapSupabaseJobRow(row as Record<string, unknown>));
+      return (data ?? []).map((row) => mapSupabaseJobRow(row as Record<string, unknown>));
+    },
+  });
 }
 
 export async function getLatestJobForBatch(

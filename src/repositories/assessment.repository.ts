@@ -1,5 +1,5 @@
 import { desc, eq } from "drizzle-orm";
-import { hasDatabaseUrl, withRlsTransaction } from "@/db";
+import { hasDatabaseUrl, runRepositoryDualPath, withRlsTransaction } from "@/db";
 import {
   ditAnalyses,
   writtenGradings,
@@ -323,98 +323,93 @@ export async function saveSimilarityPairsForBatch(params: {
 }): Promise<void> {
   if (params.pairs.length === 0) return;
 
-  if (hasDatabaseUrl()) {
-    try {
-      await withRlsTransaction(params.userId, async (tx) => {
-        const existing = await tx
-          .select({
-            id: similarityPairs.id,
-            scope: similarityPairs.scope,
-            assesseeAId: similarityPairs.assesseeAId,
-            assesseeBId: similarityPairs.assesseeBId,
-          })
-          .from(similarityPairs)
-          .where(eq(similarityPairs.batchId, params.batchId));
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssessmentRepository.saveSimilarityPairs",
+    drizzle: async (tx) => {
+      const existing = await tx
+        .select({
+          id: similarityPairs.id,
+          scope: similarityPairs.scope,
+          assesseeAId: similarityPairs.assesseeAId,
+          assesseeBId: similarityPairs.assesseeBId,
+        })
+        .from(similarityPairs)
+        .where(eq(similarityPairs.batchId, params.batchId));
 
-        const existingMap = new Map(
-          existing.map((r) => [`${r.scope}:${r.assesseeAId}:${r.assesseeBId}`, r.id]),
-        );
+      const existingMap = new Map(
+        existing.map((r) => [`${r.scope}:${r.assesseeAId}:${r.assesseeBId}`, r.id]),
+      );
 
-        for (const p of params.pairs) {
-          const existingId = existingMap.get(`${p.scope}:${p.assesseeAId}:${p.assesseeBId}`);
-          if (existingId) {
-            await tx
-              .update(similarityPairs)
-              .set({
-                jaccardScore: p.jaccardScore.toFixed(4),
-                tfidfCosine: p.tfidfCosine.toFixed(4),
-                sharedSpans: p.sharedSpans,
-                verdict: p.verdict,
-              })
-              .where(eq(similarityPairs.id, existingId));
-          } else {
-            await tx.insert(similarityPairs).values({
-              lspId: params.lspId,
-              batchId: params.batchId,
-              scope: p.scope,
-              assesseeAId: p.assesseeAId,
-              assesseeBId: p.assesseeBId,
+      for (const p of params.pairs) {
+        const existingId = existingMap.get(`${p.scope}:${p.assesseeAId}:${p.assesseeBId}`);
+        if (existingId) {
+          await tx
+            .update(similarityPairs)
+            .set({
               jaccardScore: p.jaccardScore.toFixed(4),
               tfidfCosine: p.tfidfCosine.toFixed(4),
               sharedSpans: p.sharedSpans,
               verdict: p.verdict,
-            });
-          }
+            })
+            .where(eq(similarityPairs.id, existingId));
+        } else {
+          await tx.insert(similarityPairs).values({
+            lspId: params.lspId,
+            batchId: params.batchId,
+            scope: p.scope,
+            assesseeAId: p.assesseeAId,
+            assesseeBId: p.assesseeBId,
+            jaccardScore: p.jaccardScore.toFixed(4),
+            tfidfCosine: p.tfidfCosine.toFixed(4),
+            sharedSpans: p.sharedSpans,
+            verdict: p.verdict,
+          });
         }
-      });
-      return;
-    } catch (err) {
-      console.warn(
-        "[AssessmentRepository Warning] Direct DB saveSimilarityPairs fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
-
-  const supabase = await getSupabaseServerClient();
-  const { data: existingRows } = await supabase
-    .from("similarity_pairs")
-    .select("id, scope, assessee_a_id, assessee_b_id")
-    .eq("batch_id", params.batchId);
-
-  const existingMap = new Map<string, string>(
-    (existingRows ?? []).map((r) => [
-      `${String(r.scope)}:${String(r.assessee_a_id)}:${String(r.assessee_b_id)}`,
-      String(r.id),
-    ]),
-  );
-
-  for (const p of params.pairs) {
-    const existingId = existingMap.get(`${p.scope}:${p.assesseeAId}:${p.assesseeBId}`);
-    if (existingId) {
-      await supabase
+      }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data: existingRows } = await supabase
         .from("similarity_pairs")
-        .update({
-          jaccard_score: p.jaccardScore,
-          tfidf_cosine: p.tfidfCosine,
-          shared_spans: p.sharedSpans,
-          verdict: p.verdict,
-        })
-        .eq("id", existingId);
-    } else {
-      await supabase.from("similarity_pairs").insert({
-        lsp_id: params.lspId,
-        batch_id: params.batchId,
-        scope: p.scope,
-        assessee_a_id: p.assesseeAId,
-        assessee_b_id: p.assesseeBId,
-        jaccard_score: p.jaccardScore,
-        tfidf_cosine: p.tfidfCosine,
-        shared_spans: p.sharedSpans,
-        verdict: p.verdict,
-      });
-    }
-  }
+        .select("id, scope, assessee_a_id, assessee_b_id")
+        .eq("batch_id", params.batchId);
+
+      const existingMap = new Map<string, string>(
+        (existingRows ?? []).map((r) => [
+          `${String(r.scope)}:${String(r.assessee_a_id)}:${String(r.assessee_b_id)}`,
+          String(r.id),
+        ]),
+      );
+
+      for (const p of params.pairs) {
+        const existingId = existingMap.get(`${p.scope}:${p.assesseeAId}:${p.assesseeBId}`);
+        if (existingId) {
+          await supabase
+            .from("similarity_pairs")
+            .update({
+              jaccard_score: p.jaccardScore,
+              tfidf_cosine: p.tfidfCosine,
+              shared_spans: p.sharedSpans,
+              verdict: p.verdict,
+            })
+            .eq("id", existingId);
+        } else {
+          await supabase.from("similarity_pairs").insert({
+            lsp_id: params.lspId,
+            batch_id: params.batchId,
+            scope: p.scope,
+            assessee_a_id: p.assesseeAId,
+            assessee_b_id: p.assesseeBId,
+            jaccard_score: p.jaccardScore,
+            tfidf_cosine: p.tfidfCosine,
+            shared_spans: p.sharedSpans,
+            verdict: p.verdict,
+          });
+        }
+      }
+    },
+  });
 }
 
 export async function saveAk05ReportForBatch(params: {
@@ -431,45 +426,40 @@ export async function saveAk05ReportForBatch(params: {
   notesImprovement?: string;
   signatureId?: string | null;
 }): Promise<void> {
-  if (hasDatabaseUrl()) {
-    try {
-      await withRlsTransaction(params.userId, (tx) =>
-        tx.insert(ak05Reports).values({
-          lspId: params.lspId,
-          batchId: params.batchId,
-          assessorId: params.assessorId,
-          assessorRegNo: params.assessorRegNo ?? null,
-          tukType: params.tukType,
-          status: params.status ?? "draft",
-          rows: params.rows,
-          notesPositiveNegative: params.notesPositiveNegative ?? "",
-          notesRejection: params.notesRejection ?? "",
-          notesImprovement: params.notesImprovement ?? "",
-          signatureId: params.signatureId ?? null,
-        }),
-      );
-      return;
-    } catch (err) {
-      console.warn(
-        "[AssessmentRepository Warning] Direct DB saveAk05Report fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
-
-  const supabase = await getSupabaseServerClient();
-  await supabase.from("ak05_reports").insert({
-    lsp_id: params.lspId,
-    batch_id: params.batchId,
-    assessor_id: params.assessorId,
-    assessor_reg_no: params.assessorRegNo ?? null,
-    tuk_type: params.tukType,
-    status: params.status ?? "draft",
-    rows: params.rows,
-    notes_positive_negative: params.notesPositiveNegative ?? "",
-    notes_rejection: params.notesRejection ?? "",
-    notes_improvement: params.notesImprovement ?? "",
-    signature_id: params.signatureId ?? null,
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssessmentRepository.saveAk05Report",
+    drizzle: async (tx) => {
+      await tx.insert(ak05Reports).values({
+        lspId: params.lspId,
+        batchId: params.batchId,
+        assessorId: params.assessorId,
+        assessorRegNo: params.assessorRegNo ?? null,
+        tukType: params.tukType,
+        status: params.status ?? "draft",
+        rows: params.rows,
+        notesPositiveNegative: params.notesPositiveNegative ?? "",
+        notesRejection: params.notesRejection ?? "",
+        notesImprovement: params.notesImprovement ?? "",
+        signatureId: params.signatureId ?? null,
+      });
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase.from("ak05_reports").insert({
+        lsp_id: params.lspId,
+        batch_id: params.batchId,
+        assessor_id: params.assessorId,
+        assessor_reg_no: params.assessorRegNo ?? null,
+        tuk_type: params.tukType,
+        status: params.status ?? "draft",
+        rows: params.rows,
+        notes_positive_negative: params.notesPositiveNegative ?? "",
+        notes_rejection: params.notesRejection ?? "",
+        notes_improvement: params.notesImprovement ?? "",
+        signature_id: params.signatureId ?? null,
+      });
+    },
   });
 }
 
@@ -510,43 +500,38 @@ export async function saveInterviewAssessment(params: {
   assessorNotes: string;
 }): Promise<void> {
   const now = new Date();
-  if (hasDatabaseUrl()) {
-    try {
-      await withRlsTransaction(params.userId, (tx) =>
-        tx.insert(interviewAssessments).values({
-          lspId: params.lspId,
-          batchId: params.batchId,
-          assesseeId: params.assesseeId,
-          sourceFileId: params.sourceFileId ?? null,
-          questions: params.questions,
-          overallRecommendation: params.overallRecommendation,
-          vatmUnitRecommendations: params.vatmUnitRecommendations,
-          assessorNotes: params.assessorNotes,
-          assessedBy: params.userId,
-          assessedAt: now,
-        }),
-      );
-      return;
-    } catch (err) {
-      console.warn(
-        "[AssessmentRepository Warning] Direct DB saveInterviewAssessment fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
-
-  const supabase = await getSupabaseServerClient();
-  await supabase.from("interview_assessments").insert({
-    lsp_id: params.lspId,
-    batch_id: params.batchId,
-    assessee_id: params.assesseeId,
-    source_file_id: params.sourceFileId ?? null,
-    questions: params.questions,
-    overall_recommendation: params.overallRecommendation,
-    vatm_unit_recommendations: params.vatmUnitRecommendations,
-    assessor_notes: params.assessorNotes,
-    assessed_by: params.userId,
-    assessed_at: now.toISOString(),
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssessmentRepository.saveInterviewAssessment",
+    drizzle: async (tx) => {
+      await tx.insert(interviewAssessments).values({
+        lspId: params.lspId,
+        batchId: params.batchId,
+        assesseeId: params.assesseeId,
+        sourceFileId: params.sourceFileId ?? null,
+        questions: params.questions,
+        overallRecommendation: params.overallRecommendation,
+        vatmUnitRecommendations: params.vatmUnitRecommendations,
+        assessorNotes: params.assessorNotes,
+        assessedBy: params.userId,
+        assessedAt: now,
+      });
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase.from("interview_assessments").insert({
+        lsp_id: params.lspId,
+        batch_id: params.batchId,
+        assessee_id: params.assesseeId,
+        source_file_id: params.sourceFileId ?? null,
+        questions: params.questions,
+        overall_recommendation: params.overallRecommendation,
+        vatm_unit_recommendations: params.vatmUnitRecommendations,
+        assessor_notes: params.assessorNotes,
+        assessed_by: params.userId,
+        assessed_at: now.toISOString(),
+      });
+    },
   });
 }
 
@@ -571,51 +556,46 @@ export async function upsertAiUnitRecommendations(params: {
   );
   if (validItems.length === 0) return;
 
-  if (hasDatabaseUrl()) {
-    try {
-      await withRlsTransaction(params.userId, async (tx) => {
-        for (const item of validItems) {
-          await tx
-            .insert(decisions)
-            .values({
-              lspId: params.lspId,
-              batchId: params.batchId,
-              assesseeId: params.assesseeId,
-              unitCode: item.unitCode,
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssessmentRepository.upsertAiUnitRecommendations",
+    drizzle: async (tx) => {
+      for (const item of validItems) {
+        await tx
+          .insert(decisions)
+          .values({
+            lspId: params.lspId,
+            batchId: params.batchId,
+            assesseeId: params.assesseeId,
+            unitCode: item.unitCode,
+            unitTitle: item.unitTitle,
+            aiRecommendation: item.aiRecommendation,
+            vatmReasoning: item.vatmReasoning,
+          })
+          .onConflictDoUpdate({
+            target: [decisions.assesseeId, decisions.unitCode],
+            set: {
               unitTitle: item.unitTitle,
               aiRecommendation: item.aiRecommendation,
               vatmReasoning: item.vatmReasoning,
-            })
-            .onConflictDoUpdate({
-              target: [decisions.assesseeId, decisions.unitCode],
-              set: {
-                unitTitle: item.unitTitle,
-                aiRecommendation: item.aiRecommendation,
-                vatmReasoning: item.vatmReasoning,
-              },
-            });
-        }
-      });
-      return;
-    } catch (err) {
-      console.warn(
-        "[AssessmentRepository Warning] Direct DB upsertAiUnitRecommendations fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
+            },
+          });
+      }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase.from("decisions").upsert(
+        validItems.map((item) => ({
+          lsp_id: params.lspId,
+          batch_id: params.batchId,
+          assessee_id: params.assesseeId,
+          unit_code: item.unitCode,
+          unit_title: item.unitTitle,
+          ai_recommendation: item.aiRecommendation,
+          vatm_reasoning: item.vatmReasoning,
+        })),
+        { onConflict: "assessee_id,unit_code" },
       );
-    }
-  }
-
-  const supabase = await getSupabaseServerClient();
-  await supabase.from("decisions").upsert(
-    validItems.map((item) => ({
-      lsp_id: params.lspId,
-      batch_id: params.batchId,
-      assessee_id: params.assesseeId,
-      unit_code: item.unitCode,
-      unit_title: item.unitTitle,
-      ai_recommendation: item.aiRecommendation,
-      vatm_reasoning: item.vatmReasoning,
-    })),
-    { onConflict: "assessee_id,unit_code" },
-  );
+    },
+  });
 }

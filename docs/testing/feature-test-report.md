@@ -1,7 +1,7 @@
 # Feature Test Report
 
-- **Date:** 2026-11-18
-- **Environment:** Remote Supabase (`oiplhsmmfuqriaqrxjud`) + Local Node.js `v24.22.1`
+- **Date:** 2026-11-19
+- **Environment:** Remote Supabase (`oiplhsmmfuqriaqrxjud`) + Local Node.js
 - **Authority:** `ground_rules_v5.md` (§Feature/Module Testing)
 
 ---
@@ -31,6 +31,17 @@ Executed via `supabase db query --remote --yes --file tests/rls-multi-lsp.test.s
 | `src/services/__tests__/dit.test.ts` | 2 tests (completeness gate 422, dynamic count 10 vs 13) | **PASS** | `npm test` |
 | `src/services/__tests__/no-hardcoded-values.test.ts` | 2 tests (zero literal 13 count, zero prohibited status) | **PASS** | `npm test` |
 | `src/lib/supabase/__tests__/middleware.test.ts` | 2 tests (fail-closed `/`, `/dashboard`, `/settings/provider`, `/onboarding` redirect; `/login`, `/register`, `/auth/callback`, `/api/health` pass) | **PASS** | `npm test` |
+| `src/services/__tests__/drive.test.ts` | 5 tests (Drive crawl, keyless fallback, 04b `.pptx` classification, 404 skip) | **PASS** | `npm test` |
+| `src/services/__tests__/extract-and-drive-download.test.ts` | 6 tests (OOXML/PDF text extraction, SSRF domain/redirect checks) | **PASS** | `npm test` |
+| `src/app/api/v1/dit/[assesseeId]/analyse/__tests__/route.test.ts` | 4 tests (UUID guard, completeness gate, DB `drive_files` resolution) | **PASS** | `npm test` |
+| `src/lib/ak05/__tests__/rollup.test.ts` | 4 tests (BK/K/undecided rollup across preview and exports) | **PASS** | `npm test` |
+| `src/services/__tests__/vatm-rollup.test.ts` | 2 tests (VATM multi-channel rollup incl. `FR.IA.09` interview) | **PASS** | `npm test` |
+| `src/services/__tests__/official-forms-export.test.ts` | 4 tests (Official AK3U AK.02, IA.04B, IA.06C DOCX exports) | **PASS** | `npm test` |
+| `src/worker/__tests__/worker.test.ts` | 5 tests (`extract_file`, `similarity_run`, `ocr_ktp`, inline run, unknown error) | **PASS** | `npm test` |
+| `src/lib/written/__tests__/ooxml-decrypt.test.ts` | 3 tests (CFB + MS-OFFCRYPTO Agile v4.4 missing/wrong/valid password) | **PASS** | `npm test` |
+| `src/lib/similarity/__tests__/load-batch-similarity.test.ts` | 2 tests (Provisional uncalibrated notice & per-assessee written summaries) | **PASS** | `npm test` |
+| `src/lib/forms/__tests__/scheme-manifest-portability.test.ts` | 2 tests (Non-AK3U manifest units, KP, doc columns, branding) | **PASS** | `npm test` |
+| `src/db/__tests__/dual-path.test.ts` | 4 tests (`runRepositoryDualPath` REST bypass, Drizzle RLS tx, fallback, strict) | **PASS** | `npm test` |
 
 ---
 
@@ -39,7 +50,7 @@ Executed via `supabase db query --remote --yes --file tests/rls-multi-lsp.test.s
 | Gate | Command | Result |
 | :--- | :--- | :--- |
 | TypeScript Strict | `npm run typecheck` | **PASS (0 errors)** |
-| ESLint Zero Warnings | `npx eslint . --ext .ts,.tsx --max-warnings 0` | **PASS (0 warnings)** |
-| Vitest Unit Suite | `npm test` | **PASS (11 files, 28/28 tests)** |
-| Production Build | `npm run build` | **PASS (24 routes + `/_not-found` + `Proxy (Middleware)`)** |
-| Supabase Advisors | `supabase db advisors --remote` | **PASS (0 issues)** |
+| ESLint Zero Warnings | `npm run lint` | **PASS (0 warnings)** |
+| Vitest Unit Suite | `npm test` | **PASS (22 files, 73/73 tests)** |
+| Production Build | `npm run build` | **PASS (35 routes incl. `/_not-found` + `Proxy (Middleware)`)** |
+| Multi-LSP Postgres RLS | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS (32/32 tests)** |

@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { hasDatabaseUrl, withRlsTransaction } from "@/db";
+import { runRepositoryDualPath } from "@/db";
 import { lspMemberships, assessors } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -28,100 +28,87 @@ export async function findAssessorRoleForLsp(
   lspId: string,
   assessorId: string,
 ): Promise<LspRole | null> {
-  if (hasDatabaseUrl()) {
-    try {
-      const rows = await withRlsTransaction(assessorId, (tx) =>
-        tx
-          .select({ role: lspMemberships.role })
-          .from(lspMemberships)
-          .where(
-            and(
-              eq(lspMemberships.lspId, lspId),
-              eq(lspMemberships.assessorId, assessorId),
-            ),
-          )
-          .limit(1),
-      );
+  return runRepositoryDualPath({
+    userId: assessorId,
+    label: "AuthRepository.findAssessorRoleForLsp",
+    drizzle: async (tx) => {
+      const rows = await tx
+        .select({ role: lspMemberships.role })
+        .from(lspMemberships)
+        .where(
+          and(
+            eq(lspMemberships.lspId, lspId),
+            eq(lspMemberships.assessorId, assessorId),
+          ),
+        )
+        .limit(1);
       return rows[0]?.role ?? null;
-    } catch (err) {
-      console.warn(
-        "[AuthRepository Warning] Role direct DB fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data, error } = await supabase
+        .from("lsp_memberships")
+        .select("role")
+        .eq("lsp_id", lspId)
+        .eq("assessor_id", assessorId)
+        .maybeSingle();
 
-  const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("lsp_memberships")
-    .select("role")
-    .eq("lsp_id", lspId)
-    .eq("assessor_id", assessorId)
-    .maybeSingle();
-
-  if (error || !data) return null;
-  return data.role as LspRole;
+      if (error || !data) return null;
+      return data.role as LspRole;
+    },
+  });
 }
 
 export async function listUserMemberships(assessorId: string) {
-  if (hasDatabaseUrl()) {
-    try {
-      return await withRlsTransaction(assessorId, (tx) =>
-        tx
-          .select({
-            lspId: lspMemberships.lspId,
-            role: lspMemberships.role,
-          })
-          .from(lspMemberships)
-          .where(eq(lspMemberships.assessorId, assessorId)),
-      );
-    } catch (err) {
-      console.warn(
-        "[AuthRepository Warning] Direct DB fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
+  return runRepositoryDualPath({
+    userId: assessorId,
+    label: "AuthRepository.listUserMemberships",
+    drizzle: (tx) =>
+      tx
+        .select({
+          lspId: lspMemberships.lspId,
+          role: lspMemberships.role,
+        })
+        .from(lspMemberships)
+        .where(eq(lspMemberships.assessorId, assessorId)),
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("lsp_memberships")
+        .select("lsp_id, role")
+        .eq("assessor_id", assessorId);
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase
-    .from("lsp_memberships")
-    .select("lsp_id, role")
-    .eq("assessor_id", assessorId);
-
-  return (data ?? []).map((row) => ({
-    lspId: row.lsp_id as string,
-    role: row.role as LspRole,
-  }));
+      return (data ?? []).map((row) => ({
+        lspId: row.lsp_id as string,
+        role: row.role as LspRole,
+      }));
+    },
+  });
 }
 
 export async function getAssessorProfile(assessorId: string) {
-  if (hasDatabaseUrl()) {
-    try {
-      const rows = await withRlsTransaction(assessorId, (tx) =>
-        tx
-          .select()
-          .from(assessors)
-          .where(eq(assessors.id, assessorId))
-          .limit(1),
-      );
+  return runRepositoryDualPath({
+    userId: assessorId,
+    label: "AuthRepository.getAssessorProfile",
+    drizzle: async (tx) => {
+      const rows = await tx
+        .select()
+        .from(assessors)
+        .where(eq(assessors.id, assessorId))
+        .limit(1);
       return rows[0] ?? null;
-    } catch (err) {
-      console.warn(
-        "[AuthRepository Warning] Profile direct DB fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("assessors")
+        .select("*")
+        .eq("id", assessorId)
+        .maybeSingle();
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase
-    .from("assessors")
-    .select("*")
-    .eq("id", assessorId)
-    .maybeSingle();
-
-  return data ?? null;
+      return data ?? null;
+    },
+  });
 }
 
 /**

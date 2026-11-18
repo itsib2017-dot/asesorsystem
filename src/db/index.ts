@@ -29,13 +29,14 @@ export function getDb() {
 }
 
 export type DrizzleDb = ReturnType<typeof getDb>;
+export type RlsTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
 
 /**
  * Executes a Drizzle operation inside a transaction scoped by RLS JWT claims (ADR-0004).
  */
 export async function withRlsTransaction<T>(
   userId: string,
-  fn: (tx: Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0]) => Promise<T>,
+  fn: (tx: RlsTx) => Promise<T>,
 ): Promise<T> {
   const db = getDb();
   const claims = JSON.stringify({ sub: userId, role: "authenticated" });
@@ -45,4 +46,34 @@ export async function withRlsTransaction<T>(
     await tx.execute(sql`select set_config('request.jwt.claims', ${claims}, true)`);
     return fn(tx);
   });
+}
+
+export interface DualPathOptions<T> {
+  userId: string;
+  label: string;
+  drizzle: (tx: RlsTx) => Promise<T>;
+  supabase: () => Promise<T>;
+  fallbackOnError?: boolean;
+}
+
+/**
+ * Runs a Drizzle + RLS transaction when direct DB access is enabled, falling back cleanly
+ * to the Supabase PostgREST path (which carries the caller's JWT cookies) on disabled/transient failures.
+ */
+export async function runRepositoryDualPath<T>(options: DualPathOptions<T>): Promise<T> {
+  if (hasDatabaseUrl()) {
+    try {
+      return await withRlsTransaction(options.userId, options.drizzle);
+    } catch (err) {
+      if (options.fallbackOnError === false) {
+        throw err;
+      }
+      console.warn(
+        `[${options.label} Warning] Direct DB fallback to Supabase REST:`,
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
+  }
+
+  return options.supabase();
 }

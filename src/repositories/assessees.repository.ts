@@ -1,5 +1,5 @@
 import { eq, desc } from "drizzle-orm";
-import { hasDatabaseUrl, isUuid, withRlsTransaction } from "@/db";
+import { hasDatabaseUrl, isUuid, runRepositoryDualPath, withRlsTransaction } from "@/db";
 import { assessees, nameJuryVerdicts } from "@/db/schema";
 import { normalisePersonName } from "@/lib/names";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -222,61 +222,56 @@ export async function saveNameJuryVerdictAndOcr(params: {
   promptVersion: string;
 }): Promise<void> {
   const now = new Date();
-  if (hasDatabaseUrl()) {
-    try {
-      await withRlsTransaction(params.userId, async (tx) => {
-        if (params.ktpNameOcr !== undefined) {
-          await tx
-            .update(assessees)
-            .set({
-              ktpNameOcr: params.ktpNameOcr,
-              updatedAt: now,
-            })
-            .where(eq(assessees.id, params.assesseeId));
-        }
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssesseesRepository.saveNameJuryVerdict",
+    drizzle: async (tx) => {
+      if (params.ktpNameOcr !== undefined) {
+        await tx
+          .update(assessees)
+          .set({
+            ktpNameOcr: params.ktpNameOcr,
+            updatedAt: now,
+          })
+          .where(eq(assessees.id, params.assesseeId));
+      }
 
-        await tx.insert(nameJuryVerdicts).values({
-          lspId: params.lspId,
-          assesseeId: params.assesseeId,
-          verdict: params.verdict,
-          proposedCertificateName: params.proposedCertificateName,
-          reasoning: params.reasoning,
-          evidence: params.evidence,
-          ocrConfidence: params.ocrConfidence.toFixed(4),
-          model: params.model,
-          promptVersion: params.promptVersion,
-        });
+      await tx.insert(nameJuryVerdicts).values({
+        lspId: params.lspId,
+        assesseeId: params.assesseeId,
+        verdict: params.verdict,
+        proposedCertificateName: params.proposedCertificateName,
+        reasoning: params.reasoning,
+        evidence: params.evidence,
+        ocrConfidence: params.ocrConfidence.toFixed(4),
+        model: params.model,
+        promptVersion: params.promptVersion,
       });
-      return;
-    } catch (err) {
-      console.warn(
-        "[AssesseesRepository Warning] Direct DB saveNameJuryVerdict fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
-      );
-    }
-  }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      if (params.ktpNameOcr !== undefined) {
+        await supabase
+          .from("assessees")
+          .update({
+            ktp_name_ocr: params.ktpNameOcr,
+            updated_at: now.toISOString(),
+          })
+          .eq("id", params.assesseeId);
+      }
 
-  const supabase = await getSupabaseServerClient();
-  if (params.ktpNameOcr !== undefined) {
-    await supabase
-      .from("assessees")
-      .update({
-        ktp_name_ocr: params.ktpNameOcr,
-        updated_at: now.toISOString(),
-      })
-      .eq("id", params.assesseeId);
-  }
-
-  await supabase.from("name_jury_verdicts").insert({
-    lsp_id: params.lspId,
-    assessee_id: params.assesseeId,
-    verdict: params.verdict,
-    proposed_certificate_name: params.proposedCertificateName,
-    reasoning: params.reasoning,
-    evidence: params.evidence,
-    ocr_confidence: params.ocrConfidence,
-    model: params.model,
-    prompt_version: params.promptVersion,
+      await supabase.from("name_jury_verdicts").insert({
+        lsp_id: params.lspId,
+        assessee_id: params.assesseeId,
+        verdict: params.verdict,
+        proposed_certificate_name: params.proposedCertificateName,
+        reasoning: params.reasoning,
+        evidence: params.evidence,
+        ocr_confidence: params.ocrConfidence,
+        model: params.model,
+        prompt_version: params.promptVersion,
+      });
+    },
   });
 }
 
