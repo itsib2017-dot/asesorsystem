@@ -5,6 +5,12 @@ import {
   formatAk05DateIndonesia,
   formatAk05SchemeTitle,
 } from "@/lib/ak05/format";
+import {
+  BlankoMetadataTable,
+  BlankoSheetFooter,
+  BlankoSheetHeader,
+  BlankoTitleBar,
+} from "@/components/forms/blanko-chrome";
 
 interface Ak05PreviewProps {
   batchId: string;
@@ -27,47 +33,6 @@ interface Ak05PreviewProps {
   notesPositiveNegative: string;
   notesRejection: string;
   notesImprovement: string;
-}
-
-function BlankoSheetHeader() {
-  return (
-    <div className="flex items-center justify-between gap-4 pb-3">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src="/templates/ak3u/bnsp-logo.png"
-        alt="BNSP"
-        className="h-10 w-auto object-contain"
-      />
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src="/templates/ak3u/lsp-logo.png"
-        alt="LSP K3 Nasional"
-        className="h-11 w-auto object-contain"
-      />
-    </div>
-  );
-}
-
-function BlankoSheetFooter({
-  schemeTitle,
-  pageNumber,
-}: {
-  schemeTitle: string;
-  pageNumber: number;
-}) {
-  return (
-    <div className="pt-6 mt-auto">
-      <div className="border-t-2 border-[#4472C4] pt-2 flex items-center justify-between text-[10px] text-slate-800">
-        <span className="tracking-tight">{schemeTitle}</span>
-        <div className="flex items-center gap-2">
-          <span>FR.AK.05-2024</span>
-          <span className="inline-flex items-center justify-center w-5 h-5 bg-[#A8D08D] text-white font-bold text-[11px]">
-            {pageNumber}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export function Ak05Preview(props: Ak05PreviewProps) {
@@ -170,66 +135,23 @@ export function Ak05Preview(props: Ak05PreviewProps) {
         <BlankoSheetHeader />
 
         {/* Borderless Table 0: FR.AK.05.   LAPORAN ASESMEN */}
-        <div className="flex items-baseline gap-6 text-sm font-bold pb-1">
-          <span>FR.AK.05.</span>
-          <span>LAPORAN ASESMEN</span>
-        </div>
+        <BlankoTitleBar code="FR.AK.05." title="LAPORAN ASESMEN" />
 
         {/* Table 1: Metadata Grid (Skema, TUK, Nama Asesor, Tanggal) */}
-        <table className="w-full text-xs border-collapse border border-black">
-          <tbody>
-            <tr>
-              <td
-                rowSpan={2}
-                className="border border-black p-1.5 w-[27%] align-middle leading-snug"
-              >
-                <div>Skema Sertifikasi</div>
-                <div>(KKNI/Okupasi/Klaster)</div>
-              </td>
-              <td className="border border-black p-1.5 w-[11%]">Judul</td>
-              <td className="border border-black p-1.5 w-[3%] text-center">:</td>
-              <td className="border border-black p-1.5 font-bold">{displaySchemeTitle}</td>
-            </tr>
-            <tr>
-              <td className="border border-black p-1.5">Nomor</td>
-              <td className="border border-black p-1.5 text-center">:</td>
-              <td className="border border-black p-1.5 font-bold">{props.schemeNumber}</td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border border-black p-1.5">
-                TUK
-              </td>
-              <td className="border border-black p-1.5 text-center">:</td>
-              <td className="border border-black p-1.5">
-                <span className={props.tukType === "sewaktu" ? "" : "line-through"}>
-                  Sewaktu
-                </span>
-                <span>/</span>
-                <span className={props.tukType === "tempat_kerja" ? "" : "line-through"}>
-                  Tempat Kerja
-                </span>
-                <span>/</span>
-                <span className={props.tukType === "mandiri" ? "" : "line-through"}>
-                  Mandiri*
-                </span>
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border border-black p-1.5">
-                Nama Asesor
-              </td>
-              <td className="border border-black p-1.5 text-center">:</td>
-              <td className="border border-black p-1.5">{props.assessorName}</td>
-            </tr>
-            <tr>
-              <td colSpan={2} className="border border-black p-1.5">
-                Tanggal
-              </td>
-              <td className="border border-black p-1.5 text-center">:</td>
-              <td className="border border-black p-1.5">{displayDate}</td>
-            </tr>
-          </tbody>
-        </table>
+        <BlankoMetadataTable
+          schemeTitle={displaySchemeTitle}
+          schemeNumber={props.schemeNumber}
+          tukType={props.tukType}
+          assessorName={props.assessorName}
+        >
+          <tr>
+            <td colSpan={2} className="border border-black p-1.5">
+              Tanggal
+            </td>
+            <td className="border border-black p-1.5 text-center">:</td>
+            <td className="border border-black p-1.5">{displayDate}</td>
+          </tr>
+        </BlankoMetadataTable>
 
         <p className="text-[11px] italic">*Coret yang tidak perlu</p>
 
