@@ -1,3 +1,5 @@
+import { getConfig } from "@/lib/config/get-config";
+import type { NameJuryThresholds } from "@/lib/config/types";
 import {
   computeNameSimilarity,
   isInitialAbbreviationMatch,
@@ -6,6 +8,12 @@ import {
 import { buildNameJuryPrompt, NAME_JURY_PROMPT_META } from "@/ai/prompts/name-jury.v1";
 import { nameJurySchema, type NameJuryOutput } from "@/ai/schemas";
 import { generateStructured, type RuntimeLlmConfig } from "@/ai/llm";
+
+export const DEFAULT_NAME_JURY_THRESHOLDS: NameJuryThresholds = {
+  apl01Min: 0.85,
+  suratTugasMin: 0.7,
+  ijazahMin: 0.85,
+};
 
 export interface DeterministicNameComparison {
   ktpName: string;
@@ -20,12 +28,15 @@ export interface DeterministicNameComparison {
  * Deterministic pre-jury comparison (ADR-0005).
  * KTP spelling is ALWAYS authoritative (D6).
  */
-export function compareNameSourcesDeterministic(sources: {
-  ktpOcr: string;
-  apl01: string;
-  suratTugas: string;
-  ijazah: string;
-}): DeterministicNameComparison {
+export function compareNameSourcesDeterministic(
+  sources: {
+    ktpOcr: string;
+    apl01: string;
+    suratTugas: string;
+    ijazah: string;
+  },
+  thresholds: NameJuryThresholds = DEFAULT_NAME_JURY_THRESHOLDS,
+): DeterministicNameComparison {
   const ktpNorm = normalisePersonName(sources.ktpOcr);
   const aplNorm = normalisePersonName(sources.apl01);
   const stNorm = normalisePersonName(sources.suratTugas);
@@ -43,9 +54,9 @@ export function compareNameSourcesDeterministic(sources: {
 
   const canResolveToKtp =
     ktpNorm.length > 0 &&
-    (aplSim >= 0.85 || isInitialAbbreviationMatch(sources.ktpOcr, sources.apl01)) &&
-    (stSim >= 0.7 || isInitialAbbreviationMatch(sources.ktpOcr, sources.suratTugas)) &&
-    (ijSim >= 0.85 || isInitialAbbreviationMatch(sources.ktpOcr, sources.ijazah));
+    (aplSim >= thresholds.apl01Min || isInitialAbbreviationMatch(sources.ktpOcr, sources.apl01)) &&
+    (stSim >= thresholds.suratTugasMin || isInitialAbbreviationMatch(sources.ktpOcr, sources.suratTugas)) &&
+    (ijSim >= thresholds.ijazahMin || isInitialAbbreviationMatch(sources.ktpOcr, sources.ijazah));
 
   return {
     ktpName: sources.ktpOcr.trim(),
@@ -64,6 +75,7 @@ export async function runNameJury(params: {
   nameIjazah: string;
   ocrConfidence: number;
   ocrConfidenceFloor: number;
+  thresholds?: NameJuryThresholds;
   llmConfig?: RuntimeLlmConfig;
   correlationId?: string;
 }): Promise<{ promptVersion: string; result: NameJuryOutput }> {
@@ -90,12 +102,20 @@ export async function runNameJury(params: {
     };
   }
 
-  const det = compareNameSourcesDeterministic({
-    ktpOcr: params.nameKtpOcr,
-    apl01: params.nameApl01,
-    suratTugas: params.nameSuratTugas,
-    ijazah: params.nameIjazah,
-  });
+  const configuredThresholds =
+    params.thresholds ??
+    (await getConfig("name_jury.thresholds")) ??
+    DEFAULT_NAME_JURY_THRESHOLDS;
+
+  const det = compareNameSourcesDeterministic(
+    {
+      ktpOcr: params.nameKtpOcr,
+      apl01: params.nameApl01,
+      suratTugas: params.nameSuratTugas,
+      ijazah: params.nameIjazah,
+    },
+    configuredThresholds,
+  );
 
   if (!params.llmConfig) {
     // Deterministic fallback when no LLM runtime config is supplied

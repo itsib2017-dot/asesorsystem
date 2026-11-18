@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { loginAction, type LoginState } from "../actions";
 
 interface LoginFormProps {
@@ -19,6 +20,8 @@ export function LoginForm({
     loginAction,
     {},
   );
+  const [email, setEmail] = useState(state?.email ?? "");
+  const [showPassword, setShowPassword] = useState(false);
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-2xl backdrop-blur-xl">
@@ -62,14 +65,22 @@ export function LoginForm({
       )}
 
       {hasCallbackError && (
-        <div className="mb-6 p-4 rounded-lg bg-red-950/50 border border-red-800/80 text-red-200 text-sm">
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mb-6 p-4 rounded-lg bg-red-950/50 border border-red-800/80 text-red-200 text-sm"
+        >
           Tautan verifikasi email tidak valid atau telah kedaluwarsa. Silakan
           masuk atau daftar kembali.
         </div>
       )}
 
       {state?.error && (
-        <div className="mb-6 p-4 rounded-lg bg-red-950/50 border border-red-800/80 text-red-200 text-sm">
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mb-6 p-4 rounded-lg bg-red-950/50 border border-red-800/80 text-red-200 text-sm"
+        >
           {state.error}
         </div>
       )}
@@ -89,34 +100,82 @@ export function LoginForm({
             type="email"
             autoComplete="email"
             required
-            placeholder="asesor@lsp.id"
+            value={email}
+            onChange={(e) => {
+              e.currentTarget.setCustomValidity("");
+              setEmail(e.target.value);
+            }}
+            onInvalid={(e) => {
+              const target = e.currentTarget;
+              if (target.validity.valueMissing) {
+                target.setCustomValidity("Harap masukkan alamat email Anda.");
+              } else if (target.validity.typeMismatch) {
+                target.setCustomValidity("Format alamat email tidak valid.");
+              }
+            }}
+            placeholder="nama@lsp.id"
+            aria-invalid={Boolean(state?.fieldErrors?.email)}
+            aria-describedby={state?.fieldErrors?.email ? "login-email-error" : undefined}
             className="w-full px-4 py-3 rounded-lg bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
           />
           {state?.fieldErrors?.email && (
-            <p className="text-xs text-red-400 mt-1">
+            <p id="login-email-error" role="alert" className="text-xs text-red-400 mt-1">
               {state.fieldErrors.email[0]}
             </p>
           )}
         </div>
 
         <div>
-          <label
-            htmlFor="password"
-            className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2"
-          >
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            placeholder="••••••••"
-            className="w-full px-4 py-3 rounded-lg bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-          />
+          <div className="flex items-center justify-between mb-2">
+            <label
+              htmlFor="password"
+              className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+            >
+              Password
+            </label>
+            <Link
+              href="/forgot-password"
+              className="text-xs text-indigo-400 hover:text-indigo-300 underline underline-offset-4"
+            >
+              Lupa password?
+            </Link>
+          </div>
+          <div className="relative">
+            <input
+              id="password"
+              name="password"
+              type={showPassword ? "text" : "password"}
+              autoComplete="current-password"
+              required
+              onInput={(e) => e.currentTarget.setCustomValidity("")}
+              onInvalid={(e) => {
+                if (e.currentTarget.validity.valueMissing) {
+                  e.currentTarget.setCustomValidity("Harap masukkan password Anda.");
+                }
+              }}
+              placeholder="••••••••"
+              aria-invalid={Boolean(state?.fieldErrors?.password)}
+              aria-describedby={
+                state?.fieldErrors?.password ? "login-password-error" : undefined
+              }
+              className="w-full px-4 py-3 pr-11 rounded-lg bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((prev) => !prev)}
+              aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"}
+              aria-pressed={showPassword}
+              className="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-200 cursor-pointer"
+            >
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
           {state?.fieldErrors?.password && (
-            <p className="text-xs text-red-400 mt-1">
+            <p
+              id="login-password-error"
+              role="alert"
+              className="text-xs text-red-400 mt-1"
+            >
               {state.fieldErrors.password[0]}
             </p>
           )}

@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/security/rate-limit";
+import { resolveSafeOrigin } from "@/lib/security/redirect";
 
 const registerSchema = z
   .object({
@@ -28,6 +29,8 @@ const registerSchema = z
 export type RegisterState = {
   error?: string;
   successMessage?: string;
+  fullName?: string;
+  email?: string;
   fieldErrors?: {
     fullName?: string[];
     email?: string[];
@@ -36,40 +39,35 @@ export type RegisterState = {
   };
 };
 
-function resolveSafeOrigin(hdrs: Headers): string {
-  const host = hdrs.get("x-forwarded-host") || hdrs.get("host") || "";
-  const protoHeader = hdrs.get("x-forwarded-proto") || "https";
-  const proto = protoHeader === "http" ? "http" : "https";
-
-  if (/^[a-zA-Z0-9.-]+(:\d{1,5})?$/.test(host)) {
-    return `${proto}://${host}`;
-  }
-
-  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-}
-
 export async function registerAction(
   _prevState: RegisterState | null,
   formData: FormData,
 ): Promise<RegisterState> {
+  const fullNameRaw = String(formData.get("fullName") ?? "").trim();
+  const emailRaw = String(formData.get("email") ?? "").trim();
+
   const hdrs = await headers();
   const ip = hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   const rate = checkRateLimit(`register:${ip}`, 5, 60_000);
   if (!rate.allowed) {
     return {
+      fullName: fullNameRaw,
+      email: emailRaw,
       error: `Terlalu banyak percobaan pendaftaran. Coba lagi dalam ${rate.retryAfterSeconds} detik.`,
     };
   }
 
   const parsed = registerSchema.safeParse({
-    fullName: formData.get("fullName"),
-    email: formData.get("email"),
+    fullName: fullNameRaw,
+    email: emailRaw,
     password: formData.get("password"),
     confirmPassword: formData.get("confirmPassword"),
   });
 
   if (!parsed.success) {
     return {
+      fullName: fullNameRaw,
+      email: emailRaw,
       fieldErrors: parsed.error.flatten().fieldErrors,
     };
   }
@@ -79,8 +77,9 @@ export async function registerAction(
     !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   ) {
     return {
-      error:
-        "Konfigurasi Supabase belum diatur pada server deployment.",
+      fullName: fullNameRaw,
+      email: emailRaw,
+      error: "Konfigurasi Supabase belum diatur pada server deployment.",
     };
   }
 
@@ -103,6 +102,8 @@ export async function registerAction(
     if (error) {
       console.error("[Register Error]:", error.message);
       return {
+        fullName: fullNameRaw,
+        email: emailRaw,
         error:
           "Pendaftaran gagal diproses. Pastikan email valid dan kata sandi memenuhi kebijakan.",
       };
@@ -115,6 +116,8 @@ export async function registerAction(
       err instanceof Error ? err.message : "unknown",
     );
     return {
+      fullName: fullNameRaw,
+      email: emailRaw,
       error: "Layanan pendaftaran sedang tidak tersedia. Silakan coba kembali.",
     };
   }

@@ -204,3 +204,75 @@ export async function getLatestNameJuryVerdict(
 
   return data ?? null;
 }
+
+export async function saveNameJuryVerdictAndOcr(params: {
+  userId: string;
+  lspId: string;
+  assesseeId: string;
+  ktpNameOcr?: string;
+  verdict: "match" | "mismatch_resolved" | "needs_human";
+  proposedCertificateName: string | null;
+  reasoning: string;
+  evidence: unknown;
+  ocrConfidence: number;
+  model: string;
+  promptVersion: string;
+}): Promise<void> {
+  const now = new Date();
+  if (hasDatabaseUrl()) {
+    try {
+      await withRlsTransaction(params.userId, async (tx) => {
+        if (params.ktpNameOcr !== undefined) {
+          await tx
+            .update(assessees)
+            .set({
+              ktpNameOcr: params.ktpNameOcr,
+              updatedAt: now,
+            })
+            .where(eq(assessees.id, params.assesseeId));
+        }
+
+        await tx.insert(nameJuryVerdicts).values({
+          lspId: params.lspId,
+          assesseeId: params.assesseeId,
+          verdict: params.verdict,
+          proposedCertificateName: params.proposedCertificateName,
+          reasoning: params.reasoning,
+          evidence: params.evidence,
+          ocrConfidence: params.ocrConfidence.toFixed(4),
+          model: params.model,
+          promptVersion: params.promptVersion,
+        });
+      });
+      return;
+    } catch (err) {
+      console.warn(
+        "[AssesseesRepository Warning] Direct DB saveNameJuryVerdict fallback to Supabase REST:",
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
+  }
+
+  const supabase = await getSupabaseServerClient();
+  if (params.ktpNameOcr !== undefined) {
+    await supabase
+      .from("assessees")
+      .update({
+        ktp_name_ocr: params.ktpNameOcr,
+        updated_at: now.toISOString(),
+      })
+      .eq("id", params.assesseeId);
+  }
+
+  await supabase.from("name_jury_verdicts").insert({
+    lsp_id: params.lspId,
+    assessee_id: params.assesseeId,
+    verdict: params.verdict,
+    proposed_certificate_name: params.proposedCertificateName,
+    reasoning: params.reasoning,
+    evidence: params.evidence,
+    ocr_confidence: params.ocrConfidence,
+    model: params.model,
+    prompt_version: params.promptVersion,
+  });
+}

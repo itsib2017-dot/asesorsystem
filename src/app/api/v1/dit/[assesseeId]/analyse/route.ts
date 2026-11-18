@@ -51,12 +51,31 @@ export async function POST(
   const jobRes = await enqueueJob({
     userId: user.id,
     type: "dit_analysis",
-    payload: { assesseeId, batchId: assessee.batchId },
+    payload: {
+      assesseeId,
+      batchId: assessee.batchId,
+      ...(parsed.data.frIa04aText ? { frIa04aText: parsed.data.frIa04aText } : {}),
+      ...(parsed.data.presentationTranscript
+        ? { presentationTranscript: parsed.data.presentationTranscript }
+        : {}),
+      ...(parsed.data.candidateProfileSummary
+        ? { candidateProfileSummary: parsed.data.candidateProfileSummary }
+        : {}),
+    },
   });
 
   if (!jobRes.ok) {
     return apiError("INTERNAL_ERROR", jobRes.error);
   }
 
-  return apiSuccess({ job_id: jobRes.job.id, status: "queued" }, undefined, 202);
+  return apiSuccess(
+    {
+      job_id: jobRes.job.id,
+      status: jobRes.job.status,
+      progress: jobRes.job.progress,
+      ...(jobRes.job.error ? { error: jobRes.job.error } : {}),
+    },
+    undefined,
+    202,
+  );
 }

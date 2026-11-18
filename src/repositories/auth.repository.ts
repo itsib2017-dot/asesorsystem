@@ -29,19 +29,26 @@ export async function findAssessorRoleForLsp(
   assessorId: string,
 ): Promise<LspRole | null> {
   if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(assessorId, (tx) =>
-      tx
-        .select({ role: lspMemberships.role })
-        .from(lspMemberships)
-        .where(
-          and(
-            eq(lspMemberships.lspId, lspId),
-            eq(lspMemberships.assessorId, assessorId),
-          ),
-        )
-        .limit(1),
-    );
-    return rows[0]?.role ?? null;
+    try {
+      const rows = await withRlsTransaction(assessorId, (tx) =>
+        tx
+          .select({ role: lspMemberships.role })
+          .from(lspMemberships)
+          .where(
+            and(
+              eq(lspMemberships.lspId, lspId),
+              eq(lspMemberships.assessorId, assessorId),
+            ),
+          )
+          .limit(1),
+      );
+      return rows[0]?.role ?? null;
+    } catch (err) {
+      console.warn(
+        "[AuthRepository Warning] Role direct DB fallback to Supabase REST:",
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
   }
 
   const supabase = await getSupabaseServerClient();

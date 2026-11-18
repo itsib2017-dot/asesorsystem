@@ -1,12 +1,59 @@
 "use client";
 
-import React, { useState } from "react";
-import { PlusCircle } from "lucide-react";
+import React, { useRef, useState } from "react";
+import { PlusCircle, Sparkles } from "lucide-react";
 import { saveSchemeManifestAction } from "../actions";
 
 export function SchemeRegistrationForm() {
+  const formRef = useRef<HTMLFormElement>(null);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const handleFillAk3uSample = () => {
+    const form = formRef.current;
+    if (!form) return;
+
+    const setField = (name: string, value: string) => {
+      const el = form.elements.namedItem(name) as
+        | HTMLInputElement
+        | HTMLTextAreaElement
+        | null;
+      if (el) el.value = value;
+    };
+
+    setField("code", "AK3U");
+    setField(
+      "name",
+      "Okupasi Ahli Keselamatan dan Kesehatan Kerja Umum (SKM/2037/00013/2/2021/1)",
+    );
+    setField("official04bCount", "13");
+    setField("written06aCount", "13");
+    setField("questionBankCount", "13");
+    setField("soalSuffix", "06A");
+    setField("kunciSuffix", "06B");
+    setField("jawabanSuffix", "06C");
+    setField("decisionRule", "VATM");
+    setField("decisionRuleRef", "Dokumen Skema §9.3.3-9.3.4 (Kepmenaker No. 38 Tahun 2019)");
+    setField(
+      "prerequisites",
+      [
+        "Sarjana / Diploma IV dengan pengalaman kerja K3 minimal 1 tahun",
+        "Diploma III dengan pengalaman kerja K3 minimal 2 tahun",
+        "Memiliki Sertifikat Pembinaan / Pelatihan Ahli K3 Umum",
+      ].join("\n"),
+    );
+    setField(
+      "registrationRequirements",
+      [
+        "KTP",
+        "Ijazah Terakhir",
+        "Daftar Riwayat Hidup (CV)",
+        "Surat Keterangan Pengalaman Kerja / Surat Tugas",
+        "Sertifikat Pelatihan / Pembinaan K3",
+        "Pas Foto Terbaru",
+      ].join("\n"),
+    );
+  };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -25,12 +72,22 @@ export function SchemeRegistrationForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="glass-card rounded-2xl p-6 space-y-5">
-      <div className="flex items-center gap-2">
-        <PlusCircle className="w-5 h-5 text-teal-700" />
-        <h2 className="text-lg font-semibold text-slate-900">
-          Daftarkan Skema & Manifes Baru (D17)
-        </h2>
+    <form ref={formRef} onSubmit={handleSubmit} className="glass-card rounded-2xl p-6 space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <PlusCircle className="w-5 h-5 text-teal-700" />
+          <h2 className="text-lg font-semibold text-slate-900">
+            Daftarkan Skema & Manifes Baru (D17)
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={handleFillAk3uSample}
+          className="px-3 py-1.5 rounded-lg border border-teal-300 bg-teal-50 hover:bg-teal-100 text-xs font-medium text-teal-800 inline-flex items-center gap-1.5 cursor-pointer"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          Isi Contoh Skema AK3U
+        </button>
       </div>
       <p className="text-xs text-slate-500">
         Setiap skema memiliki himpunan formulir, jumlah soal, aturan keputusan, dan prasyarat masing-masing (tidak ada angka bawaan skema lain yang dikunci di kode).

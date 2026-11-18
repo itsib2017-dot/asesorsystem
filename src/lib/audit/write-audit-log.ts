@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
+import { insertAuditLogRecord } from "@/repositories/audit.repository";
 
 export interface AuditLogEntry {
   lsp_id?: string | null;
@@ -16,7 +17,7 @@ export interface AuditLogEntry {
 }
 
 /**
- * Appends an entry to the append-only public.audit_log table.
+ * Appends an entry to the append-only public.audit_log table via repository layer.
  * Never throws to the caller: failures are safely logged to stderr with correlation ID.
  */
 export async function writeAuditLog(
@@ -40,7 +41,7 @@ export async function writeAuditLog(
       user_agent: entry.user_agent ?? null,
     };
 
-    const { error } = await supabase.from("audit_log").insert(payload);
+    const { error } = await insertAuditLogRecord(payload, supabase);
     if (error) {
       console.error(
         `[Audit Log Error][${correlationId}] Failed to record audit log:`,

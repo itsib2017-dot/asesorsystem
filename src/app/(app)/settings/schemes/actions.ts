@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { getUser } from "@/lib/auth/get-session";
+import { requireLspRole } from "@/lib/auth/get-role";
 import { listUserMemberships } from "@/repositories/auth.repository";
 import { createOrUpdateScheme } from "@/repositories/schemes.repository";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
@@ -29,9 +30,22 @@ export async function saveSchemeManifestAction(formData: FormData) {
   }
 
   const memberships = await listUserMemberships(user.id);
-  const adminMembership = memberships.find((m) => m.role === "lsp_admin") ?? memberships[0];
+  const adminMembership = memberships.find((m) => m.role === "lsp_admin");
   if (!adminMembership) {
-    return { ok: false, error: "Akun belum terdaftar pada LSP mana pun." };
+    return {
+      ok: false,
+      error: "Hanya Admin LSP yang dapat mengubah skema sertifikasi.",
+    };
+  }
+
+  const roleCheck = await requireLspRole(adminMembership.lspId, user.id, [
+    "lsp_admin",
+  ]);
+  if (!roleCheck.allowed) {
+    return {
+      ok: false,
+      error: "Hanya Admin LSP yang dapat mengubah skema sertifikasi.",
+    };
   }
 
   const parsed = schemeSchema.safeParse({

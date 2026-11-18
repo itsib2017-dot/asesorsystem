@@ -272,3 +272,169 @@ export async function getAk05ReportForBatch(userId: string, batchId: string) {
 
   return data ?? null;
 }
+
+export async function saveSimilarityPairsForBatch(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  pairs: Array<{
+    scope: string;
+    assesseeAId: string;
+    assesseeBId: string;
+    jaccardScore: number;
+    tfidfCosine: number;
+    sharedSpans: unknown;
+    verdict: string;
+  }>;
+}): Promise<void> {
+  if (params.pairs.length === 0) return;
+
+  if (hasDatabaseUrl()) {
+    try {
+      await withRlsTransaction(params.userId, async (tx) => {
+        const existing = await tx
+          .select({
+            id: similarityPairs.id,
+            scope: similarityPairs.scope,
+            assesseeAId: similarityPairs.assesseeAId,
+            assesseeBId: similarityPairs.assesseeBId,
+          })
+          .from(similarityPairs)
+          .where(eq(similarityPairs.batchId, params.batchId));
+
+        const existingMap = new Map(
+          existing.map((r) => [`${r.scope}:${r.assesseeAId}:${r.assesseeBId}`, r.id]),
+        );
+
+        for (const p of params.pairs) {
+          const existingId = existingMap.get(`${p.scope}:${p.assesseeAId}:${p.assesseeBId}`);
+          if (existingId) {
+            await tx
+              .update(similarityPairs)
+              .set({
+                jaccardScore: p.jaccardScore.toFixed(4),
+                tfidfCosine: p.tfidfCosine.toFixed(4),
+                sharedSpans: p.sharedSpans,
+                verdict: p.verdict,
+              })
+              .where(eq(similarityPairs.id, existingId));
+          } else {
+            await tx.insert(similarityPairs).values({
+              lspId: params.lspId,
+              batchId: params.batchId,
+              scope: p.scope,
+              assesseeAId: p.assesseeAId,
+              assesseeBId: p.assesseeBId,
+              jaccardScore: p.jaccardScore.toFixed(4),
+              tfidfCosine: p.tfidfCosine.toFixed(4),
+              sharedSpans: p.sharedSpans,
+              verdict: p.verdict,
+            });
+          }
+        }
+      });
+      return;
+    } catch (err) {
+      console.warn(
+        "[AssessmentRepository Warning] Direct DB saveSimilarityPairs fallback to Supabase REST:",
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
+  }
+
+  const supabase = await getSupabaseServerClient();
+  const { data: existingRows } = await supabase
+    .from("similarity_pairs")
+    .select("id, scope, assessee_a_id, assessee_b_id")
+    .eq("batch_id", params.batchId);
+
+  const existingMap = new Map<string, string>(
+    (existingRows ?? []).map((r) => [
+      `${String(r.scope)}:${String(r.assessee_a_id)}:${String(r.assessee_b_id)}`,
+      String(r.id),
+    ]),
+  );
+
+  for (const p of params.pairs) {
+    const existingId = existingMap.get(`${p.scope}:${p.assesseeAId}:${p.assesseeBId}`);
+    if (existingId) {
+      await supabase
+        .from("similarity_pairs")
+        .update({
+          jaccard_score: p.jaccardScore,
+          tfidf_cosine: p.tfidfCosine,
+          shared_spans: p.sharedSpans,
+          verdict: p.verdict,
+        })
+        .eq("id", existingId);
+    } else {
+      await supabase.from("similarity_pairs").insert({
+        lsp_id: params.lspId,
+        batch_id: params.batchId,
+        scope: p.scope,
+        assessee_a_id: p.assesseeAId,
+        assessee_b_id: p.assesseeBId,
+        jaccard_score: p.jaccardScore,
+        tfidf_cosine: p.tfidfCosine,
+        shared_spans: p.sharedSpans,
+        verdict: p.verdict,
+      });
+    }
+  }
+}
+
+export async function saveAk05ReportForBatch(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  assessorId: string;
+  assessorRegNo?: string | null;
+  tukType: string;
+  status?: string;
+  rows: unknown;
+  notesPositiveNegative?: string;
+  notesRejection?: string;
+  notesImprovement?: string;
+  signatureId?: string | null;
+}): Promise<void> {
+  if (hasDatabaseUrl()) {
+    try {
+      await withRlsTransaction(params.userId, (tx) =>
+        tx.insert(ak05Reports).values({
+          lspId: params.lspId,
+          batchId: params.batchId,
+          assessorId: params.assessorId,
+          assessorRegNo: params.assessorRegNo ?? null,
+          tukType: params.tukType,
+          status: params.status ?? "draft",
+          rows: params.rows,
+          notesPositiveNegative: params.notesPositiveNegative ?? "",
+          notesRejection: params.notesRejection ?? "",
+          notesImprovement: params.notesImprovement ?? "",
+          signatureId: params.signatureId ?? null,
+        }),
+      );
+      return;
+    } catch (err) {
+      console.warn(
+        "[AssessmentRepository Warning] Direct DB saveAk05Report fallback to Supabase REST:",
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
+  }
+
+  const supabase = await getSupabaseServerClient();
+  await supabase.from("ak05_reports").insert({
+    lsp_id: params.lspId,
+    batch_id: params.batchId,
+    assessor_id: params.assessorId,
+    assessor_reg_no: params.assessorRegNo ?? null,
+    tuk_type: params.tukType,
+    status: params.status ?? "draft",
+    rows: params.rows,
+    notes_positive_negative: params.notesPositiveNegative ?? "",
+    notes_rejection: params.notesRejection ?? "",
+    notes_improvement: params.notesImprovement ?? "",
+    signature_id: params.signatureId ?? null,
+  });
+}

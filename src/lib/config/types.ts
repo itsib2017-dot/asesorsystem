@@ -10,6 +10,12 @@ export interface SimilarityThresholds {
   partial: number;
 }
 
+export interface NameJuryThresholds {
+  apl01Min: number;
+  suratTugasMin: number;
+  ijazahMin: number;
+}
+
 export interface SchemeManifest {
   code: string;
   name: string;
@@ -24,6 +30,7 @@ export interface ConfigMap {
   "form_mapping.06": FormMapping06;
   "question_bank.count": number;
   "similarity.flag_thresholds": SimilarityThresholds;
+  "name_jury.thresholds": NameJuryThresholds;
   "app.name": string;
   "scheme.manifest": SchemeManifest;
 }

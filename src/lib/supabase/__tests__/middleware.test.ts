@@ -26,8 +26,16 @@ describe("updateSession fail-closed behavior", () => {
     }
   });
 
-  it("allows auth and health routes to pass without redirect loop", async () => {
-    for (const path of ["/login", "/register", "/auth/callback", "/api/health"]) {
+  it("allows auth, recovery, metadata, and health routes to pass without redirect loop", async () => {
+    for (const path of [
+      "/login",
+      "/register",
+      "/forgot-password",
+      "/auth/callback",
+      "/robots.txt",
+      "/manifest.webmanifest",
+      "/api/health",
+    ]) {
       const req = new NextRequest(`https://assessor-zeta.vercel.app${path}`);
       const res = await updateSession(req);
       expect(res.status).toBe(200);

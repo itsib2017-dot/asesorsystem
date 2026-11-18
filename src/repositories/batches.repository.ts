@@ -279,3 +279,166 @@ export async function updateDriveFileTriage(params: {
     })
     .eq("id", params.fileId);
 }
+
+export async function upsertDriveFilesForBatch(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  files: Array<{
+    driveFileId: string;
+    fileName: string;
+    mimeType: string;
+    drivePath: string;
+    docType: string;
+    confidence: number;
+    extractedText?: string | null;
+    extractionMethod?: string | null;
+  }>;
+}): Promise<number> {
+  if (params.files.length === 0) return 0;
+
+  if (hasDatabaseUrl()) {
+    try {
+      return await withRlsTransaction(params.userId, async (tx) => {
+        const existing = await tx
+          .select({ id: driveFiles.id, driveFileId: driveFiles.driveFileId })
+          .from(driveFiles)
+          .where(eq(driveFiles.batchId, params.batchId));
+
+        const existingMap = new Map(existing.map((r) => [r.driveFileId, r.id]));
+        let saved = 0;
+
+        for (const f of params.files) {
+          const existingId = existingMap.get(f.driveFileId);
+          if (existingId) {
+            await tx
+              .update(driveFiles)
+              .set({
+                fileName: f.fileName,
+                mimeType: f.mimeType,
+                drivePath: f.drivePath,
+                docType: f.docType,
+                classificationConfidence: f.confidence.toFixed(4),
+                ...(f.extractedText !== undefined ? { extractedText: f.extractedText } : {}),
+                ...(f.extractionMethod !== undefined ? { extractionMethod: f.extractionMethod } : {}),
+                updatedAt: new Date(),
+              })
+              .where(eq(driveFiles.id, existingId));
+          } else {
+            await tx.insert(driveFiles).values({
+              lspId: params.lspId,
+              batchId: params.batchId,
+              driveFileId: f.driveFileId,
+              fileName: f.fileName,
+              mimeType: f.mimeType,
+              drivePath: f.drivePath,
+              docType: f.docType,
+              classificationConfidence: f.confidence.toFixed(4),
+              triageStatus: "unmatched",
+              extractedText: f.extractedText ?? null,
+              extractionMethod: f.extractionMethod ?? null,
+            });
+          }
+          saved++;
+        }
+
+        return saved;
+      });
+    } catch (err) {
+      console.warn(
+        "[BatchesRepository Warning] Direct DB upsertDriveFiles fallback to Supabase REST:",
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
+  }
+
+  const supabase = await getSupabaseServerClient();
+  const { data: existingRows } = await supabase
+    .from("drive_files")
+    .select("id, drive_file_id")
+    .eq("batch_id", params.batchId);
+
+  const existingMap = new Map<string, string>(
+    (existingRows ?? []).map((r) => [String(r.drive_file_id), String(r.id)]),
+  );
+
+  let saved = 0;
+  for (const f of params.files) {
+    const existingId = existingMap.get(f.driveFileId);
+    if (existingId) {
+      await supabase
+        .from("drive_files")
+        .update({
+          file_name: f.fileName,
+          mime_type: f.mimeType,
+          drive_path: f.drivePath,
+          doc_type: f.docType,
+          classification_confidence: f.confidence,
+          ...(f.extractedText !== undefined ? { extracted_text: f.extractedText } : {}),
+          ...(f.extractionMethod !== undefined ? { extraction_method: f.extractionMethod } : {}),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingId);
+    } else {
+      await supabase.from("drive_files").insert({
+        lsp_id: params.lspId,
+        batch_id: params.batchId,
+        drive_file_id: f.driveFileId,
+        file_name: f.fileName,
+        mime_type: f.mimeType,
+        drive_path: f.drivePath,
+        doc_type: f.docType,
+        classification_confidence: f.confidence,
+        triage_status: "unmatched",
+        extracted_text: f.extractedText ?? null,
+        extraction_method: f.extractionMethod ?? null,
+      });
+    }
+    saved++;
+  }
+
+  return saved;
+}
+
+export async function updateDriveFileExtraction(params: {
+  userId: string;
+  fileId: string;
+  extractedText: string;
+  extractionMethod: string;
+  ocrConfidence?: number | null;
+}): Promise<void> {
+  const now = new Date();
+  if (hasDatabaseUrl()) {
+    try {
+      await withRlsTransaction(params.userId, (tx) =>
+        tx
+          .update(driveFiles)
+          .set({
+            extractedText: params.extractedText,
+            extractionMethod: params.extractionMethod,
+            ocrConfidence:
+              params.ocrConfidence != null ? params.ocrConfidence.toFixed(4) : null,
+            updatedAt: now,
+          })
+          .where(eq(driveFiles.id, params.fileId)),
+      );
+      return;
+    } catch (err) {
+      console.warn(
+        "[BatchesRepository Warning] Direct DB updateDriveFileExtraction fallback to Supabase REST:",
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
+  }
+
+  const supabase = await getSupabaseServerClient();
+  await supabase
+    .from("drive_files")
+    .update({
+      extracted_text: params.extractedText,
+      extraction_method: params.extractionMethod,
+      ocr_confidence: params.ocrConfidence ?? null,
+      updated_at: now.toISOString(),
+    })
+    .eq("id", params.fileId);
+}

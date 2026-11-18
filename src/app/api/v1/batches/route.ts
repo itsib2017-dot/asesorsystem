@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { getUser } from "@/lib/auth/get-session";
+import { requireLspRole } from "@/lib/auth/get-role";
 import { apiError, apiSuccess } from "@/lib/errors";
 import { createBatchRecord, listBatchesForUser } from "@/repositories/batches.repository";
 import { listUserMemberships } from "@/repositories/auth.repository";
 import { validateSafeExternalUrl } from "@/lib/security/ssrf";
+import { enqueueJob } from "@/worker/queue";
 
 const createBatchSchema = z.object({
   schemeId: z.string().uuid({ message: "Skema sertifikasi wajib dipilih." }),
@@ -58,14 +60,25 @@ export async function POST(req: Request) {
   }
 
   const memberships = await listUserMemberships(user.id);
-  const primary = memberships[0];
-  if (!primary) {
-    return apiError("FORBIDDEN", "Akun belum terdaftar pada LSP mana pun.");
+  const authorized = memberships.find(
+    (m) => m.role === "lsp_admin" || m.role === "tuk_admin" || m.role === "assessor",
+  );
+  if (!authorized) {
+    return apiError("FORBIDDEN", "Akun belum memiliki peran yang berwenang membuat batch.");
+  }
+
+  const roleCheck = await requireLspRole(authorized.lspId, user.id, [
+    "lsp_admin",
+    "tuk_admin",
+    "assessor",
+  ]);
+  if (!roleCheck.allowed) {
+    return apiError("FORBIDDEN", "Peran Anda pada LSP ini tidak diizinkan membuat batch.");
   }
 
   const result = await createBatchRecord({
     userId: user.id,
-    lspId: primary.lspId,
+    lspId: authorized.lspId,
     schemeId: parsed.data.schemeId,
     name: parsed.data.name,
     tukName: parsed.data.tukName,
@@ -78,5 +91,22 @@ export async function POST(req: Request) {
     return apiError("UNPROCESSABLE", result.error);
   }
 
-  return apiSuccess({ batchId: result.batchId }, undefined, 201);
+  const scanJob = await enqueueJob({
+    userId: user.id,
+    type: "drive_scan",
+    payload: {
+      batchId: result.batchId,
+      driveFolderUrl: parsed.data.driveFolderUrl,
+    },
+  });
+
+  return apiSuccess(
+    {
+      batchId: result.batchId,
+      ingestJobId: scanJob.ok ? scanJob.job.id : null,
+      ingestStatus: scanJob.ok ? scanJob.job.status : null,
+    },
+    undefined,
+    201,
+  );
 }

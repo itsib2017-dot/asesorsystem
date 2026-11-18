@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { registerAction, type RegisterState } from "../actions";
 
 interface RegisterFormProps {
@@ -13,6 +14,9 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
     registerAction,
     {},
   );
+  const [fullName, setFullName] = useState(state?.fullName ?? "");
+  const [email, setEmail] = useState(state?.email ?? "");
+  const [showPassword, setShowPassword] = useState(false);
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-2xl backdrop-blur-xl">
@@ -35,7 +39,11 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
       )}
 
       {state?.error && (
-        <div className="mb-5 p-4 rounded-lg bg-red-950/50 border border-red-800/80 text-red-200 text-sm">
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mb-5 p-4 rounded-lg bg-red-950/50 border border-red-800/80 text-red-200 text-sm"
+        >
           {state.error}
         </div>
       )}
@@ -43,6 +51,7 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
       {state?.successMessage && (
         <div
           role="status"
+          aria-live="polite"
           className="mb-5 p-4 rounded-lg bg-emerald-950/60 border border-emerald-700/80 text-emerald-200 text-sm space-y-2"
         >
           <p>{state.successMessage}</p>
@@ -69,11 +78,22 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
             type="text"
             autoComplete="name"
             required
-            placeholder="Ir. Budi Santoso, M.T."
+            value={fullName}
+            onChange={(e) => {
+              e.currentTarget.setCustomValidity("");
+              setFullName(e.target.value);
+            }}
+            onInvalid={(e) => {
+              if (e.currentTarget.validity.valueMissing) {
+                e.currentTarget.setCustomValidity("Harap masukkan nama lengkap Anda.");
+              }
+            }}
+            placeholder="Contoh: Nama Lengkap Sesuai KTP"
+            aria-invalid={Boolean(state?.fieldErrors?.fullName)}
             className="w-full px-4 py-2.5 rounded-lg bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />
           {state?.fieldErrors?.fullName && (
-            <p className="text-xs text-red-400 mt-1">
+            <p role="alert" className="text-xs text-red-400 mt-1">
               {state.fieldErrors.fullName[0]}
             </p>
           )}
@@ -92,11 +112,25 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
             type="email"
             autoComplete="email"
             required
-            placeholder="admin@lsp-anda.id"
+            value={email}
+            onChange={(e) => {
+              e.currentTarget.setCustomValidity("");
+              setEmail(e.target.value);
+            }}
+            onInvalid={(e) => {
+              const target = e.currentTarget;
+              if (target.validity.valueMissing) {
+                target.setCustomValidity("Harap masukkan alamat email Anda.");
+              } else if (target.validity.typeMismatch) {
+                target.setCustomValidity("Format alamat email tidak valid.");
+              }
+            }}
+            placeholder="nama@lsp.id"
+            aria-invalid={Boolean(state?.fieldErrors?.email)}
             className="w-full px-4 py-2.5 rounded-lg bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />
           {state?.fieldErrors?.email && (
-            <p className="text-xs text-red-400 mt-1">
+            <p role="alert" className="text-xs text-red-400 mt-1">
               {state.fieldErrors.email[0]}
             </p>
           )}
@@ -109,18 +143,39 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
           >
             Password (min. 8 karakter)
           </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={8}
-            placeholder="••••••••"
-            className="w-full px-4 py-2.5 rounded-lg bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-          />
+          <div className="relative">
+            <input
+              id="password"
+              name="password"
+              type={showPassword ? "text" : "password"}
+              autoComplete="new-password"
+              required
+              minLength={8}
+              onInput={(e) => e.currentTarget.setCustomValidity("")}
+              onInvalid={(e) => {
+                const t = e.currentTarget;
+                if (t.validity.valueMissing) {
+                  t.setCustomValidity("Harap buat password minimal 8 karakter.");
+                } else if (t.validity.tooShort) {
+                  t.setCustomValidity("Password minimal terdiri dari 8 karakter.");
+                }
+              }}
+              placeholder="••••••••"
+              aria-invalid={Boolean(state?.fieldErrors?.password)}
+              className="w-full px-4 py-2.5 pr-11 rounded-lg bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((prev) => !prev)}
+              aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"}
+              aria-pressed={showPassword}
+              className="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-200 cursor-pointer"
+            >
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
           {state?.fieldErrors?.password && (
-            <p className="text-xs text-red-400 mt-1">
+            <p role="alert" className="text-xs text-red-400 mt-1">
               {state.fieldErrors.password[0]}
             </p>
           )}
@@ -136,15 +191,24 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
           <input
             id="confirmPassword"
             name="confirmPassword"
-            type="password"
+            type={showPassword ? "text" : "password"}
             autoComplete="new-password"
             required
             minLength={8}
+            onInput={(e) => e.currentTarget.setCustomValidity("")}
+            onInvalid={(e) => {
+              if (e.currentTarget.validity.valueMissing) {
+                e.currentTarget.setCustomValidity("Harap ulangi password Anda.");
+              } else if (e.currentTarget.validity.tooShort) {
+                e.currentTarget.setCustomValidity("Konfirmasi password minimal 8 karakter.");
+              }
+            }}
             placeholder="••••••••"
+            aria-invalid={Boolean(state?.fieldErrors?.confirmPassword)}
             className="w-full px-4 py-2.5 rounded-lg bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />
           {state?.fieldErrors?.confirmPassword && (
-            <p className="text-xs text-red-400 mt-1">
+            <p role="alert" className="text-xs text-red-400 mt-1">
               {state.fieldErrors.confirmPassword[0]}
             </p>
           )}
