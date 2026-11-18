@@ -166,6 +166,17 @@ export async function listJobsForUser(
   return (data ?? []).map((row) => mapSupabaseJobRow(row as Record<string, unknown>));
 }
 
+export async function getLatestJobForBatch(
+  userId: string,
+  batchId: string,
+): Promise<JobRecord | null> {
+  if (!isUuid(batchId)) return null;
+  const recent = await listJobsForUser(userId, 50);
+  return (
+    recent.find((j) => String(j.payload?.batchId ?? "") === batchId) ?? null
+  );
+}
+
 export async function updateJobStatusRecord(params: {
   userId: string;
   jobId: string;

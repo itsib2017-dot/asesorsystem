@@ -293,6 +293,8 @@ export async function upsertDriveFilesForBatch(params: {
     drivePath: string;
     docType: string;
     confidence: number;
+    assesseeId?: string | null;
+    triageStatus?: "unmatched" | "suggested" | "assigned" | "not_needed";
     extractedText?: string | null;
     extractionMethod?: string | null;
   }>;
@@ -312,6 +314,8 @@ export async function upsertDriveFilesForBatch(params: {
 
         for (const f of params.files) {
           const existingId = existingMap.get(f.driveFileId);
+          const resolvedStatus =
+            f.triageStatus ?? (f.assesseeId ? "assigned" : "unmatched");
           if (existingId) {
             await tx
               .update(driveFiles)
@@ -321,6 +325,8 @@ export async function upsertDriveFilesForBatch(params: {
                 drivePath: f.drivePath,
                 docType: f.docType,
                 classificationConfidence: f.confidence.toFixed(4),
+                ...(f.assesseeId !== undefined ? { assesseeId: f.assesseeId } : {}),
+                ...(f.assesseeId || f.triageStatus ? { triageStatus: resolvedStatus } : {}),
                 ...(f.extractedText !== undefined ? { extractedText: f.extractedText } : {}),
                 ...(f.extractionMethod !== undefined ? { extractionMethod: f.extractionMethod } : {}),
                 updatedAt: new Date(),
@@ -330,13 +336,14 @@ export async function upsertDriveFilesForBatch(params: {
             await tx.insert(driveFiles).values({
               lspId: params.lspId,
               batchId: params.batchId,
+              assesseeId: f.assesseeId ?? null,
               driveFileId: f.driveFileId,
               fileName: f.fileName,
               mimeType: f.mimeType,
               drivePath: f.drivePath,
               docType: f.docType,
               classificationConfidence: f.confidence.toFixed(4),
-              triageStatus: "unmatched",
+              triageStatus: resolvedStatus,
               extractedText: f.extractedText ?? null,
               extractionMethod: f.extractionMethod ?? null,
             });
@@ -367,6 +374,7 @@ export async function upsertDriveFilesForBatch(params: {
   let saved = 0;
   for (const f of params.files) {
     const existingId = existingMap.get(f.driveFileId);
+    const resolvedStatus = f.triageStatus ?? (f.assesseeId ? "assigned" : "unmatched");
     if (existingId) {
       await supabase
         .from("drive_files")
@@ -376,6 +384,8 @@ export async function upsertDriveFilesForBatch(params: {
           drive_path: f.drivePath,
           doc_type: f.docType,
           classification_confidence: f.confidence,
+          ...(f.assesseeId !== undefined ? { assessee_id: f.assesseeId } : {}),
+          ...(f.assesseeId || f.triageStatus ? { triage_status: resolvedStatus } : {}),
           ...(f.extractedText !== undefined ? { extracted_text: f.extractedText } : {}),
           ...(f.extractionMethod !== undefined ? { extraction_method: f.extractionMethod } : {}),
           updated_at: new Date().toISOString(),
@@ -385,13 +395,14 @@ export async function upsertDriveFilesForBatch(params: {
       await supabase.from("drive_files").insert({
         lsp_id: params.lspId,
         batch_id: params.batchId,
+        assessee_id: f.assesseeId ?? null,
         drive_file_id: f.driveFileId,
         file_name: f.fileName,
         mime_type: f.mimeType,
         drive_path: f.drivePath,
         doc_type: f.docType,
         classification_confidence: f.confidence,
-        triage_status: "unmatched",
+        triage_status: resolvedStatus,
         extracted_text: f.extractedText ?? null,
         extraction_method: f.extractionMethod ?? null,
       });

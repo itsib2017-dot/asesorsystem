@@ -1,6 +1,7 @@
 import { eq, desc } from "drizzle-orm";
 import { hasDatabaseUrl, isUuid, withRlsTransaction } from "@/db";
 import { assessees, nameJuryVerdicts } from "@/db/schema";
+import { normalisePersonName } from "@/lib/names";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export interface AssesseeRecord {
@@ -277,4 +278,106 @@ export async function saveNameJuryVerdictAndOcr(params: {
     model: params.model,
     prompt_version: params.promptVersion,
   });
+}
+
+function findMatchingAssessee(
+  candidateName: string,
+  pool: AssesseeRecord[],
+): AssesseeRecord | undefined {
+  const norm = normalisePersonName(candidateName);
+  if (!norm) return undefined;
+  return pool.find((a) => {
+    const existingNorm = normalisePersonName(a.displayName);
+    if (!existingNorm) return false;
+    return (
+      existingNorm === norm ||
+      existingNorm.includes(norm) ||
+      norm.includes(existingNorm)
+    );
+  });
+}
+
+export async function upsertAssesseesForBatch(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  names: string[];
+}): Promise<AssesseeRecord[]> {
+  if (!isUuid(params.batchId) || params.names.length === 0) {
+    return listAssesseesByBatch(params.userId, params.batchId);
+  }
+
+  const existing = await listAssesseesByBatch(params.userId, params.batchId);
+  const pool = [...existing];
+  const toInsert: Array<{ displayName: string; pseudonym: string }> = [];
+
+  for (const rawName of params.names) {
+    const cleaned = rawName.trim();
+    if (!cleaned) continue;
+    const match = findMatchingAssessee(cleaned, pool);
+    if (match) continue;
+
+    const seq = pool.length + toInsert.length + 1;
+    const pseudonym = `ASESI-${String(seq).padStart(3, "0")}`;
+    toInsert.push({ displayName: cleaned, pseudonym });
+    pool.push({
+      id: `pending-${seq}`,
+      lspId: params.lspId,
+      batchId: params.batchId,
+      assignedAssessorId: params.userId,
+      displayName: cleaned,
+      pseudonym,
+      nikMasked: null,
+      ktpNameOcr: null,
+      apl01Name: cleaned,
+      suratTugasName: null,
+      ijazahName: null,
+      certificateNameConfirmed: null,
+      certificateNameConfirmedAt: null,
+      completenessStatus: "incomplete",
+      status: "pending",
+    });
+  }
+
+  if (toInsert.length === 0) {
+    return existing;
+  }
+
+  if (hasDatabaseUrl()) {
+    await withRlsTransaction(params.userId, async (tx) => {
+      await tx.insert(assessees).values(
+        toInsert.map((item) => ({
+          lspId: params.lspId,
+          batchId: params.batchId,
+          assignedAssessorId: params.userId,
+          displayName: item.displayName,
+          apl01Name: item.displayName,
+          pseudonym: item.pseudonym,
+          completenessStatus: "incomplete",
+          status: "pending",
+        })),
+      );
+    });
+    return listAssesseesByBatch(params.userId, params.batchId);
+  }
+
+  const supabase = await getSupabaseServerClient();
+  const { error } = await supabase.from("assessees").insert(
+    toInsert.map((item) => ({
+      lsp_id: params.lspId,
+      batch_id: params.batchId,
+      assigned_assessor_id: params.userId,
+      display_name: item.displayName,
+      apl01_name: item.displayName,
+      pseudonym: item.pseudonym,
+      completeness_status: "incomplete",
+      status: "pending",
+    })),
+  );
+
+  if (error) {
+    console.warn("[AssesseesRepository Warning] insert assessees error:", error.message);
+  }
+
+  return listAssesseesByBatch(params.userId, params.batchId);
 }

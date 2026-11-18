@@ -2,10 +2,12 @@ import type { RuntimeLlmConfig } from "@/ai/llm";
 import { decryptSecret } from "@/lib/crypto/encryption";
 import { getConfig } from "@/lib/config/get-config";
 import { logEvent } from "@/lib/logger";
+import { normalisePersonName } from "@/lib/names";
 import {
   getAssesseeById,
   listAssesseesByBatch,
   saveNameJuryVerdictAndOcr,
+  upsertAssesseesForBatch,
 } from "@/repositories/assessees.repository";
 import {
   listDecisionsForAssessee,
@@ -29,6 +31,7 @@ import {
   classifyDriveFileName,
   crawlPublicDriveFolder,
   extractDriveFolderId,
+  inferCandidateNameFromDrivePath,
 } from "@/services/drive";
 import {
   extractTextFromDocx,
@@ -152,28 +155,66 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
       ? decryptSecret(storedProvider.googleDriveApiKeyEncrypted)
       : "");
 
-  if (!driveApiKey) {
-    throw new Error(
-      "DRIVE_API_KEY_MISSING: Google Drive API key belum disimpan di Pengaturan → Penyedia AI.",
-    );
-  }
-
   const discovered = await crawlPublicDriveFolder({
     folderId,
-    apiKey: driveApiKey,
+    apiKey: driveApiKey || undefined,
+  });
+
+  const inferredPerFile = discovered.map((f) => ({
+    file: f,
+    candidateName: inferCandidateNameFromDrivePath(f.drivePath, f.fileName),
+  }));
+
+  const candidateNames = Array.from(
+    new Set(
+      inferredPerFile
+        .map((x) => x.candidateName)
+        .filter((n): n is string => Boolean(n && n.length > 1)),
+    ),
+  );
+
+  const assesseeRecords =
+    candidateNames.length > 0
+      ? await upsertAssesseesForBatch({
+          userId,
+          lspId: batch.lspId,
+          batchId: batch.id,
+          names: candidateNames,
+        })
+      : await listAssesseesByBatch(userId, batch.id);
+
+  const enrichedFiles = inferredPerFile.map(({ file, candidateName }) => {
+    if (!candidateName) return file;
+    const candNorm = normalisePersonName(candidateName);
+    const matched = assesseeRecords.find((a) => {
+      const aNorm = normalisePersonName(a.displayName);
+      return (
+        Boolean(aNorm && candNorm) &&
+        (aNorm === candNorm || aNorm.includes(candNorm) || candNorm.includes(aNorm))
+      );
+    });
+    return {
+      ...file,
+      assesseeId: matched?.id ?? null,
+      triageStatus: matched ? ("assigned" as const) : ("unmatched" as const),
+    };
   });
 
   const savedCount = await upsertDriveFilesForBatch({
     userId,
     lspId: batch.lspId,
     batchId: batch.id,
-    files: discovered,
+    files: enrichedFiles,
   });
 
   return {
     status: "done",
     progress: 100,
-    meta: { scannedFiles: savedCount, folderId },
+    meta: {
+      scannedFiles: savedCount,
+      discoveredAssessees: assesseeRecords.length,
+      folderId,
+    },
   };
 }
 

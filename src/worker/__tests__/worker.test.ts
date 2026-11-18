@@ -32,6 +32,7 @@ vi.mock("@/repositories/assessees.repository", () => ({
   getAssesseeById: mocks.getAssesseeById,
   listAssesseesByBatch: mocks.listAssesseesByBatch,
   saveNameJuryVerdictAndOcr: mocks.saveNameJuryVerdictAndOcr,
+  upsertAssesseesForBatch: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/repositories/assessment.repository", () => ({
