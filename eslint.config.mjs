@@ -12,6 +12,17 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "tests/**",
+    "scripts/**",
+    "hooks/**",
+    "skills/**",
+    "configs/**",
+    ".agents/**",
+    ".pi/**",
+    ".openclaw-plugin/**",
+    ".claude/**",
+    ".codex-plugin/**",
+    ".cursor-plugin/**",
   ]),
 ]);
 
