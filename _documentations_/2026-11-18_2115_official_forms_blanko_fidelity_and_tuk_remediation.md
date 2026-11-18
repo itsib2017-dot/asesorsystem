@@ -48,3 +48,12 @@ Official AK3U blankos downloaded into `src/templates/ak3u/` and traced via `next
   - `npx vitest run`: 14 test files, 47 tests passed (`official-forms-export.test.ts` + existing suite)
   - `npm run build`: clean production build (33 routes)
   - Python strict `xml.etree.ElementTree.fromstring` check across generated `.docx` ZIP packages (`sample_ak02.docx`: 20 XML parts valid; `sample_ia04b.docx`: 15 XML parts valid; `sample_ia06c.docx`: 15 XML parts valid)
+
+---
+
+## 5. Post-Visual-QA Layout Fix (`32bc9eb`) & Live Verification
+
+- Live screenshot inspection revealed horizontal table overflow past the white paper border on narrow viewports in `FR.IA.06C`.
+- Extracted `BlankoA4Sheet` (`w-full overflow-x-auto` wrapper around fixed `w-[794px]` A4 sheet container) in `src/components/forms/blanko-chrome.tsx` and applied it uniformly across `FR.AK.05`, `FR.AK.02`, `FR.IA.04B`, and `FR.IA.06C`.
+- Verified live on `https://assessor-zeta.vercel.app` (`LSP-VERIFY-E2E`) across all four official forms, live `.docx` downloads (`FR-AK-02`, `FR-IA-04B`, `FR-IA-06C`), strict Python `ElementTree.fromstring` XML validation on the downloaded binaries, and `D8` PDF rejection (`HTTP 422 EXPORT_FORMAT_NOT_ALLOWED`).
+
