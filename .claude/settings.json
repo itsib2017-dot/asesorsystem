@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git stash list*)",
+      "Bash(git stash *)",
+      "Bash(git commit *)",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(gh pr *)",
+      "Bash(gh issue *)",
+      "Bash(gh run *)",
+	  "Bash(git:*)",
+      "Bash(ls:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(cat:*)",
+      "Bash(echo:*)",
+      "Bash(ls*)",
+      "Bash(rg*)",
+      "Bash(find*)",
+      "Bash(head*)",
+      "Bash(tail*)",
+      "Bash(wc*)",
+      "Bash(jq*)",
+      "Bash(pnpm install)",
+      "Bash(pnpm typecheck*)",
+      "Bash(pnpm lint*)",
+      "Bash(pnpm test*)",
+      "Bash(pnpm build)",
+      "Bash(pnpm eval*)",
+      "Bash(npm ci)",
+      "Bash(npm run typecheck*)",
+	  "Bash(npm run test *)",
+      "Bash(npm run lint*)",
+      "Bash(npm test*)",
+      "Bash(npm run build)",
+	  "Bash(npx supabase db push:*)",
+      "Bash(npx supabase migration list:*)",
+      "Bash(npx tsc --noEmit --skipLibCheck:*)",
+      "Bash(bun run lint:*)",
+      "Bash(bun install:*)",
+      "Bash(bun add:*)",
+      "Bash(npm install:*)",
+      "Read(**)",
+      "Write(**)",
+      "Edit(**)",
+      "Bash(*codeagent-wrapper*)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.local)",
+      "Read(.env.*.local)",
+      "Read(.env.production)",
+      "Read(.env.development)",
+      "Read(.env.staging)",
+      "Read(.env.test)",
+      "Read(.npmrc)",
+	  "Read(**/.env*)",
+      "Read(**/*.pem)",
+      "Read(**/id_rsa)",
+      "Read(**/id_ed25519)",
+      "Read(**/credentials.json)",
+      "Read(**/service-account*.json)",
+	  "Read(**/.env.*)",
+      "Read(**/secrets/**)",
+      "Read(**/*.key)",
+      "Edit(.env)",
+      "Edit(.env.local)",
+      "Edit(.env.*.local)",
+      "Edit(.env.production)",
+	  "Edit(**/.env)",
+      "Edit(**/.env.*)",
+      "Edit(**/secrets/**)",
+      "Edit(**/*.pem)",
+      "Edit(**/*.key)"
+	  "Bash(sudo *)",
+      "Bash(rm -rf /*)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Write(**/.env)",
+      "Write(**/.env.*)",
+      "Write(**/secrets/**)",
+      "Write(**/*.pem)",
+      "Write(**/*.key)",
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(gh pr merge*)",
+      "Bash(npm publish*)",
+      "Bash(pnpm publish*)",
+      "Bash(vercel*)"
+    ],
+	"defaultMode": "acceptEdits"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/hooks/guard-secrets.sh\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/hooks/guard-key-literals.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/hooks/guard-key-literals.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/bin/graphify\" hook-guard search",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/bin/graphify\" hook-guard read",
+            "timeout": 10
+          }
+        ]
+      },
+	  {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y ccstatusline@latest --hook"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/hooks/guard-key-literals.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/hooks/sync-readme-skills.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+	  {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "code-review-graph update --skip-flows",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/hooks/sync-eval-index.sh\"",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/hooks/gate-skill-evals.sh\"",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/hooks/gate-readme-skills.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+		"hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.agents/hooks/session-context.sh\"",
+            "timeout": 15
+          }
+        ]
+      },
+	  {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "code-review-graph status",
+			"timeout": 10
+          }
+        ]
+      },
+	  {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:/Program Files/nodejs/node.exe\" \"C:/Users/AdminUser/.claude/hooks/context-mode-cache-heal.mjs\""
+          }
+        ]
+      }
+    ],
+	"UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y ccstatusline@latest --hook"
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "npx -y ccstatusline@latest",
+    "padding": 0,
+    "refreshInterval": 10
+  },
+  "enabledPlugins": {
+    "mattpocock-skills@claude-plugins-official": false,
+    "codex@openai-codex": true,
+    "claudex-loop@claudex-loop": true,
+	"document-skills@anthropic-agent-skills": true,
+    "superpowers@superpowers-marketplace": true,
+    "engineering-skills@claude-code-skills": true,
+    "web-asset-generator@web-asset-generator-marketplace": true,
+    "vercel-plugin@vercel-vercel-plugin": true,
+    "context-mode@context-mode": true,
+    "frontend-design@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "ralph-loop@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "toprank@nowork-studio": true,
+    "supabase@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "openai-codex": {
+      "source": {
+        "source": "directory",
+        "path": "./.agents/plugins/codex"
+      }
+    },
+    "claudex-loop": {
+      "source": {
+        "source": "directory",
+        "path": "./.agents/plugins/claudex-loop"
+      }
+    }
+  },
+  "alwaysThinkingEnabled": true,
+  "autoUpdatesChannel": "latest",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "dark",
+  "hasCompletedOnboarding": true
+}

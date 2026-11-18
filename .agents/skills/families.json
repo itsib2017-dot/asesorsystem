@@ -1,0 +1,101 @@
+{
+  "families": [
+    {
+      "name": "Matt Pocock’s Skills",
+      "source": "https://github.com/mattpocock/skills",
+      "description": "Planning, development, testing, debugging, architecture, research, and code review.",
+      "skills": [
+        "ask-matt",
+        "code-review",
+        "codebase-design",
+        "diagnosing-bugs",
+        "domain-modeling",
+        "grill-me",
+        "grill-with-docs",
+        "grilling",
+        "handoff",
+        "implement",
+        "improve-codebase-architecture",
+        "prototype",
+        "research",
+        "resolving-merge-conflicts",
+        "setup-matt-pocock-skills",
+        "tdd",
+        "teach",
+        "to-questionnaire",
+        "to-spec",
+        "to-tickets",
+        "triage",
+        "wait-what",
+        "wayfinder",
+        "wizard",
+        "writing-for-agents"
+      ],
+      "eval": {
+        "verdict": "Kept over obra/superpowers",
+        "page": "diagnosing-bugs"
+      }
+    },
+    {
+      "name": "Eric Tech’s Skills",
+      "source": "https://github.com/EricTechPro/erictech-skills",
+      "link": false,
+      "description": "Custom skills created and curated by Eric Tech.",
+      "skills": [
+        "phone-mode"
+      ],
+      "eval": {
+        "verdict": "Kept, over-fires",
+        "page": "phone-mode"
+      }
+    },
+    {
+      "name": "Graphify",
+      "source": "https://github.com/Graphify-Labs/graphify",
+      "description": "Build and query knowledge graphs of code, documentation, and project content.",
+      "skills": [
+        "graphify"
+      ]
+    },
+    {
+      "name": "Archify",
+      "source": "https://github.com/tt-a1i/archify",
+      "description": "Validated architecture, workflow, sequence, data-flow, and lifecycle diagrams as standalone HTML.",
+      "skills": [
+        "archify"
+      ],
+      "eval": {
+        "verdict": "0.30, undecided",
+        "page": "archify"
+      }
+    },
+    {
+      "name": "agent-browser",
+      "source": "https://github.com/vercel-labs/agent-browser",
+      "description": "Drive a real browser from the shell: navigate, snapshot, click, screenshot. Needs the CLI installed.",
+      "skills": [
+        "agent-browser"
+      ]
+    },
+    {
+      "name": "Playwright Best Practices",
+      "source": "https://github.com/currents-dev/playwright-best-practices-skill",
+      "description": "Writing, debugging and shipping Playwright suites: page objects, fixtures, waiting, mocking, CI.",
+      "skills": [
+        "playwright-best-practices"
+      ]
+    },
+    {
+      "name": "juliusbrussee/caveman",
+      "source": "https://github.com/juliusbrussee/caveman",
+      "description": "Token compression with an auto-clarity layer that suspends it for irreversible steps.",
+      "skills": [
+        "caveman"
+      ],
+      "eval": {
+        "verdict": "Kept, +0.40 on safety",
+        "page": "caveman"
+      }
+    }
+  ]
+}
