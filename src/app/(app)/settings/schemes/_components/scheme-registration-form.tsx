@@ -1,10 +1,12 @@
 "use client";
 
 import React, { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { PlusCircle, Sparkles } from "lucide-react";
 import { saveSchemeManifestAction } from "../actions";
 
 export function SchemeRegistrationForm() {
+  const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
@@ -68,6 +70,9 @@ export function SchemeRegistrationForm() {
         ? "Manifes skema berhasil disimpan."
         : res.error || "Gagal menyimpan skema.",
     });
+    if (res.ok) {
+      router.refresh();
+    }
     setSaving(false);
   };
 

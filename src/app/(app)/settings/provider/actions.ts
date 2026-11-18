@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import { revalidatePath } from "next/cache";
 import { getUser } from "@/lib/auth/get-session";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { encryptSecret, decryptSecret, maskSecret } from "@/lib/crypto/encryption";
@@ -156,6 +157,9 @@ export async function saveProviderSettingsAction(formData: FormData) {
     },
     supabase,
   );
+
+  revalidatePath("/settings/provider");
+  revalidatePath("/dashboard");
 
   return {
     success: true,

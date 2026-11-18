@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Save, Zap, Info } from "lucide-react";
 import {
   saveProviderSettingsAction,
@@ -16,17 +17,16 @@ type ProviderType = "anthropic" | "openai-compatible" | "gemini";
 
 const MODEL_SUGGESTIONS: Record<ProviderType, string[]> = {
   anthropic: [
-    "claude-3-7-sonnet-20250219",
     "claude-3-5-sonnet-20241022",
+    "claude-3-7-sonnet-20250219",
     "claude-3-5-haiku-20241022",
-    "deepseek-v4.1-flash",
   ],
   "openai-compatible": [
-    "deepseek-v4.1-flash",
-    "deepseek-chat",
-    "deepseek-reasoner",
     "gpt-4o",
     "gpt-4o-mini",
+    "deepseek-chat",
+    "deepseek-reasoner",
+    "deepseek-v4.1-flash",
     "qwen/qwen-2.5-72b-instruct",
   ],
   gemini: [
@@ -37,6 +37,7 @@ const MODEL_SUGGESTIONS: Record<ProviderType, string[]> = {
 };
 
 export default function ProviderSettingsForm({ initialConfig }: Props) {
+  const router = useRouter();
   const [provider, setProvider] = useState<ProviderType>(
     initialConfig?.provider ?? "anthropic",
   );
@@ -46,13 +47,13 @@ export default function ProviderSettingsForm({ initialConfig }: Props) {
   const [gatewayToken, setGatewayToken] = useState("");
   const [showGatewayToken, setShowGatewayToken] = useState(false);
   const [model, setModel] = useState(
-    initialConfig?.model ?? "deepseek-v4.1-flash",
+    initialConfig?.model ?? "claude-3-5-sonnet-20241022",
   );
   const [temperature, setTemperature] = useState(
-    initialConfig?.temperature?.toString() ?? "0.9",
+    initialConfig?.temperature?.toString() ?? "0.2",
   );
   const [maxTokens, setMaxTokens] = useState(
-    initialConfig?.maxTokens?.toString() ?? "51200",
+    initialConfig?.maxTokens?.toString() ?? "8192",
   );
   const [thinkingBudget, setThinkingBudget] = useState(
     initialConfig?.thinkingBudget?.toString() ?? "0",
@@ -104,6 +105,7 @@ export default function ProviderSettingsForm({ initialConfig }: Props) {
         setApiKey("");
         setGatewayToken("");
         setGoogleDriveApiKey("");
+        router.refresh();
       } else {
         setMessage({
           text: res.error ?? "Gagal menyimpan konfigurasi.",
@@ -255,7 +257,7 @@ export default function ProviderSettingsForm({ initialConfig }: Props) {
             type="text"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://zro.moonmath.ai/v1"
+            placeholder="Opsional — kosongkan untuk endpoint resmi provider"
             className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
           />
         </div>

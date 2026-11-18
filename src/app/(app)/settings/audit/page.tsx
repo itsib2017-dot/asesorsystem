@@ -48,32 +48,36 @@ export default async function AuditLogPage() {
         </div>
       ) : (
         <div className="glass-card rounded-2xl overflow-x-auto">
-          <table className="w-full text-xs text-left">
+          <table className="w-full text-xs text-left table-fixed">
             <thead className="bg-slate-50 border-b border-slate-200 uppercase text-slate-600">
               <tr>
-                <th className="py-3 px-4">Waktu (UTC)</th>
-                <th className="py-3 px-4">Aksi</th>
-                <th className="py-3 px-4">Resource</th>
-                <th className="py-3 px-4">Resource ID</th>
-                <th className="py-3 px-4">Correlation ID</th>
+                <th className="py-3 px-3 w-36">Waktu (UTC)</th>
+                <th className="py-3 px-3 w-24">Aktor</th>
+                <th className="py-3 px-3 w-40">Aksi</th>
+                <th className="py-3 px-3 w-32">Resource</th>
+                <th className="py-3 px-3 w-44">Resource ID</th>
+                <th className="py-3 px-3">Correlation ID</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {logs.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-50/60">
-                  <td className="py-2.5 px-4 font-mono text-slate-600 whitespace-nowrap">
+                <tr key={row.id} className="hover:bg-slate-50/60 align-top">
+                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600 break-words">
                     {row.createdAt}
                   </td>
-                  <td className="py-2.5 px-4 font-semibold text-slate-900">
+                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700" title={row.actorId || undefined}>
+                    {row.actorId ? row.actorId.slice(0, 8) : "-"}
+                  </td>
+                  <td className="py-2.5 px-3 font-semibold text-slate-900 break-words">
                     {row.action}
                   </td>
-                  <td className="py-2.5 px-4 font-mono text-slate-700">
+                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700 break-words">
                     {row.resource}
                   </td>
-                  <td className="py-2.5 px-4 font-mono text-slate-500">
+                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-500 break-all">
                     {row.resourceId || "-"}
                   </td>
-                  <td className="py-2.5 px-4 font-mono text-slate-400">
+                  <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 break-all">
                     {row.correlationId}
                   </td>
                 </tr>

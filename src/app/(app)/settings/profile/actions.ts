@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { getUser } from "@/lib/auth/get-session";
 import { uploadAssessorSignature } from "@/repositories/signatures.repository";
 
@@ -42,6 +43,10 @@ export async function uploadSignatureAction(formData: FormData) {
   if (!res.ok) {
     return { ok: false, error: res.error };
   }
+
+  revalidatePath("/settings/profile");
+  revalidatePath("/dashboard");
+  revalidatePath("/batches");
 
   return { ok: true };
 }

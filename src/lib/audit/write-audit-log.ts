@@ -27,8 +27,25 @@ export async function writeAuditLog(
   const correlationId = entry.correlation_id || randomUUID();
 
   try {
+    let resolvedLspId = entry.lsp_id ?? null;
+    if (!resolvedLspId && entry.actor_id) {
+      try {
+        const memQuery = supabase.from("lsp_memberships");
+        if (memQuery && typeof memQuery.select === "function") {
+          const { data: mem } = await memQuery
+            .select("lsp_id")
+            .eq("assessor_id", entry.actor_id)
+            .limit(1)
+            .maybeSingle();
+          resolvedLspId = (mem?.lsp_id as string | undefined) ?? null;
+        }
+      } catch {
+        resolvedLspId = null;
+      }
+    }
+
     const payload = {
-      lsp_id: entry.lsp_id ?? null,
+      lsp_id: resolvedLspId,
       actor_id: entry.actor_id ?? null,
       action: entry.action,
       resource: entry.resource,

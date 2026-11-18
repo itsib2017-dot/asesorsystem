@@ -2,6 +2,8 @@ import { z } from "zod";
 import { getUser } from "@/lib/auth/get-session";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { apiError, apiSuccess } from "@/lib/errors";
+import { writeAuditLog } from "@/lib/audit/write-audit-log";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { createBatchRecord, listBatchesForUser } from "@/repositories/batches.repository";
 import { validateSafeExternalUrl } from "@/lib/security/ssrf";
 import { enqueueJob } from "@/worker/queue";
@@ -90,6 +92,24 @@ export async function POST(req: Request) {
       driveFolderUrl: parsed.data.driveFolderUrl,
     },
   });
+
+  const supabase = await getSupabaseServerClient();
+  await writeAuditLog(
+    {
+      lsp_id: authz.lspId,
+      actor_id: user.id,
+      action: "batch.create",
+      resource: "batches",
+      resource_id: result.batchId,
+      after_summary: {
+        name: parsed.data.name,
+        schemeId: parsed.data.schemeId,
+        tukType: parsed.data.tukType,
+        ingestJobId: scanJob.ok ? scanJob.job.id : null,
+      },
+    },
+    supabase,
+  );
 
   return apiSuccess(
     {

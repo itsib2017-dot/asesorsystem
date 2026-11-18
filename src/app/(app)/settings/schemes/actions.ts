@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import { revalidatePath } from "next/cache";
 import { getUser } from "@/lib/auth/get-session";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { createOrUpdateScheme } from "@/repositories/schemes.repository";
@@ -113,6 +114,10 @@ export async function saveSchemeManifestAction(formData: FormData) {
     },
     supabase,
   );
+
+  revalidatePath("/settings/schemes");
+  revalidatePath("/batches");
+  revalidatePath("/dashboard");
 
   return { ok: true };
 }
