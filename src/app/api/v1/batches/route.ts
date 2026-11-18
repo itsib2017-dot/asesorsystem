@@ -1,3 +1,4 @@
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getUser } from "@/lib/auth/get-session";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
@@ -5,6 +6,7 @@ import { apiError, apiSuccess } from "@/lib/errors";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { createBatchRecord, listBatchesForUser } from "@/repositories/batches.repository";
+import { listJobsForUser } from "@/repositories/jobs.repository";
 import { validateSafeExternalUrl } from "@/lib/security/ssrf";
 import { enqueueJob } from "@/worker/queue";
 
@@ -23,8 +25,33 @@ export async function GET() {
     return apiError("UNAUTHORIZED", "Sesi tidak valid.");
   }
 
-  const batches = await listBatchesForUser(user.id);
-  return apiSuccess(batches);
+  const [batches, recentJobs] = await Promise.all([
+    listBatchesForUser(user.id),
+    listJobsForUser(user.id, 100),
+  ]);
+
+  const enriched = batches.map((batch) => {
+    const latestJob =
+      recentJobs.find((j) => String(j.payload?.batchId ?? "") === batch.id) ?? null;
+    return {
+      ...batch,
+      ingestJobId: latestJob?.id ?? null,
+      ingestStatus: latestJob?.status ?? null,
+      latestJob: latestJob
+        ? {
+            id: latestJob.id,
+            type: latestJob.type,
+            status: latestJob.status,
+            progress: latestJob.progress,
+            error: latestJob.error,
+            attempts: latestJob.attempts,
+            updatedAt: latestJob.updatedAt,
+          }
+        : null,
+    };
+  });
+
+  return apiSuccess(enriched);
 }
 
 export async function POST(req: Request) {
@@ -110,6 +137,9 @@ export async function POST(req: Request) {
     },
     supabase,
   );
+
+  revalidatePath("/batches");
+  revalidatePath("/dashboard");
 
   return apiSuccess(
     {

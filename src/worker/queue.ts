@@ -1,10 +1,12 @@
+import { writeAuditLog } from "@/lib/audit/write-audit-log";
+import { logEvent } from "@/lib/logger";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
   enqueueJobRecord,
   getJobRecordById,
   updateJobStatusRecord,
   type JobRecord,
 } from "@/repositories/jobs.repository";
-import { logEvent } from "@/lib/logger";
 import { runWorkerJob } from "./index";
 
 export type JobType =
@@ -34,6 +36,10 @@ export async function executeJob(
     attempts: nextAttempts,
   });
 
+  let outcomeStatus: "done" | "failed" = "done";
+  let resultMeta: Record<string, unknown> | undefined;
+  let errorMessage: string | undefined;
+
   try {
     const result = await runWorkerJob({
       id: job.id,
@@ -42,6 +48,7 @@ export async function executeJob(
       userId,
     });
 
+    resultMeta = result.meta;
     await updateJobStatusRecord({
       userId,
       jobId: job.id,
@@ -52,6 +59,8 @@ export async function executeJob(
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Worker execution failed";
+    outcomeStatus = "failed";
+    errorMessage = message;
     logEvent("error", {
       correlation_id: job.id,
       action: `worker.execute.${job.type}`,
@@ -68,6 +77,32 @@ export async function executeJob(
       error: message,
       attempts: nextAttempts,
     });
+  }
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        actor_id: userId,
+        action:
+          outcomeStatus === "done"
+            ? `job.${job.type}.completed`
+            : `job.${job.type}.failed`,
+        resource: "jobs",
+        resource_id: job.id,
+        after_summary: {
+          type: job.type,
+          batchId: job.payload?.batchId ?? null,
+          status: outcomeStatus,
+          ...(resultMeta ?? {}),
+          ...(errorMessage ? { error: errorMessage } : {}),
+        },
+        correlation_id: job.id,
+      },
+      supabase,
+    );
+  } catch {
+    // Do not break worker execution or unit tests outside Next request scope
   }
 
   return getJobRecordById(userId, job.id);

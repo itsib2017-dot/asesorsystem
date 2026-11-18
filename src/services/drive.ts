@@ -152,6 +152,12 @@ export async function crawlPublicDriveFolderEmbedded(
   });
 
   if (!res.ok) {
+    if (depth > 0) {
+      console.warn(
+        `[Drive Crawl Warning] Skipping subfolder ${folderId} (${parentPath}): HTTP ${res.status}`,
+      );
+      return [];
+    }
     throw new Error(`Drive public listing error: HTTP ${res.status}`);
   }
 

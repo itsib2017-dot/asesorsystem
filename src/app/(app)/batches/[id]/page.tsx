@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import {
   AlertTriangle,
+  CheckCircle2,
+  Clock,
   ExternalLink,
   FileCheck,
   GitMerge,
@@ -11,6 +13,8 @@ import {
   Users,
 } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
+import { writeAuditLog } from "@/lib/audit/write-audit-log";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { getLatestJobForBatch } from "@/repositories/jobs.repository";
@@ -43,16 +47,37 @@ export default async function BatchDetailPage({
 
   const userId = user.id;
   const batchId = batch.id;
+  const batchLspId = batch.lspId;
   const driveFolderUrl = batch.driveFolderUrl;
 
   async function rescanBatchDriveAction() {
     "use server";
     if (!driveFolderUrl) return;
-    await enqueueJob({
+    const scan = await enqueueJob({
       userId,
       type: "drive_scan",
       payload: { batchId, driveFolderUrl },
     });
+    try {
+      const supabase = await getSupabaseServerClient();
+      await writeAuditLog(
+        {
+          lsp_id: batchLspId,
+          actor_id: userId,
+          action: "job.drive_scan.rescan",
+          resource: "batches",
+          resource_id: batchId,
+          after_summary: {
+            driveFolderUrl,
+            ingestJobId: scan.ok ? scan.job.id : null,
+            status: scan.ok ? scan.job.status : "enqueue_failed",
+          },
+        },
+        supabase,
+      );
+    } catch {
+      // ignore non-critical audit error
+    }
     revalidatePath(`/batches/${batchId}`);
     revalidatePath(`/batches/${batchId}/triage`);
     revalidatePath("/batches");
@@ -141,26 +166,78 @@ export default async function BatchDetailPage({
         </div>
       </div>
 
-      {latestJob?.status === "failed" && (
-        <div
-          role="alert"
-          className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex flex-wrap items-center justify-between gap-3"
-        >
-          <div className="flex items-start gap-2.5">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+      {/* Permanent Drive Ingest Job Observability Card */}
+      <div className="glass-card rounded-2xl p-5 space-y-3 border border-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            {latestJob?.status === "done" ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            ) : latestJob?.status === "failed" ? (
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+            ) : (
+              <Clock className="w-5 h-5 text-amber-600 shrink-0" />
+            )}
             <div>
-              <p className="font-semibold">Pemindaian Drive Terakhir Gagal</p>
-              <p className="font-mono mt-0.5">{latestJob.error || "Unknown worker error"}</p>
+              <h2 className="text-sm font-semibold text-slate-900">
+                Status Pemindaian Drive (Ingest Job)
+              </h2>
+              <p className="text-xs font-mono text-slate-600 break-all mt-0.5">
+                Ingest Job ID: {latestJob ? latestJob.id : "Belum ada job pindai"}
+              </p>
             </div>
           </div>
-          <Link
-            href={`/batches/${batch.id}/ingest/${latestJob.id}`}
-            className="px-3 py-1.5 rounded-lg bg-rose-700 hover:bg-rose-800 text-white font-medium"
-          >
-            Lihat Log Job &amp; Coba Lagi
-          </Link>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${
+                latestJob?.status === "done"
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  : latestJob?.status === "failed"
+                    ? "bg-rose-50 text-rose-700 border-rose-200"
+                    : "bg-amber-50 text-amber-800 border-amber-200"
+              }`}
+            >
+              {latestJob ? `${latestJob.status} (${latestJob.progress}%)` : "belum berjalan"}
+            </span>
+            {latestJob && (
+              <Link
+                href={`/batches/${batch.id}/ingest/${latestJob.id}`}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium inline-flex items-center gap-1.5"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Lihat Detail Job Ingest &amp; Log
+              </Link>
+            )}
+          </div>
         </div>
-      )}
+
+        <div className="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+          <span>
+            Ringkasan Hasil Pindai:{" "}
+            <strong>
+              {assessees.length} asesi terdeteksi · {files.length} berkas terpindai ·{" "}
+              {unmatchedCount} perlu triase
+            </strong>
+          </span>
+          {latestJob && (
+            <span className="text-slate-500 font-mono">
+              Percobaan ke-{latestJob.attempts} · Diperbarui {latestJob.updatedAt}
+            </span>
+          )}
+        </div>
+
+        {latestJob?.status === "failed" && (
+          <div
+            role="alert"
+            className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 space-y-1"
+          >
+            <p className="font-semibold">Error Worker Pemindaian Drive:</p>
+            <p className="font-mono break-all">
+              {latestJob.error || "Unknown worker error"}
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* Completeness Matrix */}
       <div className="space-y-3">

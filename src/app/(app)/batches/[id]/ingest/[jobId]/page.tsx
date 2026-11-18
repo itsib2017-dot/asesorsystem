@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { CheckCircle2, Clock, RefreshCw, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, RefreshCw, XCircle } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
+import { getLatestJobForBatch } from "@/repositories/jobs.repository";
 import { executeJob, getJobStatus } from "@/worker/queue";
 
 export const metadata = {
@@ -20,9 +21,55 @@ export default async function BatchIngestJobPage({
 
   const { id: batchId, jobId } = await params;
   const batch = await getBatchById(user.id, batchId);
-  const job = await getJobStatus(user.id, jobId);
+  if (!batch) return notFound();
 
-  if (!batch || !job) return notFound();
+  const job = await getJobStatus(user.id, jobId);
+  const belongsToBatch = job
+    ? !job.payload?.batchId || String(job.payload.batchId) === batchId
+    : false;
+
+  if (!job || !belongsToBatch) {
+    const latestJob = await getLatestJobForBatch(user.id, batchId);
+    return (
+      <div className="max-w-2xl mx-auto py-8 space-y-5">
+        <Link
+          href={`/batches/${batchId}`}
+          className="text-xs text-teal-700 hover:underline inline-block"
+        >
+          &larr; Kembali ke Batch {batch.name}
+        </Link>
+        <div
+          role="alert"
+          className="glass-card rounded-2xl p-6 border border-rose-200 bg-rose-50/70 space-y-3"
+        >
+          <div className="flex items-center gap-2.5 text-rose-800">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <h1 className="text-lg font-bold">Job tidak ditemukan</h1>
+          </div>
+          <p className="text-sm text-rose-900">
+            Job ID <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-rose-200">{jobId}</code> tidak ditemukan pada batch{" "}
+            <strong>{batch.name}</strong>.
+          </p>
+          <div className="flex flex-wrap gap-2 pt-2">
+            <Link
+              href={`/batches/${batchId}`}
+              className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-xs font-medium text-white"
+            >
+              Kembali ke Detail Batch
+            </Link>
+            {latestJob && (
+              <Link
+                href={`/batches/${batchId}/ingest/${latestJob.id}`}
+                className="px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-xs font-medium text-white"
+              >
+                Buka Job Pindai Terbaru ({latestJob.status})
+              </Link>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const files = await listDriveFilesForBatch(user.id, batchId);
   const userId = user.id;

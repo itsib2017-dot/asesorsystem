@@ -84,4 +84,37 @@ describe("Drive folder crawling & BNSP path classification", () => {
       docType: "ktp",
     });
   });
+
+  it("skips inaccessible nested subfolders (HTTP 404) instead of aborting batch crawl", async () => {
+    const rootHtml = `
+      <div class="flip-entry" id="entry-broken">
+        <a href="https://drive.google.com/drive/folders/broken">
+          <div class="flip-entry-title">Shortcut Rusak</div>
+        </a>
+      </div>
+      <div class="flip-entry" id="entry-ok">
+        <a href="https://drive.google.com/drive/folders/ok">
+          <div class="flip-entry-title">1. Budi Santoso</div>
+        </a>
+      </div>
+    `;
+    const okHtml = `
+      <div class="flip-entry" id="entry-doc1">
+        <a href="https://drive.google.com/file/d/doc1/view">
+          <div class="flip-entry-title">APL01 Budi.docx</div>
+        </a>
+      </div>
+    `;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("id=root-with-broken")) return new Response(rootHtml, { status: 200 });
+      if (url.includes("id=broken")) return new Response("Not Found", { status: 404 });
+      return new Response(okHtml, { status: 200 });
+    });
+
+    const files = await crawlPublicDriveFolder({ folderId: "root-with-broken" });
+    expect(files).toHaveLength(1);
+    expect(files[0]?.driveFileId).toBe("doc1");
+  });
 });
