@@ -5,6 +5,7 @@ import { getUser } from "@/lib/auth/get-session";
 import { getBatchById } from "@/repositories/batches.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { listSimilarityPairsByBatch } from "@/repositories/assessment.repository";
+import { listSchemes } from "@/repositories/schemes.repository";
 import { renderCombinedWrittenReportMarkdown } from "@/services/similarity";
 
 export const metadata = {
@@ -23,13 +24,19 @@ export default async function SimilarityReportPage({
   const batch = await getBatchById(user.id, batchId);
   if (!batch) return notFound();
 
-  const pairs = await listSimilarityPairsByBatch(user.id, batchId);
-  const assessees = await listAssesseesByBatch(user.id, batchId);
+  const [pairs, assessees, schemes] = await Promise.all([
+    listSimilarityPairsByBatch(user.id, batchId),
+    listAssesseesByBatch(user.id, batchId),
+    listSchemes(user.id, batch.lspId),
+  ]);
+  const scheme = schemes.find((s) => s.id === batch.schemeId);
   const nameMap = new Map(assessees.map((a) => [a.id, a.displayName]));
 
   const combinedMd = renderCombinedWrittenReportMarkdown({
     batchName: batch.name,
-    schemeName: batch.tukName || "Skema Terdaftar",
+    schemeName: scheme
+      ? `${scheme.code} — ${scheme.name}`
+      : batch.tukName || "Skema Terdaftar",
     assessees: assessees.map((a) => ({
       assesseeId: a.id,
       realName: a.displayName,

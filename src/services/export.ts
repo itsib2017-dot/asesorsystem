@@ -1,5 +1,7 @@
 import {
+  AlignmentType,
   Document,
+  ImageRun,
   Packer,
   Paragraph,
   Table,
@@ -51,6 +53,7 @@ export interface Ak05ExportPayload {
   schemeCode: string;
   schemeTitle: string;
   schemeNumber: string;
+  tukName?: string;
   tukType: "sewaktu" | "tempat_kerja" | "mandiri";
   assessorName: string;
   assessorRegNo: string;
@@ -65,30 +68,274 @@ export interface Ak05ExportPayload {
   notesRejection: string;
   notesImprovement: string;
   signaturePngBytes?: Buffer;
+  signatureMimeType?: "image/png" | "image/jpeg";
+}
+
+function detectSignatureImageType(
+  bytes: Buffer,
+  mimeHint?: "image/png" | "image/jpeg",
+): "png" | "jpg" {
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return "jpg";
+  if (bytes[0] === 0x89 && bytes[1] === 0x50) return "png";
+  return mimeHint === "image/jpeg" ? "jpg" : "png";
+}
+
+function buildTukTextRuns(
+  tukType: Ak05ExportPayload["tukType"],
+  tukName?: string,
+): TextRun[] {
+  const runs: TextRun[] = [
+    new TextRun({ text: "Sewaktu", strike: tukType !== "sewaktu" }),
+    new TextRun({ text: " / " }),
+    new TextRun({ text: "Tempat Kerja", strike: tukType !== "tempat_kerja" }),
+    new TextRun({ text: " / " }),
+    new TextRun({ text: "Mandiri*", strike: tukType !== "mandiri" }),
+  ];
+  if (tukName && tukName !== "-") {
+    runs.push(new TextRun({ text: ` (${tukName})`, bold: true }));
+  }
+  return runs;
 }
 
 export async function generateAk05Docx(payload: Ak05ExportPayload): Promise<Buffer> {
+  const minRows = Math.max(12, payload.rows.length);
+  const candidateRows = Array.from({ length: minRows }).map((_, idx) => {
+    const r = payload.rows[idx];
+    const hasRow = Boolean(r);
+    return new TableRow({
+      children: [
+        new TableCell({
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: `${idx + 1}.` })],
+            }),
+          ],
+        }),
+        new TableCell({
+          children: [new Paragraph(r?.assesseeName ?? "")],
+        }),
+        new TableCell({
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({
+                  text: hasRow ? (r?.recommendation === "K" ? "☑" : "☐") : "☐",
+                }),
+              ],
+            }),
+          ],
+        }),
+        new TableCell({
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({
+                  text: hasRow ? (r?.recommendation === "BK" ? "☑" : "☐") : "☐",
+                }),
+              ],
+            }),
+          ],
+        }),
+        new TableCell({
+          children: [new Paragraph(r?.keterangan ?? "")],
+        }),
+      ],
+    });
+  });
+
+  const metaTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: "Skema Sertifikasi", bold: true })],
+              }),
+              new Paragraph("(KKNI/Okupasi/Klaster)"),
+            ],
+          }),
+          new TableCell({
+            children: [new Paragraph("Judul")],
+          }),
+          new TableCell({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: payload.schemeTitle, bold: true })],
+              }),
+            ],
+          }),
+        ],
+      }),
+      new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph("")] }),
+          new TableCell({ children: [new Paragraph("Nomor")] }),
+          new TableCell({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: payload.schemeNumber })],
+              }),
+            ],
+          }),
+        ],
+      }),
+      new TableRow({
+        children: [
+          new TableCell({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: "TUK", bold: true })],
+              }),
+            ],
+          }),
+          new TableCell({
+            columnSpan: 2,
+            children: [
+              new Paragraph({
+                children: buildTukTextRuns(payload.tukType, payload.tukName),
+              }),
+            ],
+          }),
+        ],
+      }),
+      new TableRow({
+        children: [
+          new TableCell({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: "Nama Asesor", bold: true })],
+              }),
+            ],
+          }),
+          new TableCell({
+            columnSpan: 2,
+            children: [new Paragraph(payload.assessorName)],
+          }),
+        ],
+      }),
+      new TableRow({
+        children: [
+          new TableCell({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: "Tanggal", bold: true })],
+              }),
+            ],
+          }),
+          new TableCell({
+            columnSpan: 2,
+            children: [new Paragraph(payload.assessmentDate)],
+          }),
+        ],
+      }),
+    ],
+  });
+
   const tableRows = [
     new TableRow({
       children: [
-        new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "No.", bold: true })] })] }),
-        new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Nama Asesi", bold: true })] })] }),
-        new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Rekomendasi (K / BK)", bold: true })] })] }),
-        new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Keterangan**", bold: true })] })] }),
-      ],
-    }),
-    ...payload.rows.map(
-      (r) =>
-        new TableRow({
+        new TableCell({
           children: [
-            new TableCell({ children: [new Paragraph(String(r.no))] }),
-            new TableCell({ children: [new Paragraph(r.assesseeName)] }),
-            new TableCell({ children: [new Paragraph(r.recommendation)] }),
-            new TableCell({ children: [new Paragraph(r.keterangan || "-")] }),
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: "No.", bold: true })],
+            }),
           ],
         }),
-    ),
+        new TableCell({
+          children: [
+            new Paragraph({
+              children: [new TextRun({ text: "Nama Asesi", bold: true })],
+            }),
+          ],
+        }),
+        new TableCell({
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: "K", bold: true })],
+            }),
+          ],
+        }),
+        new TableCell({
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: "BK", bold: true })],
+            }),
+          ],
+        }),
+        new TableCell({
+          children: [
+            new Paragraph({
+              children: [new TextRun({ text: "Keterangan**", bold: true })],
+            }),
+          ],
+        }),
+      ],
+    }),
+    ...candidateRows,
   ];
+
+  const signatureContent: Array<TextRun | ImageRun> = [];
+  if (payload.signaturePngBytes && payload.signaturePngBytes.length > 0) {
+    signatureContent.push(
+      new ImageRun({
+        type: detectSignatureImageType(payload.signaturePngBytes, payload.signatureMimeType),
+        data: payload.signaturePngBytes,
+        transformation: { width: 110, height: 45 },
+      }),
+    );
+  }
+  signatureContent.push(
+    new TextRun({
+      text: `${payload.signaturePngBytes?.length ? "\n" : ""}${payload.assessmentDate}`,
+    }),
+  );
+
+  const signatureTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: "Asesor :", bold: true })],
+              }),
+            ],
+          }),
+          new TableCell({ children: [new Paragraph("Nama")] }),
+          new TableCell({ children: [new Paragraph(payload.assessorName)] }),
+        ],
+      }),
+      new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph("")] }),
+          new TableCell({ children: [new Paragraph("No. Reg")] }),
+          new TableCell({ children: [new Paragraph(payload.assessorRegNo)] }),
+        ],
+      }),
+      new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph("")] }),
+          new TableCell({ children: [new Paragraph("Tanda tangan & tanggal")] }),
+          new TableCell({
+            children: [
+              new Paragraph({
+                children: signatureContent,
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
 
   const doc = new Document({
     sections: [
@@ -97,9 +344,8 @@ export async function generateAk05Docx(payload: Ak05ExportPayload): Promise<Buff
           new Paragraph({
             children: [new TextRun({ text: "FR.AK.05. LAPORAN ASESMEN", bold: true, size: 28 })],
           }),
-          new Paragraph(`Skema Sertifikasi: ${payload.schemeTitle} (${payload.schemeNumber})`),
-          new Paragraph(`TUK: ${payload.tukType.toUpperCase()} | Tanggal: ${payload.assessmentDate}`),
-          new Paragraph(`Asesor: ${payload.assessorName} | No. Reg: ${payload.assessorRegNo}`),
+          new Paragraph(""),
+          metaTable,
           new Paragraph(""),
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
@@ -120,10 +366,10 @@ export async function generateAk05Docx(payload: Ak05ExportPayload): Promise<Buff
           new Paragraph(payload.notesPositiveNegative || "-"),
           new Paragraph({ children: [new TextRun({ text: "Pencatatan Penolakan Hasil Asesmen:", bold: true })] }),
           new Paragraph(payload.notesRejection || "-"),
-          new Paragraph({ children: [new TextRun({ text: "Saran Perbaikan (Asesor/Personil Terkait):", bold: true })] }),
+          new Paragraph({ children: [new TextRun({ text: "Saran Perbaikan : (Asesor/Personil Terkait):", bold: true })] }),
           new Paragraph(payload.notesImprovement || "-"),
           new Paragraph(""),
-          new Paragraph(`Tanda Tangan Asesor: ${payload.assessorName} (${payload.assessorRegNo}) — ${payload.assessmentDate}`),
+          signatureTable,
         ],
       },
     ],
@@ -148,21 +394,25 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
   });
   y -= 22;
 
-  page.drawText(`Skema: ${payload.schemeTitle} (${payload.schemeNumber})`, {
+  page.drawText(`Skema Sertifikasi: ${payload.schemeTitle} (${payload.schemeNumber})`, {
     x: 45,
     y,
     size: 10,
     font: fontRegular,
   });
   y -= 16;
-  page.drawText(`TUK: ${payload.tukType.toUpperCase()} | Tanggal: ${payload.assessmentDate}`, {
+  const tukDisplay =
+    payload.tukName && payload.tukName !== "-"
+      ? `${payload.tukName} (${payload.tukType.toUpperCase()})`
+      : payload.tukType.toUpperCase();
+  page.drawText(`TUK: ${tukDisplay} | Tanggal: ${payload.assessmentDate}`, {
     x: 45,
     y,
     size: 10,
     font: fontRegular,
   });
   y -= 16;
-  page.drawText(`Asesor: ${payload.assessorName} | No. Reg: ${payload.assessorRegNo}`, {
+  page.drawText(`Nama Asesor: ${payload.assessorName} | No. Reg: ${payload.assessorRegNo}`, {
     x: 45,
     y,
     size: 10,
@@ -215,12 +465,16 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
     font: fontRegular,
   });
 
-  if (payload.signaturePngBytes) {
+  if (payload.signaturePngBytes && payload.signaturePngBytes.length > 0) {
     try {
-      const pngImage = await pdfDoc.embedPng(payload.signaturePngBytes);
-      page.drawImage(pngImage, { x: 420, y: 70, width: 110, height: 45 });
+      const kind = detectSignatureImageType(payload.signaturePngBytes, payload.signatureMimeType);
+      const sigImage =
+        kind === "jpg"
+          ? await pdfDoc.embedJpg(payload.signaturePngBytes)
+          : await pdfDoc.embedPng(payload.signaturePngBytes);
+      page.drawImage(sigImage, { x: 420, y: 70, width: 110, height: 45 });
     } catch {
-      // Fallback safely if signature image is JPEG or invalid
+      // Fallback safely if signature image is corrupted
     }
   }
 

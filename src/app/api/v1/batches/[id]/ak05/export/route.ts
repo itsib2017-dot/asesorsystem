@@ -10,6 +10,17 @@ import { getBatchById } from "@/repositories/batches.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { getActiveSignature } from "@/repositories/signatures.repository";
 import { getAssessorProfile } from "@/repositories/auth.repository";
+import { getAk05ReportForBatch } from "@/repositories/assessment.repository";
+import { listSchemes } from "@/repositories/schemes.repository";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+
+function extractSchemeNumber(name?: string, fallback?: string): string {
+  if (name) {
+    const match = name.match(/\((SKM\/[^)]+)\)/i);
+    if (match?.[1]) return match[1].trim();
+  }
+  return fallback || "-";
+}
 
 export async function GET(
   req: Request,
@@ -41,9 +52,16 @@ export async function GET(
     );
   }
 
-  const assessees = await listAssesseesByBatch(user.id, batchId);
-  const profile = await getAssessorProfile(user.id);
-  const unconfirmed = assessees.filter((a) => !a.certificateNameConfirmed);
+  const [assessees, profile, schemes, report] = await Promise.all([
+    listAssesseesByBatch(user.id, batchId),
+    getAssessorProfile(user.id),
+    listSchemes(user.id, batch.lspId),
+    getAk05ReportForBatch(user.id, batchId),
+  ]);
+
+  const unconfirmed = assessees.filter(
+    (a) => a.status === "needs_human" && !a.certificateNameConfirmed,
+  );
   if (unconfirmed.length > 0) {
     return apiError(
       "UNPROCESSABLE",
@@ -51,10 +69,44 @@ export async function GET(
     );
   }
 
+  let signatureBytes: Buffer | undefined;
+  try {
+    const supabase = await getSupabaseServerClient();
+    const { data: blob } = await supabase.storage
+      .from("signatures")
+      .download(signature.storagePath);
+    if (blob) {
+      signatureBytes = Buffer.from(await blob.arrayBuffer());
+    }
+  } catch {
+    signatureBytes = undefined;
+  }
+
+  if (!signatureBytes && signature.signedUrl) {
+    try {
+      const res = await fetch(signature.signedUrl, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        signatureBytes = Buffer.from(await res.arrayBuffer());
+      }
+    } catch {
+      signatureBytes = undefined;
+    }
+  }
+
+  const scheme = schemes.find((s) => s.id === batch.schemeId);
+  const schemeTitle = scheme
+    ? scheme.name.replace(/\s*\(SKM\/[^)]+\)/i, "").trim()
+    : batch.name;
+  const schemeNumber = extractSchemeNumber(
+    scheme?.name,
+    scheme?.manifest?.decisionRuleRef,
+  );
+
   const payload = {
-    schemeCode: "AK3U",
-    schemeTitle: batch.name,
-    schemeNumber: "SKM/2037/00013/2/2021/1",
+    schemeCode: scheme?.code ?? "SKEMA",
+    schemeTitle,
+    schemeNumber,
+    tukName: batch.tukName ?? "-",
     tukType: (batch.tukType as "sewaktu" | "tempat_kerja" | "mandiri") ?? "sewaktu",
     assessorName: (profile?.fullName as string) || (profile?.full_name as string) || user.email || "Asesor",
     assessorRegNo: (profile?.regNoMet as string) || (profile?.reg_no_met as string) || "-",
@@ -65,9 +117,14 @@ export async function GET(
       recommendation: "K" as const,
       keterangan: "",
     })),
-    notesPositiveNegative: "Pelaksanaan asesmen berjalan sesuai jadwal TUK.",
-    notesRejection: "-",
-    notesImprovement: "-",
+    notesPositiveNegative: String(
+      report?.notes_positive_negative ?? report?.notesPositiveNegative ?? "-",
+    ),
+    notesRejection: String(report?.notes_rejection ?? report?.notesRejection ?? "-"),
+    notesImprovement: String(report?.notes_improvement ?? report?.notesImprovement ?? "-"),
+    signaturePngBytes: signatureBytes,
+    signatureMimeType:
+      signature.mimeType === "image/jpeg" ? ("image/jpeg" as const) : ("image/png" as const),
   };
 
   if (format === "pdf") {

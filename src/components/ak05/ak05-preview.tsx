@@ -6,6 +6,7 @@ interface Ak05PreviewProps {
   batchId: string;
   schemeTitle: string;
   schemeNumber: string;
+  tukName?: string;
   tukType: string;
   assessorName: string;
   assessorRegNo: string;
@@ -92,7 +93,23 @@ export function Ak05Preview(props: Ak05PreviewProps) {
           <div className="grid grid-cols-2 gap-2 text-xs mt-2">
             <div>Skema Sertifikasi: <strong>{props.schemeTitle}</strong></div>
             <div>Nomor: <strong>{props.schemeNumber}</strong></div>
-            <div>TUK: <strong className="uppercase">{props.tukType}</strong></div>
+            <div>
+              TUK:{" "}
+              <span className={props.tukType === "sewaktu" ? "font-bold" : "line-through text-slate-400"}>
+                Sewaktu
+              </span>
+              /
+              <span className={props.tukType === "tempat_kerja" ? "font-bold" : "line-through text-slate-400"}>
+                Tempat Kerja
+              </span>
+              /
+              <span className={props.tukType === "mandiri" ? "font-bold" : "line-through text-slate-400"}>
+                Mandiri*
+              </span>
+              {props.tukName && props.tukName !== "-" ? (
+                <span className="ml-1.5 font-semibold text-slate-700">— {props.tukName}</span>
+              ) : null}
+            </div>
             <div>Tanggal: <strong>{props.assessmentDate}</strong></div>
             <div>Nama Asesor: <strong>{props.assessorName}</strong></div>
             <div>No. Reg MET: <strong>{props.assessorRegNo}</strong></div>
