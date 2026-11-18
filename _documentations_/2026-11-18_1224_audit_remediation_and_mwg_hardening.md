@@ -46,3 +46,10 @@
 - `npm run build` (`next build`): exit 0, all 27 routes compiled cleanly alongside `/_not-found` and `Proxy (Middleware)`.
 - `supabase db push --remote --yes`: applied `20261118000006_jobs_update_policy.sql`.
 - `supabase db advisors --remote`: zero RLS/schema errors; only external dashboard info warning (`auth_leaked_password_protection`).
+- **Live Vercel Production Check (Commit `8638a30` via headless browser on `https://assessor-zeta.vercel.app/`)**:
+  - `GET /api/health` → HTTP 200 JSON (`status: "ok"`, `version: "v1.4"`).
+  - `GET /login` → HTTP 200; `"Lupa password?"` link (`/forgot-password`) and `"Tampilkan password"` toggle button confirmed interactive; security response headers (`strict-transport-security`, `content-security-policy`, `x-frame-options: DENY`, `x-content-type-options: nosniff`, `referrer-policy`, `permissions-policy`) present on document response.
+  - `GET /forgot-password` → HTTP 200 directly (no redirect to `/login`), renders `"Pemulihan Password"` form cleanly.
+  - `GET /robots.txt` & `GET /manifest.webmanifest` → HTTP 200 directly without auth redirect.
+- **Graphify & Obsidian Sync**: Updated `graphify-out/GRAPH_REPORT.md` (4854 nodes, 11219 edges, 243 communities) and `graphify-out/obsidian/` (5088 notes + `graph.canvas`).
+
