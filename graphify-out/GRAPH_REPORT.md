@@ -1,17 +1,17 @@
 # Graph Report - webapps_asesor  (2026-11-18)
 
 ## Corpus Check
-- 683 files · ~1,330,469 words
+- 691 files · ~1,344,660 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 30 file(s) not represented in the graph (top: (none) 19, .example 2, .jsonl 2)
 
 ## Summary
-- 4917 nodes · 11539 edges · 216 communities (180 shown, 36 thin omitted)
+- 4967 nodes · 11823 edges · 216 communities (181 shown, 35 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 97 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `00475111`
+- Built from commit: `1ef4ba53`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -30,7 +30,7 @@
 - getSessionDBPath
 - codex-companion.mjs
 - ref_node_url
-- worker/index.ts
+- load-batch-similarity.ts
 - postinstall.mjs
 - dependencies
 - ref_node_child_process
@@ -51,15 +51,15 @@
 - dependencies
 - ref_src_session_db_js
 - generated-validators.mjs
-- getBatchById
-- redirect-marker-read.test.ts
+- ref_node_crypto
+- redirect-marker-bash.test.ts
 - ensure-deps.mjs
 - auth.repository.ts
-- package.json
+- batches.repository.ts
 - session-db.bundle.mjs
 - state.mjs
 - purge-session.test.ts
-- normalize-hooks.mjs
+- preview.mjs
 - diagnostics.mjs
 - export.ts
 - brand-marks.mjs
@@ -78,7 +78,7 @@
 - runtime.test.mjs
 - graders
 - runner.py
-- ref_next
+- getBatchById
 - visual-check.mjs
 - repro-before-fix/case.yaml
 - graders
@@ -113,8 +113,8 @@
 - template.sh
 - attributes
 - parseAttrs
-- suppress-stderr.mjs
-- heal-better-sqlite3.mjs
+- kimi/stop.mjs
+- output-path.mjs
 - session-snapshot.bundle.mjs
 - sync_skill_readme.py
 - auto-clarity-destructive/case.yaml
@@ -146,16 +146,16 @@
 - EvalIndexTests
 - pi-mcp-bridge.test.ts
 - compilerOptions
-- continuity.test.ts
+- codex/stop.mjs
 - EvalColumnTests
 - hooks
 - plugins
 - extract-multilang.test.ts
 - Ie
 - prove-narrative-render.ts
-- ak05-preview.tsx
+- ak02-blanko-preview.tsx
 - UserService
-- codex-usage.test.ts
+- open-artifact.mjs
 - scripts
 - better-sqlite3
 - codex.test.ts
@@ -223,12 +223,12 @@
 - lucide-react@^0.469.0
 - bulkInsertEvents
 - eslint.config.mjs
-- export.test.ts
+- generateAk05Pdf
 
 ## God Nodes (most connected - your core abstractions)
 1. `compileWorkflowInternal()` - 175 edges
-2. `getSupabaseServerClient()` - 84 edges
-3. `getUser()` - 75 edges
+2. `getSupabaseServerClient()` - 86 edges
+3. `getUser()` - 77 edges
 4. `asArray()` - 53 edges
 5. `hasDatabaseUrl()` - 51 edges
 6. `withRlsTransaction()` - 50 edges
@@ -242,25 +242,25 @@
   tests/hooks/core-routing.test.ts → hooks/core/mcp-ready.mjs
 - `hasUnrelatedLiveSentinel()` --calls--> `sentinelDir()`  [EXTRACTED]
   tests/hooks/core-routing.test.ts → hooks/core/mcp-ready.mjs
+- `handleSessionEnd()` --indirect_call--> `terminateProcessTree()`  [INFERRED]
+  .agents/plugins/codex/plugins/codex/scripts/session-lifecycle-hook.mjs → .agents/plugins/codex/plugins/codex/scripts/lib/process.mjs
 - `boundaryRect()` --calls--> `asArray()`  [EXTRACTED]
   .agents/skills/archify/renderers/architecture/render-architecture.mjs → .agents/skills/archify/renderers/shared/geometry.mjs
 - `ye()` --indirect_call--> `j()`  [INFERRED]
   hooks/session-db.bundle.mjs → hooks/security.bundle.mjs
-- `oe()` --indirect_call--> `ne()`  [INFERRED]
-  hooks/session-extract.bundle.mjs → hooks/security.bundle.mjs
 
 ## Import Cycles
 - None detected.
 
-## Communities (216 total, 36 thin omitted)
+## Communities (216 total, 35 thin omitted)
 
 ### Community 0 - "ref_node_fs"
 Cohesion: 0.02
-Nodes (61): rewriteShellSnapshots(), selfHealShellSnapshots(), assertBundleClean(), FORBIDDEN_PATTERNS, main(), TARGETS, walkFiles(), FIXTURE (+53 more)
+Nodes (57): assertBundleClean(), FORBIDDEN_PATTERNS, main(), walkFiles(), FIXTURE, HERE, PI_CONFIG_DIR, batchRequests (+49 more)
 
 ### Community 1 - "session-helpers.mjs"
 Cohesion: 0.05
-Nodes (66): HOOK_DIR, { loadSessionDB, loadExtract, loadProjectAttribution }, HOOK_DIR, { loadSessionDB, loadSnapshot }, HOOK_DIR, { loadSessionDB }, HOOK_DIR, { loadSessionDB, loadExtract, loadProjectAttribution } (+58 more)
+Nodes (63): HOOK_DIR, { loadSessionDB, loadExtract, loadProjectAttribution }, HOOK_DIR, { loadSessionDB, loadSnapshot }, __hookDir, HOOK_DIR, { loadSessionDB }, HOOK_DIR (+55 more)
 
 ### Community 2 - "check-update.mjs"
 Cohesion: 0.06
@@ -271,16 +271,16 @@ Cohesion: 0.05
 Nodes (121): connectionSides(), withDiagnosticRecordingSuppressed(), anchor(), automaticPortSpread(), chosenSide(), defaultFromSide(), defaultToSide(), pointInBox() (+113 more)
 
 ### Community 4 - "archify.mjs"
-Cohesion: 0.05
-Nodes (97): assertEvidenceType(), CHECK_FIXES, checkerDiagnostics(), [command, ...args], commandBrands(), commandCheck(), commandCompare(), commandDeliver() (+89 more)
+Cohesion: 0.12
+Nodes (50): assertEvidenceType(), CHECK_FIXES, checkerDiagnostics(), [command, ...args], commandBrands(), commandCheck(), commandCompare(), commandDeliver() (+42 more)
 
 ### Community 5 - "ref_vitest"
 Cohesion: 0.03
-Nodes (11): batchRequests, fetchAndIndexSchema, makeNarrativeContext(), makeReport(), InsertEventParams, CFG, FIXTURE, HERE (+3 more)
+Nodes (12): batchRequests, fetchAndIndexSchema, makeNarrativeContext(), makeReport(), InsertEventParams, CFG, FIXTURE, HERE (+4 more)
 
 ### Community 6 - "ref_node_os"
 Cohesion: 0.04
-Nodes (21): ../../src/adapters/detect.js, AGY_PLUGIN, TestAdapter, walk(), PLUGIN, REPO_ROOT, clearPluginRoots(), pluginRoots() (+13 more)
+Nodes (19): ../../src/adapters/detect.js, AGY_PLUGIN, TestAdapter, walk(), PLUGIN, REPO_ROOT, clearPluginRoots(), pluginRoots() (+11 more)
 
 ### Community 7 - "render-lifecycle.mjs"
 Cohesion: 0.04
@@ -295,36 +295,36 @@ Cohesion: 0.09
 Nodes (73): validateArchitecture(), validateDataflow(), validateLifecycle(), validateSequence(), brandTopRailProblem(), recordDiagnostic(), asArray(), authoredAnalysisSegments() (+65 more)
 
 ### Community 10 - "getSupabaseServerClient"
-Cohesion: 0.07
-Nodes (78): drizzle-orm, confirmCertificateNameAction(), saveUnitDecisionAction(), DashboardPage(), metadata, ACCENT_MAP, StatsCard(), StatsCardProps (+70 more)
+Cohesion: 0.08
+Nodes (69): extractSchemeNumber(), GET(), AssesseeFormType, FORM_FILENAMES, GET(), Ak05Page(), extractSchemeNumber(), metadata (+61 more)
 
 ### Community 11 - "getSessionDBPath"
-Cohesion: 0.07
-Nodes (49): captureCodexInstructionRules(), HOOK_DIR, { loadSessionDB }, ROUTING_BLOCK, toolNamer, HOOK_DIR, { loadSessionDB }, ROUTING_BLOCK (+41 more)
+Cohesion: 0.06
+Nodes (56): captureCodexInstructionRules(), HOOK_DIR, { loadSessionDB }, ROUTING_BLOCK, toolNamer, HOOK_DIR, { loadSessionDB }, ROUTING_BLOCK (+48 more)
 
 ### Community 12 - "codex-companion.mjs"
-Cohesion: 0.08
-Nodes (65): buildNativeReviewTarget(), buildReviewJobMetadata(), buildTaskJob(), buildTaskRequest(), buildTaskRunMetadata(), createCompanionJob(), ensureCodexAvailable(), executeTaskRun() (+57 more)
+Cohesion: 0.09
+Nodes (57): buildNativeReviewTarget(), buildReviewJobMetadata(), buildTaskJob(), buildTaskRequest(), buildTaskRunMetadata(), createCompanionJob(), ensureCodexAvailable(), executeTaskRun() (+49 more)
 
 ### Community 13 - "ref_node_url"
 Cohesion: 0.06
-Nodes (52): fromAgy(), getAgyProjectDir(), normalizeAgyToolInput(), normalizeAgyToolName(), parseAgyPayload(), HOOK_DIR, { loadSessionDB, loadExtract, loadProjectAttribution }, __hookDir (+44 more)
+Nodes (49): fromAgy(), getAgyProjectDir(), normalizeAgyToolInput(), normalizeAgyToolName(), parseAgyPayload(), HOOK_DIR, { loadSessionDB, loadExtract, loadProjectAttribution }, __hookDir (+41 more)
 
-### Community 14 - "worker/index.ts"
-Cohesion: 0.09
-Nodes (40): DitAnalysisPage(), metadata, getConfig(), LogContext, logEvent(), LogLevel, REDACT_KEYS, redactObject() (+32 more)
+### Community 14 - "load-batch-similarity.ts"
+Cohesion: 0.24
+Nodes (11): metadata, SimilarityReportPage(), loadBatchSimilarityReportData(), computeJaccardNgram(), computeTfIdfCosine(), DEFAULT_SIMILARITY_THRESHOLDS, evaluateSimilarityPair(), makeNgrams() (+3 more)
 
 ### Community 15 - "postinstall.mjs"
-Cohesion: 0.13
-Nodes (13): ../build/runtime.js, healClaudeJsonMcpArgs(), healInstalledPlugins(), healMcpJsonArgs(), healPluginJsonMcpServers(), healSettingsEnabledPlugins(), sweepStaleMcpJson(), __dirname (+5 more)
+Cohesion: 0.07
+Nodes (33): ../build/runtime.js, fwd(), hasStaleCacheVersionSegment(), needsHookNormalization(), normalizeHooksJson(), normalizeHooksJsonOnly(), normalizeHooksOnStartup(), normalizePluginJson() (+25 more)
 
 ### Community 16 - "dependencies"
-Cohesion: 0.09
-Nodes (32): dependencies, ai@^7.0.176, @ai-sdk/anthropic@^4.0.106, @ai-sdk/google@^4.0.122, @ai-sdk/openai@^4.0.121, docx@^9.15.4, drizzle-orm@^0.45.4, exceljs@^4.4.0 (+24 more)
+Cohesion: 0.05
+Nodes (55): dependencies, ai@^7.0.176, @ai-sdk/anthropic@^4.0.106, @ai-sdk/google@^4.0.122, @ai-sdk/openai@^4.0.121, docx@^9.15.4, drizzle-orm@^0.45.4, exceljs@^4.4.0 (+47 more)
 
 ### Community 17 - "ref_node_child_process"
-Cohesion: 0.04
-Nodes (30): __dirname, outputRoot, skillRoot, TARGETS, cleanups, createTempRoot(), ensureDepsAbsPath, runCodesignHarness() (+22 more)
+Cohesion: 0.03
+Nodes (31): __dirname, outputRoot, skillRoot, TARGETS, TARGETS, cleanups, createTempRoot(), ensureDepsAbsPath (+23 more)
 
 ### Community 18 - "live-benchmark-v04.ts"
 Cohesion: 0.04
@@ -332,7 +332,7 @@ Nodes (43): bench(), benchFuzzyCache(), BenchResult, benchTokenDedup(), cleanupS
 
 ### Community 19 - "routing.mjs"
 Cohesion: 0.06
-Nodes (59): isMCPReady(), sentinelDir(), sentinelPath(), sentinelPathForPid(), defaultGuidanceId(), getBashNudgeMinCommandBytes(), getCodexConfigDir(), getExternalMcpNudgeEvery() (+51 more)
+Nodes (53): isMCPReady(), sentinelDir(), sentinelPath(), sentinelPathForPid(), defaultGuidanceId(), getBashNudgeMinCommandBytes(), getCodexConfigDir(), getExternalMcpNudgeEvery() (+45 more)
 
 ### Community 20 - "session-extract.bundle.mjs"
 Cohesion: 0.10
@@ -340,43 +340,43 @@ Nodes (25): A(), dt(), fe(), ft(), gt(), ht(), J(), jt() (+17 more)
 
 ### Community 21 - "codex.mjs"
 Cohesion: 0.09
-Nodes (52): applyTurnNotification(), belongsToTurn(), buildAppServerAuthStatus(), buildAuthStatus(), buildPersistentTaskThreadName(), buildResultStatus(), buildResumeParams(), buildTaskThreadName() (+44 more)
+Nodes (55): CodexAppServerClient, applyTurnNotification(), belongsToTurn(), buildAppServerAuthStatus(), buildAuthStatus(), buildPersistentTaskThreadName(), buildResultStatus(), buildResumeParams() (+47 more)
 
 ### Community 22 - "ref_node_path"
 Cohesion: 0.04
-Nodes (16): PLUGIN_ROOT, ROOT, RFC-8259, CODEX_MARKETPLACE_PATHS, RawMarketplaceManifest, RawPluginEntry, RawPluginSourceObject, REPO_ROOT (+8 more)
+Nodes (18): PLUGIN_ROOT, ROOT, RFC-8259, CODEX_MARKETPLACE_PATHS, RawMarketplaceManifest, RawPluginEntry, RawPluginSourceObject, REPO_ROOT (+10 more)
 
 ### Community 23 - "render-architecture.mjs"
 Cohesion: 0.06
 Nodes (52): DEFAULT_GRID, gridLayout(), resolveComponentPos(), validateGridPlacement(), alignFacingPorts(), architectureLegendEntries, automaticPorts, autoViewBoxFor() (+44 more)
 
 ### Community 24 - "broker-lifecycle.mjs"
-Cohesion: 0.07
-Nodes (46): buildJsonRpcError(), buildStreamThreadIds(), isInterruptRequest(), main(), routeNotification(), send(), STREAMING_METHODS, writePidFile() (+38 more)
+Cohesion: 0.08
+Nodes (39): buildJsonRpcError(), buildStreamThreadIds(), isInterruptRequest(), main(), routeNotification(), send(), STREAMING_METHODS, writePidFile() (+31 more)
 
 ### Community 25 - "getUser"
-Cohesion: 0.09
-Nodes (44): GET(), GET(), createBatchSchema, GET(), POST(), analyseSchema, POST(), enqueueSchema (+36 more)
+Cohesion: 0.08
+Nodes (45): GET(), GET(), createBatchSchema, GET(), POST(), analyseSchema, POST(), enqueueSchema (+37 more)
 
 ### Community 26 - "server.test.ts"
 Cohesion: 0.04
 Nodes (25): RFC-6874, Captured, CaseAString, __dirname, DoctorJsonRpcResponse, FakeReturn, ForbiddenRule, gfmPath (+17 more)
 
 ### Community 27 - "ref_next"
-Cohesion: 0.09
-Nodes (27): GET(), forgotPasswordAction(), ForgotPasswordState, forgotSchema, ForgotPasswordForm(), ForgotPasswordFormProps, dynamic, ForgotPasswordPage() (+19 more)
+Cohesion: 0.05
+Nodes (41): contentSecurityPolicy, nextConfig, CreateBatchPanel(), CreateBatchPanelProps, WrittenKeyForm(), WrittenKeyFormProps, metadata, WrittenGradingPage() (+33 more)
 
 ### Community 28 - "properties"
 Cohesion: 0.04
 Nodes (46): additionalProperties, minLength, type, maximum, minimum, type, minLength, type (+38 more)
 
 ### Community 29 - "session-loaders.mjs"
-Cohesion: 0.09
-Nodes (26): HOOK_DIR, { loadSessionDB, loadExtract, loadProjectAttribution }, DEBUG_LOG, HOOK_DIR, { loadSessionDB, loadSnapshot }, HOOK_DIR, { loadSessionDB, loadProjectAttribution }, HOOK_DIR (+18 more)
+Cohesion: 0.11
+Nodes (23): RFC-4122, ./build/server.js, detectPlatformFromEnv(), PLATFORM_ENV_VARS_MIRROR, hasPlatformConfig(), copyDirSync(), logError(), resolveClaudeConfigDir() (+15 more)
 
 ### Community 30 - "real-bytes-stats.test.ts"
-Cohesion: 0.05
-Nodes (18): better-sqlite3, REPO, REPO, __dirname, HookResult, HOOKS_DIR, __dirname, HookResult (+10 more)
+Cohesion: 0.04
+Nodes (20): better-sqlite3, REPO, __dirname, HOOK_PATH, REPO, __dirname, HookResult, HOOKS_DIR (+12 more)
 
 ### Community 31 - "enabledPlugins"
 Cohesion: 0.05
@@ -387,56 +387,56 @@ Cohesion: 0.06
 Nodes (46): @auth/prisma-adapter, class-variance-authority, clsx, date-fns, next-auth, @radix-ui/react-dialog, @radix-ui/react-dropdown-menu, @radix-ui/react-toast (+38 more)
 
 ### Community 33 - "ref_src_session_db_js"
-Cohesion: 0.04
-Nodes (18): CapturedPost, platformConfigFile(), SEED_INSERT_COLUMNS, VARIANT_COLUMNS, writePlatformConfig(), cleanups, __dirname, HOOK_PATH (+10 more)
+Cohesion: 0.06
+Nodes (14): __dirname, PRECOMPACT_PATH, RawEventRow, CapturedPost, platformConfigFile(), SEED_INSERT_COLUMNS, VARIANT_COLUMNS, writePlatformConfig() (+6 more)
 
 ### Community 34 - "generated-validators.mjs"
 Cohesion: 0.06
 Nodes (44): architecture, dataflow, func3(), lifecycle, pattern17, pattern18, pattern20, pattern4 (+36 more)
 
-### Community 35 - "getBatchById"
-Cohesion: 0.19
-Nodes (21): extractSchemeNumber(), GET(), GET(), Ak05Page(), extractSchemeNumber(), metadata, metadata, SimilarityReportPage() (+13 more)
+### Community 35 - "ref_node_crypto"
+Cohesion: 0.04
+Nodes (24): __dirname, HookResult, HOOKS_DIR, ROOT, __dirname, HookResult, HOOKS_DIR, ROOT (+16 more)
 
-### Community 36 - "redirect-marker-read.test.ts"
-Cohesion: 0.02
-Nodes (41): CODEX_PRECOMPACT_PATH, CODEX_SESSIONSTART_PATH, CODEX_USER_PROMPT_PATH, __dirname, CODEX_SESSIONSTART_PATH, __dirname, __dirname, HookResult (+33 more)
+### Community 36 - "redirect-marker-bash.test.ts"
+Cohesion: 0.04
+Nodes (19): CODEX_PRECOMPACT_PATH, CODEX_SESSIONSTART_PATH, CODEX_USER_PROMPT_PATH, __dirname, CODEX_SESSIONSTART_PATH, __dirname, __dirname, mcpSentinel (+11 more)
 
 ### Community 37 - "ensure-deps.mjs"
 Cohesion: 0.14
 Nodes (18): codesignBinary(), __dirname, ensureDeps(), ensureNativeCompat(), hasModernSqlite(), healBetterSqlite3Binding(), NATIVE_BINARIES, NATIVE_DEPS (+10 more)
 
 ### Community 38 - "auth.repository.ts"
-Cohesion: 0.08
-Nodes (33): @supabase/supabase-js, rescanBatchDriveAction(), AppShellLayout(), signOutAction(), AuditLogPage(), formatAuditSummary(), metadata, saveSchemeManifestAction() (+25 more)
+Cohesion: 0.12
+Nodes (20): AppShellLayout(), signOutAction(), completeOnboardingAction(), onboardingSchema, OnboardingState, signOutFromOnboardingAction(), OnboardingForm(), OnboardingFormProps (+12 more)
 
-### Community 39 - "package.json"
-Cohesion: 0.11
-Nodes (19): devDependencies, eslint@^9, eslint-config-next@16.4.6, tailwindcss@4.3.3, @tailwindcss/turbopack@4.3.3, @types/node@^20, @types/react@^19, @types/react-dom@^19 (+11 more)
+### Community 39 - "batches.repository.ts"
+Cohesion: 0.08
+Nodes (35): drizzle-orm, DrizzleDb, getDb(), ADR-0004, ak05Reports, appConfig, assessees, assessors (+27 more)
 
 ### Community 40 - "session-db.bundle.mjs"
 Cohesion: 0.10
 Nodes (20): claimLatestUnconsumedResume(), cleanupOldSessions(), deleteSession(), ensureSession(), getEventBytesSummary(), getEventCount(), getEvents(), getLatestAttributedProjectDir() (+12 more)
 
 ### Community 41 - "state.mjs"
-Cohesion: 0.16
-Nodes (32): createTrackedProgress(), enqueueBackgroundTask(), spawnDetachedTaskWorker(), defaultState(), ensureStateDir(), FALLBACK_STATE_ROOT_DIR, loadState(), nowIso() (+24 more)
+Cohesion: 0.15
+Nodes (33): createTrackedProgress(), enqueueBackgroundTask(), spawnDetachedTaskWorker(), defaultState(), ensureStateDir(), FALLBACK_STATE_ROOT_DIR, loadState(), nowIso() (+25 more)
 
 ### Community 42 - "purge-session.test.ts"
 Cohesion: 0.06
 Nodes (11): HandlerFn, registerOmpPlugin(), createPluginWithRejectingLog(), createTestPlugin(), mcpSentinel, cleanup, cleanup, __dirname (+3 more)
 
-### Community 43 - "normalize-hooks.mjs"
-Cohesion: 0.27
-Nodes (10): fwd(), hasStaleCacheVersionSegment(), needsHookNormalization(), normalizeHooksJson(), normalizeHooksJsonOnly(), normalizeHooksOnStartup(), normalizePluginJson(), pluginRootVersion() (+2 more)
+### Community 43 - "preview.mjs"
+Cohesion: 0.16
+Nodes (27): cliPath, compactMessage(), diagramTypes, here, initialAuthoredOutput(), parseReceipt(), previewPage(), redactDiagnostic() (+19 more)
 
 ### Community 44 - "diagnostics.mjs"
 Cohesion: 0.11
 Nodes (29): loadDiagram(), loadDiagramWithBrandMarks(), validateGuidedViews(), validateRelationshipIds(), boundaryKey, fallbackDiagnostic(), installRendererDiagnosticBoundary(), normalizedDiagnostic() (+21 more)
 
 ### Community 45 - "export.ts"
-Cohesion: 0.19
-Nodes (22): AK05_TEMPLATE_PATH, Ak05ExportPayload, buildSignatureDrawingRun(), buildTukCellRuns(), detectSignatureImageType(), DocumentType, drawBlankoHeaderFooter(), drawCellBox() (+14 more)
+Cohesion: 0.22
+Nodes (27): AK02_EVIDENCE_COLUMNS, Ak05ExportPayload, applyTableReplacements(), buildAssessorSigRuns(), buildSignatureDrawingRun(), buildTukCellRuns(), detectSignatureImageType(), DocumentType (+19 more)
 
 ### Community 46 - "brand-marks.mjs"
 Cohesion: 0.10
@@ -459,35 +459,35 @@ Cohesion: 0.09
 Nodes (23): deriveMarketplaceClonePath(), expandFilesArray(), healPartialInstallFromMarketplace(), isPartialInstall(), listFilesRecursive(), logHealResult(), readJsonSafe(), resolveConfigDir() (+15 more)
 
 ### Community 51 - "provider/actions.ts"
-Cohesion: 0.10
-Nodes (32): getProviderConfigAction(), MaskedProviderConfigData, providerSettingsSchema, saveProviderSettingsAction(), testConnectionAction(), ADR-0003, MODEL_SUGGESTIONS, Props (+24 more)
+Cohesion: 0.08
+Nodes (40): DashboardPage(), metadata, getProviderConfigAction(), MaskedProviderConfigData, providerSettingsSchema, saveProviderSettingsAction(), testConnectionAction(), ADR-0003 (+32 more)
 
 ### Community 52 - "check-render-output.mjs"
 Cohesion: 0.08
 Nodes (22): attrEntries(), checks, collectLegendCollisions(), collectNonFiniteAttrs(), collectRelationshipCrossings(), composition, crossProduct(), decodeNumericReferences() (+14 more)
 
 ### Community 53 - "search.test.ts"
-Cohesion: 0.06
-Nodes (16): createMixedStore(), createSeededStore(), createStore(), RELEVANCE_CORPUS, ScenarioResult, scenarioResults, unifiedCleanups, benchmark() (+8 more)
+Cohesion: 0.08
+Nodes (9): createMixedStore(), createSeededStore(), createStore(), RELEVANCE_CORPUS, ScenarioResult, scenarioResults, unifiedCleanups, tempFiles (+1 more)
 
 ### Community 54 - "cache-heal-self-heal.test.ts"
-Cohesion: 0.24
-Nodes (11): buildHookCommand(), ensureShebangAndExecBit(), extractNodePath(), fwd(), isStaleNodePath(), selfHealCacheHealHook(), BREADCRUMB_ROOT, cleanups (+3 more)
+Cohesion: 0.12
+Nodes (18): buildHookCommand(), ensureShebangAndExecBit(), extractNodePath(), fwd(), isStaleNodePath(), rewriteShellSnapshots(), selfHealCacheHealHook(), selfHealShellSnapshots() (+10 more)
 
 ### Community 55 - "git.mjs"
-Cohesion: 0.20
-Nodes (23): executeReviewRun(), parseStructuredOutput(), isProbablyText(), buildAdversarialCollectionGuidance(), buildBranchComparison(), collectBranchContext(), collectReviewContext(), collectWorkingTreeContext() (+15 more)
+Cohesion: 0.16
+Nodes (29): executeReviewRun(), parseStructuredOutput(), isProbablyText(), buildAdversarialCollectionGuidance(), buildBranchComparison(), collectBranchContext(), collectReviewContext(), collectWorkingTreeContext() (+21 more)
 
 ### Community 56 - "steps"
 Cohesion: 0.09
 Nodes (21): NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_SUPABASE_URL, jobs, verify, name, on, pull_request, push (+13 more)
 
 ### Community 57 - "job-control.mjs"
-Cohesion: 0.11
-Nodes (33): buildAdversarialReviewPrompt(), buildSetupReport(), getCodexAvailability(), getSessionRuntimeStatus(), buildStatusSnapshot(), DEFAULT_MAX_PROGRESS_LINES, DEFAULT_MAX_STATUS_JOBS, enrichJob() (+25 more)
+Cohesion: 0.12
+Nodes (38): buildAdversarialReviewPrompt(), buildSetupReport(), getSessionRuntimeStatus(), buildSingleJobSnapshot(), buildStatusSnapshot(), DEFAULT_MAX_PROGRESS_LINES, DEFAULT_MAX_STATUS_JOBS, enrichJob() (+30 more)
 
 ### Community 59 - "runtime.test.mjs"
-Cohesion: 0.16
+Cohesion: 0.13
 Nodes (15): makeVersionFixture(), ROOT, SCRIPT, writeJson(), buildEnv(), installFakeCodex(), initGitRepo(), makeTempDir() (+7 more)
 
 ### Community 60 - "graders"
@@ -498,9 +498,9 @@ Nodes (26): description, execution, allowed_tools, max_turns, prompt, timeout_se
 Cohesion: 0.22
 Nodes (15): check_approval(), cli_prefix(), command(), digest(), execute(), git(), main(), parse_result() (+7 more)
 
-### Community 63 - "ref_next"
-Cohesion: 0.06
-Nodes (30): contentSecurityPolicy, nextConfig, CreateBatchPanel(), CreateBatchPanelProps, uploadBatchMasterKey06bAction(), AssesseeDetailPage(), metadata, runWrittenGradingWithKeyAction() (+22 more)
+### Community 63 - "getBatchById"
+Cohesion: 0.09
+Nodes (42): @supabase/supabase-js, GET(), uploadBatchMasterKey06bAction(), runWrittenGradingWithKeyAction(), BatchIngestJobPage(), retryJobAction(), metadata, BatchDetailPage() (+34 more)
 
 ### Community 64 - "visual-check.mjs"
 Cohesion: 0.16
@@ -547,8 +547,8 @@ Cohesion: 0.09
 Nodes (21): description, execution, allowed_tools, max_turns, prompt, graders, arm, criteria (+13 more)
 
 ### Community 75 - "platform-bridge.mjs"
-Cohesion: 0.16
-Nodes (20): ADR-0006, buildUrl(), computeProjectIdentity(), configPath(), HOME, _internal, maybeForward(), NO_CONFIG (+12 more)
+Cohesion: 0.11
+Nodes (24): ADR-0006, buildUrl(), computeProjectIdentity(), configPath(), HOME, _internal, maybeForward(), NO_CONFIG (+16 more)
 
 ### Community 76 - "hooks/formatters.test.ts"
 Cohesion: 0.12
@@ -638,13 +638,13 @@ Nodes (18): description, label, options, placeholder, render, value, body, attri
 Cohesion: 0.18
 Nodes (18): projectedNodeTextPx(), collectArrows(), collectCompositionFrames(), collectDesktopReadability(), collectLegendBoxes(), collectRelationshipLabelMasks(), estimatedTextWidth(), isCommand() (+10 more)
 
-### Community 98 - "suppress-stderr.mjs"
-Cohesion: 0.17
-Nodes (11): RFC-4122, ./build/server.js, HOOK_DIR, { loadSessionDB }, ROUTING_BLOCK, toolNamer, copyDirSync(), logError() (+3 more)
+### Community 98 - "kimi/stop.mjs"
+Cohesion: 0.12
+Nodes (13): HOOK_DIR, { loadSessionDB, loadExtract, loadProjectAttribution }, HOOK_DIR, { loadSessionDB, loadSnapshot }, HOOK_DIR, { loadSessionDB }, HOOK_DIR, { loadSessionDB, loadExtract, loadProjectAttribution } (+5 more)
 
-### Community 99 - "heal-better-sqlite3.mjs"
-Cohesion: 0.23
-Nodes (10): buildSafeEnv(), CONDA_ENV_KEYS, CONDA_PATH_PATTERNS, detectWindowsVsYear(), healBetterSqlite3Binding(), isCondaActive(), isSafePythonPath(), resolveSafePython() (+2 more)
+### Community 99 - "output-path.mjs"
+Cohesion: 0.24
+Nodes (16): canonicalFuturePath(), canonicalize(), directoryIdentityKey(), directorySemanticsCache, futurePathsAlias(), hasFileIdentity(), nearestExistingDirectory(), OutputPathError (+8 more)
 
 ### Community 100 - "session-snapshot.bundle.mjs"
 Cohesion: 0.41
@@ -659,8 +659,8 @@ Cohesion: 0.12
 Nodes (16): description, execution, allowed_tools, max_turns, prompt, graders, criteria, focus (+8 more)
 
 ### Community 103 - "name-jury.ts"
-Cohesion: 0.07
-Nodes (48): generateStructured(), resolveModel(), RuntimeLlmConfig, buildDitGapAnalysisPrompt(), DIT_PROMPT_META, DitPromptInput, buildNameJuryPrompt(), NAME_JURY_PROMPT_META (+40 more)
+Cohesion: 0.06
+Nodes (66): generateStructured(), resolveModel(), RuntimeLlmConfig, buildDitGapAnalysisPrompt(), DIT_PROMPT_META, DitPromptInput, buildNameJuryPrompt(), NAME_JURY_PROMPT_META (+58 more)
 
 ### Community 104 - "package-large.json"
 Cohesion: 0.10
@@ -758,9 +758,9 @@ Nodes (8): realEnv, AnyClient, extractTestTerminalEscape(), stripTestTerminalEsc
 Cohesion: 0.20
 Nodes (9): compilerOptions, esModuleInterop, module, moduleResolution, outDir, skipLibCheck, strict, target (+1 more)
 
-### Community 131 - "continuity.test.ts"
-Cohesion: 0.15
-Nodes (5): __dirname, HOOK_PATH, runHookIn(), cleanups, tmpHome()
+### Community 131 - "codex/stop.mjs"
+Cohesion: 0.13
+Nodes (10): HOOK_DIR, { loadSessionDB, loadExtract, loadProjectAttribution }, DEBUG_LOG, HOOK_DIR, { loadSessionDB, loadSnapshot }, HOOK_DIR, { loadSessionDB, loadProjectAttribution }, HOOK_DIR (+2 more)
 
 ### Community 133 - "hooks"
 Cohesion: 0.25
@@ -782,9 +782,13 @@ Nodes (8): H(), Ie(), nt(), te(), tt(), Ue(), we(), xe()
 Cohesion: 0.25
 Nodes (7): conversation, lifetime, multiAdapter, realBytesConversation, realBytesLifetime, report, text
 
-### Community 138 - "ak05-preview.tsx"
-Cohesion: 0.39
-Nodes (7): Ak05Preview(), Ak05PreviewProps, BlankoSheetFooter(), BlankoSheetHeader(), formatAk05DateIndonesia(), formatAk05SchemeTitle(), INDONESIAN_MONTHS
+### Community 138 - "ak02-blanko-preview.tsx"
+Cohesion: 0.23
+Nodes (21): Ak05Preview(), Ak05PreviewProps, Ak02BlankoPreview(), EVIDENCE_COLUMNS, BlankoDocxExportBar(), BlankoMetadataTable(), BlankoSheetFooter(), BlankoSheetHeader() (+13 more)
+
+### Community 140 - "open-artifact.mjs"
+Cohesion: 0.60
+Nodes (4): launchTarget(), openArtifact(), OPENERS, openLoopbackUrl()
 
 ### Community 141 - "scripts"
 Cohesion: 0.29
@@ -970,28 +974,28 @@ Nodes (7): E(), G(), I(), nt(), P(), U(), z()
 Cohesion: 0.60
 Nodes (5): bulkInsertEvents(), _e(), _getSessionProjectDir(), insertEvent(), withRetry()
 
-### Community 232 - "export.test.ts"
-Cohesion: 0.29
-Nodes (6): jszip@^3.10.2, pdf-lib@^1.17.1, jszip, pdf-lib, generateTabularXlsx(), SAMPLE_PNG_1X1
+### Community 232 - "generateAk05Pdf"
+Cohesion: 0.28
+Nodes (8): drawBlankoHeaderFooter(), drawCellBox(), drawCheckbox(), generateAk05Pdf(), generateTabularXlsx(), toWinAnsiSafe(), wrapLines(), SAMPLE_PNG_1X1
 
 ## Knowledge Gaps
 - **36 isolated node(s):** `node`, `CONTEXT_MODE_PLATFORM`, `context-mode`, `CONTEXT_MODE_PLATFORM`, `CONTEXT_MODE_COPILOT_PLUGIN` (+31 more)
-  These have ≤1 connection - possible missing edges. (Counts symbols only; 2080 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **36 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+  These have ≤1 connection - possible missing edges. (Counts symbols only; 2086 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **35 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `compileWorkflowInternal()` connect `compileWorkflowInternal` to `render-lifecycle.mjs`, `workflow-compiler.mjs`, `diagnostics.mjs`, `workflow-v2.mjs`, `render-architecture.mjs`?**
-  _High betweenness centrality (0.017) - this node is a cross-community bridge._
+- **Why does `@prisma/client` connect `source-example.ts` to `dependencies`?**
+  _High betweenness centrality (0.018) - this node is a cross-community bridge._
 - **What connects `node`, `CONTEXT_MODE_PLATFORM`, `context-mode` to the rest of the system?**
   _36 weakly-connected nodes found - possible missing edges._
 - **Should `ref_node_fs` be split into smaller, more focused modules?**
-  _Cohesion score 0.022104332449160036 - nodes in this community are weakly interconnected._
-- **Why does `@prisma/client` connect `source-example.ts` to `dependencies`?**
-  _High betweenness centrality (0.011) - this node is a cross-community bridge._
+  _Cohesion score 0.024557395773843516 - nodes in this community are weakly interconnected._
+- **Why does `compileWorkflowInternal()` connect `compileWorkflowInternal` to `render-lifecycle.mjs`, `workflow-compiler.mjs`, `diagnostics.mjs`, `workflow-v2.mjs`, `render-architecture.mjs`?**
+  _High betweenness centrality (0.017) - this node is a cross-community bridge._
 - **Should `session-helpers.mjs` be split into smaller, more focused modules?**
-  _Cohesion score 0.04789518900343643 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.05276907001044932 - nodes in this community are weakly interconnected._
 - **Should `check-update.mjs` be split into smaller, more focused modules?**
   _Cohesion score 0.059883236030025024 - nodes in this community are weakly interconnected._
 - **Should `compileWorkflowInternal` be split into smaller, more focused modules?**
