@@ -4,6 +4,8 @@ import { KeyRound, ShieldAlert, CheckCircle2 } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { getAssesseeById } from "@/repositories/assessees.repository";
 import { getLatestWrittenGrading } from "@/repositories/assessment.repository";
+import { listDriveFilesForBatch } from "@/repositories/batches.repository";
+import { WrittenKeyForm } from "./_components/written-key-form";
 
 export const metadata = {
   title: "Penilaian Tertulis FR.IA.06 — AsesorKompetensi",
@@ -21,7 +23,19 @@ export default async function WrittenGradingPage({
   const assessee = await getAssesseeById(user.id, assesseeId);
   if (!assessee) return notFound();
 
-  const grading = await getLatestWrittenGrading(user.id, assesseeId);
+  const [grading, batchFiles] = await Promise.all([
+    getLatestWrittenGrading(user.id, assesseeId),
+    listDriveFilesForBatch(user.id, batchId),
+  ]);
+
+  const masterKeyFile =
+    batchFiles.find(
+      (f) => f.docType.toLowerCase() === "06b" && (!f.assesseeId || f.assesseeId === assesseeId),
+    ) ?? null;
+  const studentAnswerFile =
+    batchFiles.find(
+      (f) => f.assesseeId === assesseeId && f.docType.toLowerCase() === "06c",
+    ) ?? null;
   const itemVerdicts = Array.isArray(grading?.item_verdicts ?? grading?.itemVerdicts)
     ? ((grading?.item_verdicts ?? grading?.itemVerdicts) as Array<Record<string, unknown>>)
     : [];
@@ -52,19 +66,26 @@ export default async function WrittenGradingPage({
         </p>
       </div>
 
-      {/* Encrypted 06B Key Unlock Notice (D12) */}
-      <div className="glass-card rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4 border-slate-200">
+      {/* Encrypted 06B Key Unlock & Upload Panel (D12 + Checklist P1) */}
+      <div className="glass-card rounded-2xl p-5 space-y-4 border-slate-200">
         <div className="flex items-start gap-3">
           <KeyRound className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
           <div>
             <h2 className="text-sm font-semibold text-slate-900">
-              Kunci Jawaban 06B (Dukungan Terenkripsi &amp; Plain OOXML)
+              Kunci Jawaban 06B (Unggah Manual / OOXML &amp; Teks)
             </h2>
             <p className="text-xs text-slate-500">
-              Kata sandi untuk file kunci terenkripsi diproses hanya di memori worker saat dekripsi dan tidak pernah disimpan atau dicatat.
+              Jika folder Drive batch belum menyertakan berkas 06B, unggah dokumen kunci FR.IA.06B.docx di sini untuk dipakai seluruh asesi di batch ini. Kata sandi berkas terenkripsi tidak pernah disimpan di database atau log.
             </p>
           </div>
         </div>
+        <WrittenKeyForm
+          batchId={batchId}
+          assesseeId={assesseeId}
+          initialMasterKeyFileName={masterKeyFile?.fileName ?? null}
+          initialMasterKeyText={masterKeyFile?.extractedText ?? ""}
+          initialStudentAnswerText={studentAnswerFile?.extractedText ?? ""}
+        />
       </div>
 
       {/* Ringkasan Kesalahan & Qualitative Plagiarism */}

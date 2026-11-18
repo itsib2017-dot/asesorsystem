@@ -447,13 +447,29 @@ export default function ProviderSettingsForm({ initialConfig }: Props) {
           <button
             type="button"
             onClick={handleTestConnection}
-            disabled={isTesting || (!apiKey && !initialConfig?.hasApiKey)}
+            disabled={isTesting}
             className="py-3 px-6 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium disabled:opacity-40 transition-all flex items-center gap-2 cursor-pointer"
           >
             <Zap className="w-4 h-4 text-amber-400" />
             <span>{isTesting ? "Menguji..." : "Test connection"}</span>
           </button>
         </div>
+
+        {(isTesting || message) && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`p-3.5 rounded-xl text-sm border ${
+              isTesting
+                ? "bg-slate-800/80 border-slate-700 text-slate-200"
+                : message?.type === "success"
+                  ? "bg-emerald-950/70 border-emerald-700 text-emerald-200"
+                  : "bg-rose-950/70 border-rose-700 text-rose-200"
+            }`}
+          >
+            {isTesting ? "Menguji koneksi ke endpoint provider..." : message?.text}
+          </div>
+        )}
       </form>
     </div>
   );

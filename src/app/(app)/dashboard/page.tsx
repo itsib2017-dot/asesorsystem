@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { listBatchesForUser } from "@/repositories/batches.repository";
+import { listJobsForUser } from "@/repositories/jobs.repository";
 import { getActiveSignature } from "@/repositories/signatures.repository";
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
 import { StatsCard } from "@/components/dashboard/stats-card";
@@ -19,9 +20,37 @@ export const metadata = {
 
 export default async function DashboardPage() {
   const user = await getUser();
-  const batches = user ? await listBatchesForUser(user.id) : [];
-  const activeSignature = user ? await getActiveSignature(user.id) : null;
-  const providerCfg = user ? await getLatestProviderConfigForAssessor(user.id) : null;
+  const [batches, recentJobs, activeSignature, providerCfg] = user
+    ? await Promise.all([
+        listBatchesForUser(user.id),
+        listJobsForUser(user.id, 100),
+        getActiveSignature(user.id),
+        getLatestProviderConfigForAssessor(user.id),
+      ])
+    : [[], [], null, null];
+
+  const batchJobMap = new Map(
+    batches.map((b) => [
+      b.id,
+      recentJobs.find(
+        (j) => String(j.payload?.batchId ?? "") === b.id && j.type === "drive_scan",
+      ) ?? null,
+    ]),
+  );
+
+  const readyBatchCount = batches.filter(
+    (b) => batchJobMap.get(b.id)?.status === "done",
+  ).length;
+
+  const batchTrendLabel =
+    batches.length === 0
+      ? "Belum ada batch"
+      : readyBatchCount === batches.length
+        ? "Siap diproses"
+        : `${readyBatchCount}/${batches.length} selesai pindai`;
+
+  const batchTrend: "up" | "down" | "neutral" =
+    batches.length === 0 ? "neutral" : readyBatchCount > 0 ? "up" : "down";
 
   return (
     <div className="space-y-8">
@@ -58,8 +87,8 @@ export default async function DashboardPage() {
           title="Batch Aktif"
           value={batches.length}
           subtitle="Terdaftar di LSP Anda"
-          trend="up"
-          trendLabel={batches.length > 0 ? "Siap diproses" : "Belum ada batch"}
+          trend={batchTrend}
+          trendLabel={batchTrendLabel}
           accent="blue"
           icon={<FolderKanban className="w-5 h-5" />}
         />
@@ -121,23 +150,49 @@ export default async function DashboardPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {batches.slice(0, 6).map((b) => (
-                <Link
-                  key={b.id}
-                  href={`/batches/${b.id}`}
-                  className="glass-card rounded-2xl p-5 hover:border-teal-500/50 transition-all block"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <h3 className="font-semibold text-slate-900">{b.name}</h3>
-                    <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                      {b.status}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-2">
-                    TUK: {b.tukName || "Belum ditentukan"} ({b.tukType || "sewaktu"})
-                  </p>
-                </Link>
-              ))}
+              {batches.slice(0, 6).map((b) => {
+                const scanJob = batchJobMap.get(b.id) ?? null;
+                const scanBadge =
+                  scanJob?.status === "done"
+                    ? {
+                        label: "Pindai selesai",
+                        cls: "bg-emerald-50 text-emerald-700 border-emerald-200",
+                      }
+                    : scanJob?.status === "failed"
+                      ? {
+                          label: "Pindai gagal",
+                          cls: "bg-rose-50 text-rose-700 border-rose-200",
+                        }
+                      : {
+                          label: "Menunggu pindai",
+                          cls: "bg-amber-50 text-amber-800 border-amber-200",
+                        };
+
+                return (
+                  <Link
+                    key={b.id}
+                    href={`/batches/${b.id}`}
+                    className="glass-card rounded-2xl p-5 hover:border-teal-500/50 transition-all block"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="font-semibold text-slate-900">{b.name}</h3>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${scanBadge.cls}`}
+                        >
+                          {scanBadge.label}
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                          {b.status}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-2">
+                      TUK: {b.tukName || "Belum ditentukan"} ({b.tukType || "sewaktu"})
+                    </p>
+                  </Link>
+                );
+              })}
             </div>
           )}
         </div>
