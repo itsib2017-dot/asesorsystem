@@ -30,16 +30,33 @@ export async function loginAction(_prevState: LoginState | null, formData: FormD
     };
   }
 
-  const supabase = await getSupabaseServerClient();
-  const { error } = await supabase.auth.signInWithPassword({
-    email: validated.data.email,
-    password: validated.data.password,
-  });
-
-  if (error) {
-    console.error("[Login Error]:", error.message);
+  if (
+    !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  ) {
     return {
-      error: "Kombinasi email atau password salah. Silakan coba kembali.",
+      error:
+        "Konfigurasi Supabase belum diatur pada server deployment. Lengkapi environment variable NEXT_PUBLIC_SUPABASE_URL dan NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+    };
+  }
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    const { error } = await supabase.auth.signInWithPassword({
+      email: validated.data.email,
+      password: validated.data.password,
+    });
+
+    if (error) {
+      console.error("[Login Error]:", error.message);
+      return {
+        error: "Kombinasi email atau password salah. Silakan coba kembali.",
+      };
+    }
+  } catch (err) {
+    console.error("[Login Error]:", err instanceof Error ? err.message : "unknown");
+    return {
+      error: "Layanan autentikasi sedang tidak tersedia. Silakan periksa konfigurasi server.",
     };
   }
 

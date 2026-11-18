@@ -1,21 +1,48 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
+function hasSupabasePublicEnv(): boolean {
+  return Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  );
+}
+
 export async function getSession() {
-  const supabase = await getSupabaseServerClient();
-  const { data: { session }, error } = await supabase.auth.getSession();
-  if (error || !session) {
+  if (!hasSupabasePublicEnv()) {
     return null;
   }
-  return session;
+  try {
+    const supabase = await getSupabaseServerClient();
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.getSession();
+    if (error || !session) {
+      return null;
+    }
+    return session;
+  } catch {
+    return null;
+  }
 }
 
 export async function getUser() {
-  const supabase = await getSupabaseServerClient();
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user) {
+  if (!hasSupabasePublicEnv()) {
     return null;
   }
-  return user;
+  try {
+    const supabase = await getSupabaseServerClient();
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+    if (error || !user) {
+      return null;
+    }
+    return user;
+  } catch {
+    return null;
+  }
 }
 
 export async function requireUser() {

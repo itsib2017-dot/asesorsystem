@@ -14,39 +14,6 @@ export async function updateSession(request: NextRequest) {
   // Start with a response that passes the request through unchanged.
   let supabaseResponse = NextResponse.next({ request });
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !anonKey) {
-    return supabaseResponse;
-  }
-
-  const supabase = createServerClient(url, anonKey, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        // Mirror cookies onto both the forwarded request and the response.
-        cookiesToSet.forEach(({ name, value }) =>
-          request.cookies.set(name, value),
-        );
-        supabaseResponse = NextResponse.next({ request });
-        cookiesToSet.forEach(({ name, value, options }) =>
-          supabaseResponse.cookies.set(name, value, options),
-        );
-      },
-    },
-  });
-
-  // IMPORTANT: Do NOT write any logic between createServerClient and
-  // supabase.auth.getUser(). A middleware mistake here will cause random
-  // logouts. See: https://supabase.com/docs/guides/auth/server-side/nextjs
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  // Redirect unauthenticated users away from protected routes.
   const { pathname } = request.nextUrl;
   const isAuthRoute = pathname.startsWith("/login") || pathname.startsWith("/auth");
   const isApiRoute = pathname.startsWith("/api/");
@@ -55,6 +22,56 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/public");
 
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  // Fail closed when Supabase env vars are missing: never allow unauthenticated
+  // navigation into protected UI routes where SSR calls would fail.
+  if (!url || !anonKey) {
+    if (!isAuthRoute && !isPublicAsset && !isApiRoute) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      loginUrl.searchParams.set("next", pathname);
+      loginUrl.searchParams.set("reason", "config");
+      return NextResponse.redirect(loginUrl);
+    }
+    return supabaseResponse;
+  }
+
+  let user: { id: string } | null = null;
+  try {
+    const supabase = createServerClient(url, anonKey, {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          // Mirror cookies onto both the forwarded request and the response.
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value),
+          );
+          supabaseResponse = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options),
+          );
+        },
+      },
+    });
+
+    // IMPORTANT: Do NOT write any logic between createServerClient and
+    // supabase.auth.getUser(). A middleware mistake here will cause random
+    // logouts. See: https://supabase.com/docs/guides/auth/server-side/nextjs
+    const { data } = await supabase.auth.getUser();
+    user = data?.user ?? null;
+  } catch (err) {
+    console.warn(
+      "[Proxy Auth Warning]: Supabase auth check failed, failing closed to login:",
+      err instanceof Error ? err.message : "unknown",
+    );
+    user = null;
+  }
+
+  // Redirect unauthenticated users away from protected routes.
   if (!user && !isAuthRoute && !isPublicAsset && !isApiRoute) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";

@@ -19,11 +19,19 @@ export default async function AppShellLayout({
   children: React.ReactNode;
 }) {
   const user = await getUser();
+  if (!user) {
+    redirect("/login");
+  }
 
   async function signOutAction() {
     "use server";
-    const supabase = await getSupabaseServerClient();
-    await supabase.auth.signOut();
+    if (
+      process.env.NEXT_PUBLIC_SUPABASE_URL &&
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    ) {
+      const supabase = await getSupabaseServerClient();
+      await supabase.auth.signOut();
+    }
     redirect("/login");
   }
 
