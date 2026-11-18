@@ -1,5 +1,5 @@
 import { desc, eq } from "drizzle-orm";
-import { hasDatabaseUrl, withRlsTransaction } from "@/db";
+import { hasDatabaseUrl, isUuid, withRlsTransaction } from "@/db";
 import { jobs } from "@/db/schema";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -105,6 +105,7 @@ export async function getJobRecordById(
   userId: string,
   jobId: string,
 ): Promise<JobRecord | null> {
+  if (!isUuid(jobId)) return null;
   if (hasDatabaseUrl()) {
     try {
       const rows = await withRlsTransaction(userId, (tx) =>

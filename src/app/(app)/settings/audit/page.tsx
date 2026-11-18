@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
-import { requireLspRole } from "@/lib/auth/get-role";
-import { listUserMemberships } from "@/repositories/auth.repository";
+import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { listAuditLogsForUser } from "@/repositories/audit.repository";
 
 export const metadata = {
@@ -15,15 +14,11 @@ export default async function AuditLogPage() {
     return null;
   }
 
-  const memberships = await listUserMemberships(user.id);
-  const adminMembership = memberships.find((m) => m.role === "lsp_admin");
-  const roleCheck = adminMembership
-    ? await requireLspRole(adminMembership.lspId, user.id, ["lsp_admin"])
-    : { allowed: false, role: null };
+  const roleCheck = await resolveAuthorizedLsp(user.id, ["lsp_admin"]);
 
   const logs =
-    adminMembership && roleCheck.allowed
-      ? await listAuditLogsForUser(user.id, adminMembership.lspId, 50)
+    roleCheck.allowed && roleCheck.lspId
+      ? await listAuditLogsForUser(user.id, roleCheck.lspId, 50)
       : [];
 
   return (

@@ -1,5 +1,5 @@
 import { desc, eq } from "drizzle-orm";
-import { hasDatabaseUrl, withRlsTransaction } from "@/db";
+import { hasDatabaseUrl, isUuid, withRlsTransaction } from "@/db";
 import { batches, batchAssessors, driveFiles } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -80,6 +80,7 @@ export async function listBatchesForUser(userId: string): Promise<BatchSummary[]
 }
 
 export async function getBatchById(userId: string, batchId: string): Promise<BatchSummary | null> {
+  if (!isUuid(batchId)) return null;
   if (hasDatabaseUrl()) {
     const rows = await withRlsTransaction(userId, (tx) =>
       tx.select().from(batches).where(eq(batches.id, batchId)).limit(1),
@@ -200,6 +201,7 @@ export async function listDriveFilesForBatch(
   userId: string,
   batchId: string,
 ): Promise<DriveFileRecord[]> {
+  if (!isUuid(batchId)) return [];
   if (hasDatabaseUrl()) {
     const rows = await withRlsTransaction(userId, (tx) =>
       tx.select().from(driveFiles).where(eq(driveFiles.batchId, batchId)),

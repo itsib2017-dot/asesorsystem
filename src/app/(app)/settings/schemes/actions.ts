@@ -2,8 +2,7 @@
 
 import { z } from "zod";
 import { getUser } from "@/lib/auth/get-session";
-import { requireLspRole } from "@/lib/auth/get-role";
-import { listUserMemberships } from "@/repositories/auth.repository";
+import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { createOrUpdateScheme } from "@/repositories/schemes.repository";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -29,24 +28,14 @@ export async function saveSchemeManifestAction(formData: FormData) {
     return { ok: false, error: "Unauthorized" };
   }
 
-  const memberships = await listUserMemberships(user.id);
-  const adminMembership = memberships.find((m) => m.role === "lsp_admin");
-  if (!adminMembership) {
+  const authz = await resolveAuthorizedLsp(user.id, ["lsp_admin"]);
+  if (!authz.allowed || !authz.lspId) {
     return {
       ok: false,
       error: "Hanya Admin LSP yang dapat mengubah skema sertifikasi.",
     };
   }
-
-  const roleCheck = await requireLspRole(adminMembership.lspId, user.id, [
-    "lsp_admin",
-  ]);
-  if (!roleCheck.allowed) {
-    return {
-      ok: false,
-      error: "Hanya Admin LSP yang dapat mengubah skema sertifikasi.",
-    };
-  }
+  const adminLspId = authz.lspId;
 
   const parsed = schemeSchema.safeParse({
     code: formData.get("code"),
@@ -73,7 +62,7 @@ export async function saveSchemeManifestAction(formData: FormData) {
   const d = parsed.data;
   const res = await createOrUpdateScheme({
     userId: user.id,
-    lspId: adminMembership.lspId,
+    lspId: adminLspId,
     code: d.code.trim().toUpperCase(),
     name: d.name.trim(),
     manifest: {
@@ -115,7 +104,7 @@ export async function saveSchemeManifestAction(formData: FormData) {
   const supabase = await getSupabaseServerClient();
   await writeAuditLog(
     {
-      lsp_id: adminMembership.lspId,
+      lsp_id: adminLspId,
       actor_id: user.id,
       action: "scheme.manifest.upsert",
       resource: "schemes",

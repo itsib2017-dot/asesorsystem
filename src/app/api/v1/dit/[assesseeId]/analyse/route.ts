@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getUser } from "@/lib/auth/get-session";
 import { apiError, apiSuccess } from "@/lib/errors";
+import { checkRateLimit } from "@/lib/security/rate-limit";
 import { checkDitCompletenessGate } from "@/services/dit";
 import { enqueueJob } from "@/worker/queue";
 import { getAssesseeById } from "@/repositories/assessees.repository";
@@ -18,6 +19,14 @@ export async function POST(
   const user = await getUser();
   if (!user) {
     return apiError("UNAUTHORIZED", "Sesi tidak valid.");
+  }
+
+  const rl = checkRateLimit(`dit:analyse:${user.id}`, 20, 60_000);
+  if (!rl.allowed) {
+    return apiError(
+      "RATE_LIMITED",
+      `Terlalu banyak permintaan analisis AI. Coba lagi dalam ${rl.retryAfterSeconds} detik.`,
+    );
   }
 
   const { assesseeId } = await context.params;

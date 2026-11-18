@@ -1,5 +1,5 @@
 import { eq, desc } from "drizzle-orm";
-import { hasDatabaseUrl, withRlsTransaction } from "@/db";
+import { hasDatabaseUrl, isUuid, withRlsTransaction } from "@/db";
 import { assessees, nameJuryVerdicts } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -25,6 +25,7 @@ export async function listAssesseesByBatch(
   userId: string,
   batchId: string,
 ): Promise<AssesseeRecord[]> {
+  if (!isUuid(batchId)) return [];
   if (hasDatabaseUrl()) {
     const rows = await withRlsTransaction(userId, (tx) =>
       tx.select().from(assessees).where(eq(assessees.batchId, batchId)),
@@ -74,6 +75,7 @@ export async function getAssesseeById(
   userId: string,
   assesseeId: string,
 ): Promise<AssesseeRecord | null> {
+  if (!isUuid(assesseeId)) return null;
   if (hasDatabaseUrl()) {
     const rows = await withRlsTransaction(userId, (tx) =>
       tx.select().from(assessees).where(eq(assessees.id, assesseeId)).limit(1),

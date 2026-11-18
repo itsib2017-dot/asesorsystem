@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { getUser } from "@/lib/auth/get-session";
-import { requireLspRole } from "@/lib/auth/get-role";
+import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { apiError, apiSuccess } from "@/lib/errors";
 import { createBatchRecord, listBatchesForUser } from "@/repositories/batches.repository";
-import { listUserMemberships } from "@/repositories/auth.repository";
 import { validateSafeExternalUrl } from "@/lib/security/ssrf";
 import { enqueueJob } from "@/worker/queue";
 
@@ -59,26 +58,18 @@ export async function POST(req: Request) {
     ]);
   }
 
-  const memberships = await listUserMemberships(user.id);
-  const authorized = memberships.find(
-    (m) => m.role === "lsp_admin" || m.role === "tuk_admin" || m.role === "assessor",
-  );
-  if (!authorized) {
-    return apiError("FORBIDDEN", "Akun belum memiliki peran yang berwenang membuat batch.");
-  }
-
-  const roleCheck = await requireLspRole(authorized.lspId, user.id, [
+  const authz = await resolveAuthorizedLsp(user.id, [
     "lsp_admin",
     "tuk_admin",
     "assessor",
   ]);
-  if (!roleCheck.allowed) {
-    return apiError("FORBIDDEN", "Peran Anda pada LSP ini tidak diizinkan membuat batch.");
+  if (!authz.allowed || !authz.lspId) {
+    return apiError("FORBIDDEN", "Akun belum memiliki peran yang berwenang membuat batch.");
   }
 
   const result = await createBatchRecord({
     userId: user.id,
-    lspId: authorized.lspId,
+    lspId: authz.lspId,
     schemeId: parsed.data.schemeId,
     name: parsed.data.name,
     tukName: parsed.data.tukName,

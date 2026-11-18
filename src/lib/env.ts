@@ -10,9 +10,6 @@ const envSchema = z.object({
   DATABASE_URL: z.string().optional(),
   DIRECT_URL: z.string().optional(),
   BYOK_ENCRYPTION_SECRET: z.string().min(32, { message: "BYOK_ENCRYPTION_SECRET must be at least 32 characters for AES-256" }).optional(),
-  NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().optional(),
-  TURNSTILE_SECRET_KEY: z.string().optional(),
-  SENTRY_DSN: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -1,4 +1,8 @@
-import { findAssessorRoleForLsp, type LspRole } from "@/repositories/auth.repository";
+import {
+  findAssessorRoleForLsp,
+  listUserMemberships,
+  type LspRole,
+} from "@/repositories/auth.repository";
 
 export type { LspRole };
 
@@ -16,4 +20,16 @@ export async function requireLspRole(
     return { allowed: false, role };
   }
   return { allowed: true, role };
+}
+
+export async function resolveAuthorizedLsp(
+  assessorId: string,
+  allowedRoles: LspRole[],
+): Promise<{ allowed: boolean; lspId: string | null; role: LspRole | null }> {
+  const memberships = await listUserMemberships(assessorId);
+  const matched = memberships.find((m) => allowedRoles.includes(m.role));
+  if (!matched) {
+    return { allowed: false, lspId: null, role: memberships[0]?.role ?? null };
+  }
+  return { allowed: true, lspId: matched.lspId, role: matched.role };
 }
