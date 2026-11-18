@@ -86,8 +86,9 @@ describe("Export Format Rule D8 & Document Generators", () => {
     const relsXml = await zip.file("word/_rels/document.xml.rels")!.async("string");
     expect(relsXml).toContain("rIdSig1");
     expect(docXml).toContain("rIdSig1");
-    expect(docXml).toContain("TUK Mairodi");
+    expect(docXml).not.toContain("(TUK Mairodi)");
     expect(docXml).toContain("SKM/2037/00013/2/2021/1");
+    expect(docXml).toContain("18 November 2026");
     expect(docXml).toContain("Zaenudin");
     expect(docxBuf.length).toBeGreaterThan(500_000);
 

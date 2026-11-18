@@ -14,6 +14,10 @@ import {
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { PDFDocument, StandardFonts, rgb, type PDFImage, type PDFPage, type PDFFont } from "pdf-lib";
+import {
+  formatAk05DateIndonesia,
+  formatAk05SchemeTitle,
+} from "@/lib/ak05/format";
 
 export type DocumentType = "ak05" | "ak02" | "ia04b" | "ia06" | "dit_pack" | "similarity";
 export type ExportFormat = "pdf" | "docx" | "xlsx";
@@ -258,21 +262,14 @@ function mutateTableRows(
   return tableXml.slice(0, firstRow.start) + nextRows.join("") + tableXml.slice(lastRow.end);
 }
 
-function buildTukCellRuns(
-  tukType: Ak05ExportPayload["tukType"],
-  tukName?: string,
-): string {
-  const parts = [
+function buildTukCellRuns(tukType: Ak05ExportPayload["tukType"]): string {
+  return [
     makeTextRun("Sewaktu", { strike: tukType !== "sewaktu" }),
     makeTextRun("/"),
     makeTextRun("Tempat Kerja", { strike: tukType !== "tempat_kerja" }),
     makeTextRun("/"),
     makeTextRun("Mandiri*", { strike: tukType !== "mandiri" }),
-  ];
-  if (tukName && tukName.trim() && tukName.trim() !== "-") {
-    parts.push(makeTextRun(` (${tukName.trim()})`, { bold: true }));
-  }
-  return parts.join("");
+  ].join("");
 }
 
 function buildSignatureDrawingRun(relId: string, imageName: string): string {
@@ -350,17 +347,19 @@ export async function generateAk05Docx(payload: Ak05ExportPayload): Promise<Buff
     hasEmbeddedSig = true;
   }
 
+  const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
+  const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
+
   // Table 1: Metadata (Judul, Nomor, TUK, Nama Asesor, Tanggal)
   const t1Span = tableSpans[1]!;
   const updatedT1 = mutateTableRows(docXml.slice(t1Span.start, t1Span.end), (rows) =>
     rows.map((rowXml, rIdx) => {
       if (rIdx === 0) {
-        const title = payload.schemeTitle.trim();
-        if (!title || title.toLowerCase() === "ahli keselamatan dan kesehatan kerja umum") {
+        if (!displaySchemeTitle || displaySchemeTitle === "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM") {
           return rowXml;
         }
         return mutateRowCells(rowXml, (cXml, cIdx) =>
-          cIdx === 3 ? replaceCellRuns(cXml, makeTextRun(title, { bold: true })) : cXml,
+          cIdx === 3 ? replaceCellRuns(cXml, makeTextRun(displaySchemeTitle, { bold: true })) : cXml,
         );
       }
       if (rIdx === 1) {
@@ -374,7 +373,7 @@ export async function generateAk05Docx(payload: Ak05ExportPayload): Promise<Buff
       }
       if (rIdx === 2) {
         return mutateRowCells(rowXml, (cXml, cIdx) =>
-          cIdx === 2 ? replaceCellRuns(cXml, buildTukCellRuns(payload.tukType, payload.tukName)) : cXml,
+          cIdx === 2 ? replaceCellRuns(cXml, buildTukCellRuns(payload.tukType)) : cXml,
         );
       }
       if (rIdx === 3) {
@@ -384,7 +383,7 @@ export async function generateAk05Docx(payload: Ak05ExportPayload): Promise<Buff
       }
       if (rIdx === 4) {
         return mutateRowCells(rowXml, (cXml, cIdx) =>
-          cIdx === 2 ? replaceCellRuns(cXml, makeTextRun(payload.assessmentDate)) : cXml,
+          cIdx === 2 ? replaceCellRuns(cXml, makeTextRun(displayDate)) : cXml,
         );
       }
       return rowXml;
@@ -462,8 +461,8 @@ export async function generateAk05Docx(payload: Ak05ExportPayload): Promise<Buff
       }
       if (rIdx === 3) {
         const sigRuns = hasEmbeddedSig
-          ? `${buildSignatureDrawingRun("rIdSig1", `signature.${sigExt}`)}<w:r><w:br/></w:r>${makeTextRun(payload.assessmentDate)}`
-          : makeTextRun(payload.assessmentDate);
+          ? `${buildSignatureDrawingRun("rIdSig1", `signature.${sigExt}`)}<w:r><w:br/></w:r>${makeTextRun(displayDate)}`
+          : makeTextRun(displayDate);
         return mutateRowCells(rowXml, (cXml, cIdx) =>
           cIdx === 2 ? replaceCellRuns(cXml, sigRuns) : cXml,
         );
@@ -583,40 +582,81 @@ function drawBlankoHeaderFooter(params: {
   pageNum: number;
   schemeTitle: string;
   fontRegular: PDFFont;
+  fontBold: PDFFont;
   logoLeft?: PDFImage;
   logoRight?: PDFImage;
 }) {
-  const { page, pageNum, schemeTitle, fontRegular, logoLeft, logoRight } = params;
+  const { page, pageNum, schemeTitle, fontRegular, fontBold, logoLeft, logoRight } = params;
+  const xStart = 54;
+  const xEnd = 540;
+
   if (logoLeft) {
-    page.drawImage(logoLeft, { x: 54, y: 785, width: 82, height: 37 });
+    const dims = logoLeft.scaleToFit(86, 38);
+    page.drawImage(logoLeft, { x: xStart, y: 785, width: dims.width, height: dims.height });
   }
   if (logoRight) {
-    page.drawImage(logoRight, { x: 448, y: 782, width: 95, height: 42 });
+    const dims = logoRight.scaleToFit(98, 42);
+    page.drawImage(logoRight, { x: xEnd - dims.width, y: 783, width: dims.width, height: dims.height });
   }
-  page.drawText(toWinAnsiSafe(schemeTitle.toUpperCase()), {
-    x: 54,
-    y: 26,
-    size: 7,
-    font: fontRegular,
-    color: rgb(0.4, 0.4, 0.4),
+
+  // Blue footer divider (#4472C4) matching FR.AK.05-2024 word/footer1.xml
+  page.drawLine({
+    start: { x: xStart, y: 50 },
+    end: { x: xEnd, y: 50 },
+    thickness: 1,
+    color: rgb(68 / 255, 114 / 255, 196 / 255),
   });
-  page.drawText(`FR.AK.05-2024    |    Halaman ${pageNum}`, {
-    x: 425,
-    y: 26,
-    size: 7,
+
+  page.drawText(toWinAnsiSafe(formatAk05SchemeTitle(schemeTitle)), {
+    x: xStart,
+    y: 35,
+    size: 7.5,
     font: fontRegular,
-    color: rgb(0.4, 0.4, 0.4),
+    color: rgb(0.15, 0.15, 0.15),
+  });
+
+  const badgeSize = 15;
+  const badgeX = xEnd - badgeSize;
+  const badgeY = 30;
+  page.drawRectangle({
+    x: badgeX,
+    y: badgeY,
+    width: badgeSize,
+    height: badgeSize,
+    color: rgb(168 / 255, 208 / 255, 141 / 255),
+  });
+  const pStr = String(pageNum);
+  const pw = fontBold.widthOfTextAtSize(pStr, 8);
+  page.drawText(pStr, {
+    x: badgeX + (badgeSize - pw) / 2,
+    y: badgeY + 4.5,
+    size: 8,
+    font: fontBold,
+    color: rgb(1, 1, 1),
+  });
+
+  const refLabel = "FR.AK.05-2024";
+  const rw = fontRegular.widthOfTextAtSize(refLabel, 7.5);
+  page.drawText(refLabel, {
+    x: badgeX - rw - 6,
+    y: 35,
+    size: 7.5,
+    font: fontRegular,
+    color: rgb(0.15, 0.15, 0.15),
   });
 }
 
 /**
- * Renders a 2-page A4 PDF mirroring all 5 tables, BNSP header logos, strikethrough TUK
- * choices, candidate table, notes, and embedded assessor signature of FR.AK.05.
+ * Renders a faithful A4 PDF mirroring all 5 tables, BNSP & LSP header logos,
+ * borderless title row, #92D050 header/label shading, strikethrough TUK choices,
+ * Page-1 Table 3 notes (for <=12 candidates), Page-2 Table 4 assessor block with
+ * embedded signature, and #4472C4 / #A8D08D official footer.
  */
 export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create();
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontItalic = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
 
   let logoLeft: PDFImage | undefined;
   let logoRight: PDFImage | undefined;
@@ -643,150 +683,170 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
     }
   }
 
+  const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
+  const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
+  const greenFill: [number, number, number] = [146 / 255, 208 / 255, 80 / 255];
+
   const x0 = 54;
   const page1 = pdfDoc.addPage([595.28, 841.89]);
   drawBlankoHeaderFooter({
     page: page1,
     pageNum: 1,
-    schemeTitle: payload.schemeTitle,
+    schemeTitle: displaySchemeTitle,
     fontRegular,
+    fontBold,
     logoLeft,
     logoRight,
   });
 
-  // Table 0: FR.AK.05. | LAPORAN ASESMEN
-  let y = 768;
-  drawCellBox(page1, x0, y, 125, 24);
-  drawCellBox(page1, x0 + 125, y, 365, 24);
-  page1.drawText("FR.AK.05.", { x: x0 + 10, y: y - 16, size: 11, font: fontBold });
-  page1.drawText("LAPORAN ASESMEN", { x: x0 + 135, y: y - 16, size: 11, font: fontBold });
-  y -= 32;
+  // Table 0: Borderless title row (FR.AK.05.   LAPORAN ASESMEN)
+  let y = 766;
+  page1.drawText("FR.AK.05.", { x: x0, y: y - 13, size: 11, font: fontBold });
+  page1.drawText("LAPORAN ASESMEN", { x: x0 + 76, y: y - 13, size: 11, font: fontBold });
+  y -= 20;
 
-  // Table 1: 5-row Metadata block (widths: 130 | 55 | 18 | 287 = 490)
-  const w1 = 130;
-  const w2 = 55;
-  const w3 = 18;
-  const w4 = 287;
-  drawCellBox(page1, x0, y, w1, 44);
-  drawCellBox(page1, x0 + w1, y, w2, 22);
-  drawCellBox(page1, x0 + w1 + w2, y, w3, 22);
-  drawCellBox(page1, x0 + w1 + w2 + w3, y, w4, 22);
-  drawCellBox(page1, x0 + w1, y - 22, w2, 22);
-  drawCellBox(page1, x0 + w1 + w2, y - 22, w3, 22);
-  drawCellBox(page1, x0 + w1 + w2 + w3, y - 22, w4, 22);
+  // Table 1: 5-row Metadata block (widths: 128 | 50 | 14 | 294 = 486, exact blanko ratios)
+  const w1 = 128;
+  const w2 = 50;
+  const w3 = 14;
+  const w4 = 294;
+  const t1RowH = 18;
+  drawCellBox(page1, x0, y, w1, t1RowH * 2);
+  drawCellBox(page1, x0 + w1, y, w2, t1RowH);
+  drawCellBox(page1, x0 + w1 + w2, y, w3, t1RowH);
+  drawCellBox(page1, x0 + w1 + w2 + w3, y, w4, t1RowH);
+  drawCellBox(page1, x0 + w1, y - t1RowH, w2, t1RowH);
+  drawCellBox(page1, x0 + w1 + w2, y - t1RowH, w3, t1RowH);
+  drawCellBox(page1, x0 + w1 + w2 + w3, y - t1RowH, w4, t1RowH);
 
-  page1.drawText("Skema Sertifikasi", { x: x0 + 6, y: y - 15, size: 9, font: fontRegular });
-  page1.drawText("(KKNI/Okupasi/Klaster)", { x: x0 + 6, y: y - 28, size: 8, font: fontRegular });
-  page1.drawText("Judul", { x: x0 + w1 + 6, y: y - 15, size: 9, font: fontRegular });
-  page1.drawText(":", { x: x0 + w1 + w2 + 7, y: y - 15, size: 9, font: fontRegular });
-  page1.drawText(toWinAnsiSafe(payload.schemeTitle).slice(0, 52), {
-    x: x0 + w1 + w2 + w3 + 6,
-    y: y - 15,
-    size: 9,
+  page1.drawText("Skema Sertifikasi", { x: x0 + 5, y: y - 13, size: 8.5, font: fontRegular });
+  page1.drawText("(KKNI/Okupasi/Klaster)", { x: x0 + 5, y: y - 24, size: 8, font: fontRegular });
+  page1.drawText("Judul", { x: x0 + w1 + 5, y: y - 12.5, size: 8.5, font: fontRegular });
+  page1.drawText(":", { x: x0 + w1 + w2 + 5, y: y - 12.5, size: 8.5, font: fontRegular });
+  page1.drawText(toWinAnsiSafe(displaySchemeTitle).slice(0, 52), {
+    x: x0 + w1 + w2 + w3 + 5,
+    y: y - 12.5,
+    size: 8.5,
     font: fontBold,
   });
-  page1.drawText("Nomor", { x: x0 + w1 + 6, y: y - 37, size: 9, font: fontRegular });
-  page1.drawText(":", { x: x0 + w1 + w2 + 7, y: y - 37, size: 9, font: fontRegular });
+  page1.drawText("Nomor", { x: x0 + w1 + 5, y: y - t1RowH - 12.5, size: 8.5, font: fontRegular });
+  page1.drawText(":", { x: x0 + w1 + w2 + 5, y: y - t1RowH - 12.5, size: 8.5, font: fontRegular });
   page1.drawText(toWinAnsiSafe(payload.schemeNumber).slice(0, 48), {
-    x: x0 + w1 + w2 + w3 + 6,
-    y: y - 37,
-    size: 9,
+    x: x0 + w1 + w2 + w3 + 5,
+    y: y - t1RowH - 12.5,
+    size: 8.5,
     font: fontBold,
   });
-  y -= 44;
+  y -= t1RowH * 2;
 
-  // TUK Row
-  drawCellBox(page1, x0, y, w1 + w2, 22);
-  drawCellBox(page1, x0 + w1 + w2, y, w3, 22);
-  drawCellBox(page1, x0 + w1 + w2 + w3, y, w4, 22);
-  page1.drawText("TUK", { x: x0 + 6, y: y - 15, size: 9, font: fontRegular });
-  page1.drawText(":", { x: x0 + w1 + w2 + 7, y: y - 15, size: 9, font: fontRegular });
-  const tukStartX = x0 + w1 + w2 + w3 + 6;
-  const tukY = y - 15;
+  // TUK Row (exact blanko wording: Sewaktu/Tempat Kerja/Mandiri*, unused struck)
+  drawCellBox(page1, x0, y, w1 + w2, t1RowH);
+  drawCellBox(page1, x0 + w1 + w2, y, w3, t1RowH);
+  drawCellBox(page1, x0 + w1 + w2 + w3, y, w4, t1RowH);
+  page1.drawText("TUK", { x: x0 + 5, y: y - 12.5, size: 8.5, font: fontRegular });
+  page1.drawText(":", { x: x0 + w1 + w2 + 5, y: y - 12.5, size: 8.5, font: fontRegular });
+  const tukStartX = x0 + w1 + w2 + w3 + 5;
+  const tukY = y - 12.5;
   const tukSegments: Array<{ label: string; struck: boolean }> = [
     { label: "Sewaktu", struck: payload.tukType !== "sewaktu" },
-    { label: " / ", struck: false },
+    { label: "/", struck: false },
     { label: "Tempat Kerja", struck: payload.tukType !== "tempat_kerja" },
-    { label: " / ", struck: false },
+    { label: "/", struck: false },
     { label: "Mandiri*", struck: payload.tukType !== "mandiri" },
   ];
   let cursorX = tukStartX;
   for (const seg of tukSegments) {
-    page1.drawText(seg.label, { x: cursorX, y: tukY, size: 9, font: fontRegular });
-    const sw = fontRegular.widthOfTextAtSize(seg.label, 9);
+    page1.drawText(seg.label, { x: cursorX, y: tukY, size: 8.5, font: fontRegular });
+    const sw = fontRegular.widthOfTextAtSize(seg.label, 8.5);
     if (seg.struck) {
       page1.drawLine({
         start: { x: cursorX, y: tukY + 3 },
         end: { x: cursorX + sw, y: tukY + 3 },
         thickness: 0.75,
-        color: rgb(0.2, 0.2, 0.2),
+        color: rgb(0.15, 0.15, 0.15),
       });
     }
     cursorX += sw;
   }
-  if (payload.tukName && payload.tukName.trim() && payload.tukName.trim() !== "-") {
-    page1.drawText(toWinAnsiSafe(` (${payload.tukName.trim()})`).slice(0, 26), {
-      x: cursorX,
-      y: tukY,
-      size: 9,
-      font: fontBold,
-    });
-  }
-  y -= 22;
+  y -= t1RowH;
 
   // Nama Asesor & Tanggal Rows
   for (const [label, val] of [
     ["Nama Asesor", payload.assessorName],
-    ["Tanggal", payload.assessmentDate],
+    ["Tanggal", displayDate],
   ] as const) {
-    drawCellBox(page1, x0, y, w1 + w2, 22);
-    drawCellBox(page1, x0 + w1 + w2, y, w3, 22);
-    drawCellBox(page1, x0 + w1 + w2 + w3, y, w4, 22);
-    page1.drawText(label, { x: x0 + 6, y: y - 15, size: 9, font: fontRegular });
-    page1.drawText(":", { x: x0 + w1 + w2 + 7, y: y - 15, size: 9, font: fontRegular });
+    drawCellBox(page1, x0, y, w1 + w2, t1RowH);
+    drawCellBox(page1, x0 + w1 + w2, y, w3, t1RowH);
+    drawCellBox(page1, x0 + w1 + w2 + w3, y, w4, t1RowH);
+    page1.drawText(label, { x: x0 + 5, y: y - 12.5, size: 8.5, font: fontRegular });
+    page1.drawText(":", { x: x0 + w1 + w2 + 5, y: y - 12.5, size: 8.5, font: fontRegular });
     page1.drawText(toWinAnsiSafe(val).slice(0, 48), {
-      x: x0 + w1 + w2 + w3 + 6,
-      y: y - 15,
-      size: 9,
+      x: x0 + w1 + w2 + w3 + 5,
+      y: y - 12.5,
+      size: 8.5,
       font: fontRegular,
     });
-    y -= 22;
+    y -= t1RowH;
   }
 
-  y -= 12;
+  // *Coret yang tidak perlu directly beneath Table 1
+  page1.drawText("*Coret yang tidak perlu", {
+    x: x0,
+    y: y - 10.5,
+    size: 8,
+    font: fontItalic,
+    color: rgb(0.15, 0.15, 0.15),
+  });
+  y -= 17;
 
-  // Table 2: Candidate Results Table (col widths: 34 | 184 | 38 | 38 | 196 = 490)
-  const cw = [34, 184, 38, 38, 196] as const;
+  // Table 2: Candidate Results Table (widths: 34 | 179 | 40 | 40 | 193 = 486) with #92D050 green header
+  const cw = [34, 179, 40, 40, 193] as const;
   const drawTable2Header = (p: PDFPage, yTop: number) => {
-    drawCellBox(p, x0, yTop, cw[0], 34);
-    drawCellBox(p, x0 + cw[0], yTop, cw[1], 34);
-    drawCellBox(p, x0 + cw[0] + cw[1], yTop, cw[2] + cw[3], 17);
-    drawCellBox(p, x0 + cw[0] + cw[1], yTop - 17, cw[2], 17);
-    drawCellBox(p, x0 + cw[0] + cw[1] + cw[2], yTop - 17, cw[3], 17);
-    drawCellBox(p, x0 + cw[0] + cw[1] + cw[2] + cw[3], yTop, cw[4], 34);
+    drawCellBox(p, x0, yTop, cw[0], 30, greenFill);
+    drawCellBox(p, x0 + cw[0], yTop, cw[1], 30, greenFill);
+    drawCellBox(p, x0 + cw[0] + cw[1], yTop, cw[2] + cw[3], 15, greenFill);
+    drawCellBox(p, x0 + cw[0] + cw[1], yTop - 15, cw[2], 15, greenFill);
+    drawCellBox(p, x0 + cw[0] + cw[1] + cw[2], yTop - 15, cw[3], 15, greenFill);
+    drawCellBox(p, x0 + cw[0] + cw[1] + cw[2] + cw[3], yTop, cw[4], 30, greenFill);
 
-    p.drawText("No.", { x: x0 + 10, y: yTop - 20, size: 9, font: fontBold });
-    p.drawText("Nama Asesi", { x: x0 + cw[0] + 6, y: yTop - 20, size: 9, font: fontBold });
+    const noW = fontBold.widthOfTextAtSize("No.", 8.5);
+    p.drawText("No.", { x: x0 + (cw[0] - noW) / 2, y: yTop - 18, size: 8.5, font: fontBold });
+    const nmW = fontBold.widthOfTextAtSize("Nama Asesi", 8.5);
+    p.drawText("Nama Asesi", {
+      x: x0 + cw[0] + (cw[1] - nmW) / 2,
+      y: yTop - 18,
+      size: 8.5,
+      font: fontBold,
+    });
+    const recW = fontBold.widthOfTextAtSize("Rekomendasi", 8.5);
     p.drawText("Rekomendasi", {
-      x: x0 + cw[0] + cw[1] + 8,
-      y: yTop - 12,
-      size: 9,
+      x: x0 + cw[0] + cw[1] + (cw[2] + cw[3] - recW) / 2,
+      y: yTop - 10.5,
+      size: 8.5,
       font: fontBold,
     });
-    p.drawText("K", { x: x0 + cw[0] + cw[1] + 15, y: yTop - 29, size: 9, font: fontBold });
+    const kW = fontBold.widthOfTextAtSize("K", 8.5);
+    p.drawText("K", {
+      x: x0 + cw[0] + cw[1] + (cw[2] - kW) / 2,
+      y: yTop - 25.5,
+      size: 8.5,
+      font: fontBold,
+    });
+    const bkW = fontBold.widthOfTextAtSize("BK", 8.5);
     p.drawText("BK", {
-      x: x0 + cw[0] + cw[1] + cw[2] + 12,
-      y: yTop - 29,
-      size: 9,
+      x: x0 + cw[0] + cw[1] + cw[2] + (cw[3] - bkW) / 2,
+      y: yTop - 25.5,
+      size: 8.5,
       font: fontBold,
     });
+    const ketW = fontBold.widthOfTextAtSize("Keterangan**", 8.5);
     p.drawText("Keterangan**", {
-      x: x0 + cw[0] + cw[1] + cw[2] + cw[3] + 6,
-      y: yTop - 20,
-      size: 9,
+      x: x0 + cw[0] + cw[1] + cw[2] + cw[3] + (cw[4] - ketW) / 2,
+      y: yTop - 18,
+      size: 8.5,
       font: fontBold,
     });
-    return yTop - 34;
+    return yTop - 30;
   };
 
   const drawCandidateRow = (
@@ -795,32 +855,32 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
     index: number,
     cand?: Ak05ExportPayload["rows"][number],
   ) => {
-    const rowH = 22;
+    const rowH = 18.5;
     drawCellBox(p, x0, yTop, cw[0], rowH);
     drawCellBox(p, x0 + cw[0], yTop, cw[1], rowH);
     drawCellBox(p, x0 + cw[0] + cw[1], yTop, cw[2], rowH);
     drawCellBox(p, x0 + cw[0] + cw[1] + cw[2], yTop, cw[3], rowH);
     drawCellBox(p, x0 + cw[0] + cw[1] + cw[2] + cw[3], yTop, cw[4], rowH);
 
-    p.drawText(`${index + 1}.`, { x: x0 + 11, y: yTop - 14, size: 9, font: fontRegular });
+    p.drawText(`${index + 1}.`, { x: x0 + 10, y: yTop - 12.5, size: 8.5, font: fontRegular });
     if (cand) {
       p.drawText(toWinAnsiSafe(cand.assesseeName).slice(0, 34), {
-        x: x0 + cw[0] + 6,
-        y: yTop - 14,
-        size: 9,
+        x: x0 + cw[0] + 5,
+        y: yTop - 12.5,
+        size: 8.5,
         font: fontRegular,
       });
-      drawCheckbox(p, x0 + cw[0] + cw[1] + cw[2] / 2, yTop - 11, cand.recommendation === "K");
+      drawCheckbox(p, x0 + cw[0] + cw[1] + cw[2] / 2, yTop - rowH / 2, cand.recommendation === "K");
       drawCheckbox(
         p,
         x0 + cw[0] + cw[1] + cw[2] + cw[3] / 2,
-        yTop - 11,
+        yTop - rowH / 2,
         cand.recommendation === "BK",
       );
       if (cand.keterangan) {
         p.drawText(toWinAnsiSafe(cand.keterangan).slice(0, 36), {
-          x: x0 + cw[0] + cw[1] + cw[2] + cw[3] + 6,
-          y: yTop - 14,
+          x: x0 + cw[0] + cw[1] + cw[2] + cw[3] + 5,
+          y: yTop - 12.5,
           size: 8,
           font: fontRegular,
         });
@@ -829,104 +889,121 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
     return yTop - rowH;
   };
 
+  const drawTable3Block = (p: PDFPage, yTop: number) => {
+    const noteRows: Array<[string, string, number]> = [
+      ["Aspek Negatif dan Positif dalam asesmen", payload.notesPositiveNegative || "-", 48],
+      ["Pencatatan penolakan hasil asesmen", payload.notesRejection || "-", 48],
+      ["Saran perbaikan (Asesor/personil terkait)", payload.notesImprovement || "-", 58],
+    ];
+    let curY = yTop;
+    for (const [label, textVal, h] of noteRows) {
+      drawCellBox(p, x0, curY, 162, h, greenFill);
+      drawCellBox(p, x0 + 162, curY, 324, h);
+      const labelLines = wrapLines(label, 28, 3);
+      labelLines.forEach((line, lIdx) => {
+        p.drawText(line, { x: x0 + 5, y: curY - 13 - lIdx * 11, size: 8.5, font: fontRegular });
+      });
+      const valLines = wrapLines(textVal, 58, 4);
+      valLines.forEach((line, lIdx) => {
+        p.drawText(line, { x: x0 + 167, y: curY - 13 - lIdx * 11, size: 8.5, font: fontRegular });
+      });
+      curY -= h;
+    }
+    return curY;
+  };
+
   y = drawTable2Header(page1, y);
   const totalSlots = Math.max(12, payload.rows.length);
-  const page1Slots = Math.min(18, totalSlots);
+  const fitsSinglePageCandidates = totalSlots <= 12;
+  const page1Slots = fitsSinglePageCandidates ? totalSlots : Math.min(24, totalSlots);
+
   for (let i = 0; i < page1Slots; i++) {
     y = drawCandidateRow(page1, y, i, payload.rows[i]);
   }
 
-  // Page 2: Overflow candidate rows (if >18) + Footnotes + Table 3 + Table 4
+  // Page 1 holds footnote + Table 3 directly below Table 2 when candidate count <= 12 (matching official Image 3)
+  if (fitsSinglePageCandidates) {
+    page1.drawText("**Tuliskan Kode dan Judul Unit Kompetensi yang dinyatakan BK bila mengases satu skema", {
+      x: x0,
+      y: y - 10.5,
+      size: 8,
+      font: fontItalic,
+      color: rgb(0.15, 0.15, 0.15),
+    });
+    y -= 17;
+    drawTable3Block(page1, y);
+  }
+
+  // Page 2: Overflow candidate rows (if >12) + Table 3 (if overflow) + Table 4 (Catatan + Asesor Signature Block)
   const page2 = pdfDoc.addPage([595.28, 841.89]);
   drawBlankoHeaderFooter({
     page: page2,
     pageNum: 2,
-    schemeTitle: payload.schemeTitle,
+    schemeTitle: displaySchemeTitle,
     fontRegular,
+    fontBold,
     logoLeft,
     logoRight,
   });
 
-  let y2 = 768;
-  if (totalSlots > page1Slots) {
-    y2 = drawTable2Header(page2, y2);
-    for (let i = page1Slots; i < totalSlots; i++) {
-      y2 = drawCandidateRow(page2, y2, i, payload.rows[i]);
+  let y2 = 766;
+  if (!fitsSinglePageCandidates) {
+    if (totalSlots > page1Slots) {
+      y2 = drawTable2Header(page2, y2);
+      for (let i = page1Slots; i < totalSlots; i++) {
+        y2 = drawCandidateRow(page2, y2, i, payload.rows[i]);
+      }
     }
-    y2 -= 12;
+    page2.drawText("**Tuliskan Kode dan Judul Unit Kompetensi yang dinyatakan BK bila mengases satu skema", {
+      x: x0,
+      y: y2 - 10.5,
+      size: 8,
+      font: fontItalic,
+      color: rgb(0.15, 0.15, 0.15),
+    });
+    y2 -= 17;
+    y2 = drawTable3Block(page2, y2);
+    y2 -= 14;
   }
 
-  page2.drawText("**Tuliskan Kode dan Judul Unit Kompetensi yang dinyatakan BK bila mengases satu skema", {
-    x: x0,
-    y: y2 - 6,
-    size: 8,
-    font: fontRegular,
-    color: rgb(0.25, 0.25, 0.25),
-  });
-  y2 -= 20;
-
-  // Table 3: Qualitative Notes (widths: 170 | 320 = 490, left cell shaded #92D050)
-  const t3LeftRgb: [number, number, number] = [146 / 255, 208 / 255, 80 / 255];
-  const noteRows: Array<[string, string]> = [
-    ["Aspek Negatif dan Positif dalam asesmen", payload.notesPositiveNegative || "-"],
-    ["Pencatatan penolakan hasil asesmen", payload.notesRejection || "-"],
-    ["Saran perbaikan (Asesor/personil terkait)", payload.notesImprovement || "-"],
-  ];
-  for (const [label, textVal] of noteRows) {
-    const h = 44;
-    drawCellBox(page2, x0, y2, 170, h, t3LeftRgb);
-    drawCellBox(page2, x0 + 170, y2, 320, h);
-    const labelLines = wrapLines(label, 28, 3);
-    labelLines.forEach((line, lIdx) => {
-      page2.drawText(line, { x: x0 + 6, y: y2 - 14 - lIdx * 11, size: 8.5, font: fontRegular });
-    });
-    const valLines = wrapLines(textVal, 58, 3);
-    valLines.forEach((line, lIdx) => {
-      page2.drawText(line, { x: x0 + 176, y: y2 - 14 - lIdx * 11, size: 8.5, font: fontRegular });
-    });
-    y2 -= h;
-  }
-
-  y2 -= 14;
-
-  // Table 4: Catatan + Asesor Signature Block (widths: 245 | 90 | 155 = 490)
-  const cLeft = 245;
-  const cMid = 90;
-  const cRight = 155;
-  const t4HeaderH = 22;
-  const t4NameH = 22;
-  const t4RegH = 22;
+  // Table 4: Catatan + Asesor Signature Block (widths: 256 | 78 | 152 = 486, matching Image 2)
+  const cLeft = 256;
+  const cMid = 78;
+  const cRight = 152;
+  const t4HeaderH = 20;
+  const t4NameH = 20;
+  const t4RegH = 20;
   const t4SigH = 74;
   const t4TotalH = t4HeaderH + t4NameH + t4RegH + t4SigH;
 
   drawCellBox(page2, x0, y2, cLeft, t4TotalH);
-  page2.drawText("Catatan :", { x: x0 + 8, y: y2 - 15, size: 9, font: fontBold });
+  page2.drawText("Catatan :", { x: x0 + 6, y: y2 - 13.5, size: 8.5, font: fontBold });
 
   // Right-hand header ("Asesor :") spanning cMid + cRight
   drawCellBox(page2, x0 + cLeft, y2, cMid + cRight, t4HeaderH);
-  page2.drawText("Asesor :", { x: x0 + cLeft + 6, y: y2 - 15, size: 9, font: fontBold });
+  page2.drawText("Asesor :", { x: x0 + cLeft + 5, y: y2 - 13.5, size: 8.5, font: fontBold });
   y2 -= t4HeaderH;
 
   // Nama
   drawCellBox(page2, x0 + cLeft, y2, cMid, t4NameH);
   drawCellBox(page2, x0 + cLeft + cMid, y2, cRight, t4NameH);
-  page2.drawText("Nama", { x: x0 + cLeft + 6, y: y2 - 15, size: 9, font: fontRegular });
+  page2.drawText("Nama", { x: x0 + cLeft + 5, y: y2 - 13.5, size: 8.5, font: fontRegular });
   page2.drawText(toWinAnsiSafe(payload.assessorName).slice(0, 28), {
-    x: x0 + cLeft + cMid + 6,
-    y: y2 - 15,
-    size: 9,
-    font: fontBold,
+    x: x0 + cLeft + cMid + 5,
+    y: y2 - 13.5,
+    size: 8.5,
+    font: fontRegular,
   });
   y2 -= t4NameH;
 
   // No. Reg
   drawCellBox(page2, x0 + cLeft, y2, cMid, t4RegH);
   drawCellBox(page2, x0 + cLeft + cMid, y2, cRight, t4RegH);
-  page2.drawText("No. Reg", { x: x0 + cLeft + 6, y: y2 - 15, size: 9, font: fontRegular });
+  page2.drawText("No. Reg", { x: x0 + cLeft + 5, y: y2 - 13.5, size: 8.5, font: fontRegular });
   page2.drawText(toWinAnsiSafe(payload.assessorRegNo).slice(0, 28), {
-    x: x0 + cLeft + cMid + 6,
-    y: y2 - 15,
-    size: 9,
+    x: x0 + cLeft + cMid + 5,
+    y: y2 - 13.5,
+    size: 8.5,
     font: fontRegular,
   });
   y2 -= t4RegH;
@@ -934,30 +1011,24 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
   // Tanda tangan & tanggal
   drawCellBox(page2, x0 + cLeft, y2, cMid, t4SigH);
   drawCellBox(page2, x0 + cLeft + cMid, y2, cRight, t4SigH);
-  page2.drawText("Tanda tangan", { x: x0 + cLeft + 6, y: y2 - 18, size: 9, font: fontRegular });
-  page2.drawText("& tanggal", { x: x0 + cLeft + 6, y: y2 - 30, size: 9, font: fontRegular });
+  page2.drawText("Tanda tangan", { x: x0 + cLeft + 5, y: y2 - 30, size: 8.5, font: fontRegular });
+  page2.drawText("& tanggal", { x: x0 + cLeft + 5, y: y2 - 41, size: 8.5, font: fontRegular });
 
   if (sigImage) {
+    const dims = sigImage.scaleToFit(120, 44);
     page2.drawImage(sigImage, {
-      x: x0 + cLeft + cMid + 14,
-      y: y2 - 50,
-      width: 110,
-      height: 44,
+      x: x0 + cLeft + cMid + (cRight - dims.width) / 2,
+      y: y2 - 50 + (44 - dims.height) / 2,
+      width: dims.width,
+      height: dims.height,
     });
   }
-  page2.drawText(toWinAnsiSafe(payload.assessmentDate), {
-    x: x0 + cLeft + cMid + 6,
+  const dateW = fontRegular.widthOfTextAtSize(toWinAnsiSafe(displayDate), 8.5);
+  page2.drawText(toWinAnsiSafe(displayDate), {
+    x: x0 + cLeft + cMid + (cRight - dateW) / 2,
     y: y2 - 64,
     size: 8.5,
     font: fontRegular,
-  });
-
-  page2.drawText("* Coret yang tidak perlu", {
-    x: x0,
-    y: y2 - t4SigH - 16,
-    size: 8,
-    font: fontRegular,
-    color: rgb(0.25, 0.25, 0.25),
   });
 
   const bytes = await pdfDoc.save();
