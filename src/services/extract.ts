@@ -1,8 +1,10 @@
 import mammoth from "mammoth";
 import JSZip from "jszip";
 import ExcelJS from "exceljs";
+import zlib from "node:zlib";
 
 const OLE_MAGIC_BYTES = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+const MAX_PDF_EXTRACT_BYTES = 15 * 1024 * 1024;
 
 /**
  * Checks whether a buffer starts with the OLE Compound File Binary signature
@@ -83,4 +85,110 @@ export async function extractTextFromXlsx(buffer: Buffer): Promise<string> {
   });
 
   return lines.join("\n").trim();
+}
+
+function unescapePdfLiteral(raw: string): string {
+  return raw
+    .replace(/\\([()\\])/g, "$1")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, " ")
+    .replace(/\\t/g, " ");
+}
+
+/**
+ * Lightweight pure-Node PDF text-layer extractor for standard FlateDecode / uncompressed
+ * text operators (Tj / TJ). Returns "" for scanned image-only PDFs without crashing.
+ */
+export function extractTextFromPdfBasic(buffer: Buffer): string {
+  if (buffer.length === 0 || buffer.length > MAX_PDF_EXTRACT_BYTES) return "";
+  if (buffer.subarray(0, 5).toString("latin1") !== "%PDF-") return "";
+
+  const latin = buffer.toString("latin1");
+  const streams: string[] = [];
+  const streamRe = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+
+  for (const m of latin.matchAll(streamRe)) {
+    const body = m[1];
+    if (!body) continue;
+    const rawBytes = Buffer.from(body, "latin1");
+    let decoded: string | null = null;
+    try {
+      decoded = zlib.inflateSync(rawBytes).toString("latin1");
+    } catch {
+      decoded = rawBytes.toString("latin1");
+    }
+    if (decoded && (decoded.includes("Tj") || decoded.includes("TJ"))) {
+      streams.push(decoded);
+    }
+  }
+
+  const haystack = streams.length > 0 ? streams.join("\n") : latin;
+  const parts: string[] = [];
+  const tjRe = /\(([^()\\]*(?:\\.[^()\\]*)*)\)\s*Tj/g;
+  for (const m of haystack.matchAll(tjRe)) {
+    const val = unescapePdfLiteral(m[1] ?? "").trim();
+    if (val) parts.push(val);
+  }
+
+  const tjArrayRe = /\[([^\]]+)\]\s*TJ/g;
+  for (const m of haystack.matchAll(tjArrayRe)) {
+    const inner = m[1] ?? "";
+    const segs: string[] = [];
+    for (const sm of inner.matchAll(/\(([^()\\]*(?:\\.[^()\\]*)*)\)/g)) {
+      segs.push(unescapePdfLiteral(sm[1] ?? ""));
+    }
+    const joined = segs.join("").trim();
+    if (joined) parts.push(joined);
+  }
+
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
+export async function extractTextFromBuffer(params: {
+  buffer: Buffer;
+  fileName: string;
+  mimeType?: string;
+}): Promise<{ text: string; extractionMethod: string }> {
+  const nameLower = params.fileName.toLowerCase();
+  const mimeLower = (params.mimeType ?? "").toLowerCase();
+
+  if (mimeLower.includes("presentationml") || nameLower.endsWith(".pptx")) {
+    return {
+      text: await extractTextFromPptx(params.buffer),
+      extractionMethod: "ooxml_pptx",
+    };
+  }
+  if (mimeLower.includes("spreadsheetml") || nameLower.endsWith(".xlsx")) {
+    return {
+      text: await extractTextFromXlsx(params.buffer),
+      extractionMethod: "ooxml_xlsx",
+    };
+  }
+  if (mimeLower.includes("wordprocessingml") || nameLower.endsWith(".docx")) {
+    const res = await extractTextFromDocx(params.buffer);
+    const text =
+      res.embeddedImageCount > 0 && !res.text
+        ? `[Dokumen berisi ${res.embeddedImageCount} gambar tersemat — perlu tinjauan manual]`
+        : res.text;
+    return { text, extractionMethod: "ooxml_docx" };
+  }
+  if (mimeLower === "application/pdf" || nameLower.endsWith(".pdf")) {
+    return {
+      text: extractTextFromPdfBasic(params.buffer),
+      extractionMethod: "pdf_text_layer",
+    };
+  }
+  if (
+    mimeLower.startsWith("text/") ||
+    nameLower.endsWith(".txt") ||
+    nameLower.endsWith(".csv") ||
+    nameLower.endsWith(".md")
+  ) {
+    return {
+      text: params.buffer.toString("utf8").trim(),
+      extractionMethod: "raw_text",
+    };
+  }
+
+  return { text: "", extractionMethod: "unsupported" };
 }

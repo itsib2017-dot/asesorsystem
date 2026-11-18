@@ -6,6 +6,7 @@ import {
   similarityPairs,
   decisions,
   ak05Reports,
+  interviewAssessments,
 } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -171,6 +172,18 @@ export async function listDecisionsForAssessee(userId: string, assesseeId: strin
 
   const supabase = await getSupabaseServerClient();
   const { data } = await supabase.from("decisions").select("*").eq("assessee_id", assesseeId);
+  return data ?? [];
+}
+
+export async function listDecisionsForBatch(userId: string, batchId: string) {
+  if (hasDatabaseUrl()) {
+    return withRlsTransaction(userId, (tx) =>
+      tx.select().from(decisions).where(eq(decisions.batchId, batchId)),
+    );
+  }
+
+  const supabase = await getSupabaseServerClient();
+  const { data } = await supabase.from("decisions").select("*").eq("batch_id", batchId);
   return data ?? [];
 }
 
@@ -437,4 +450,151 @@ export async function saveAk05ReportForBatch(params: {
     notes_improvement: params.notesImprovement ?? "",
     signature_id: params.signatureId ?? null,
   });
+}
+
+export async function getLatestInterviewAssessment(userId: string, assesseeId: string) {
+  if (hasDatabaseUrl()) {
+    const rows = await withRlsTransaction(userId, (tx) =>
+      tx
+        .select()
+        .from(interviewAssessments)
+        .where(eq(interviewAssessments.assesseeId, assesseeId))
+        .orderBy(desc(interviewAssessments.createdAt))
+        .limit(1),
+    );
+    return rows[0] ?? null;
+  }
+
+  const supabase = await getSupabaseServerClient();
+  const { data } = await supabase
+    .from("interview_assessments")
+    .select("*")
+    .eq("assessee_id", assesseeId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return data ?? null;
+}
+
+export async function saveInterviewAssessment(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  assesseeId: string;
+  sourceFileId?: string | null;
+  questions: unknown;
+  overallRecommendation: "K" | "BK";
+  vatmUnitRecommendations: unknown;
+  assessorNotes: string;
+}): Promise<void> {
+  const now = new Date();
+  if (hasDatabaseUrl()) {
+    try {
+      await withRlsTransaction(params.userId, (tx) =>
+        tx.insert(interviewAssessments).values({
+          lspId: params.lspId,
+          batchId: params.batchId,
+          assesseeId: params.assesseeId,
+          sourceFileId: params.sourceFileId ?? null,
+          questions: params.questions,
+          overallRecommendation: params.overallRecommendation,
+          vatmUnitRecommendations: params.vatmUnitRecommendations,
+          assessorNotes: params.assessorNotes,
+          assessedBy: params.userId,
+          assessedAt: now,
+        }),
+      );
+      return;
+    } catch (err) {
+      console.warn(
+        "[AssessmentRepository Warning] Direct DB saveInterviewAssessment fallback to Supabase REST:",
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
+  }
+
+  const supabase = await getSupabaseServerClient();
+  await supabase.from("interview_assessments").insert({
+    lsp_id: params.lspId,
+    batch_id: params.batchId,
+    assessee_id: params.assesseeId,
+    source_file_id: params.sourceFileId ?? null,
+    questions: params.questions,
+    overall_recommendation: params.overallRecommendation,
+    vatm_unit_recommendations: params.vatmUnitRecommendations,
+    assessor_notes: params.assessorNotes,
+    assessed_by: params.userId,
+    assessed_at: now.toISOString(),
+  });
+}
+
+/**
+ * Updates AI/channel VATM unit recommendations on `decisions` without overwriting
+ * an existing human-confirmed `decision`.
+ */
+export async function upsertAiUnitRecommendations(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  assesseeId: string;
+  items: Array<{
+    unitCode: string;
+    unitTitle: string;
+    aiRecommendation: "K" | "BK" | null;
+    vatmReasoning: string;
+  }>;
+}): Promise<void> {
+  const validItems = params.items.filter(
+    (item) => item.unitCode.trim() && item.aiRecommendation !== null,
+  );
+  if (validItems.length === 0) return;
+
+  if (hasDatabaseUrl()) {
+    try {
+      await withRlsTransaction(params.userId, async (tx) => {
+        for (const item of validItems) {
+          await tx
+            .insert(decisions)
+            .values({
+              lspId: params.lspId,
+              batchId: params.batchId,
+              assesseeId: params.assesseeId,
+              unitCode: item.unitCode,
+              unitTitle: item.unitTitle,
+              aiRecommendation: item.aiRecommendation,
+              vatmReasoning: item.vatmReasoning,
+            })
+            .onConflictDoUpdate({
+              target: [decisions.assesseeId, decisions.unitCode],
+              set: {
+                unitTitle: item.unitTitle,
+                aiRecommendation: item.aiRecommendation,
+                vatmReasoning: item.vatmReasoning,
+              },
+            });
+        }
+      });
+      return;
+    } catch (err) {
+      console.warn(
+        "[AssessmentRepository Warning] Direct DB upsertAiUnitRecommendations fallback to Supabase REST:",
+        err instanceof Error ? err.message : "unknown",
+      );
+    }
+  }
+
+  const supabase = await getSupabaseServerClient();
+  await supabase.from("decisions").upsert(
+    validItems.map((item) => ({
+      lsp_id: params.lspId,
+      batch_id: params.batchId,
+      assessee_id: params.assesseeId,
+      unit_code: item.unitCode,
+      unit_title: item.unitTitle,
+      ai_recommendation: item.aiRecommendation,
+      vatm_reasoning: item.vatmReasoning,
+    })),
+    { onConflict: "assessee_id,unit_code" },
+  );
 }

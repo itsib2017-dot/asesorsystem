@@ -25,6 +25,7 @@ interface Ak05PreviewProps {
   hasActiveSignature: boolean;
   signatureUrl?: string;
   unconfirmedNamesCount: number;
+  undecidedCount?: number;
   rows: Array<{
     no: number;
     assesseeName: string;
@@ -96,7 +97,21 @@ export function Ak05Preview(props: Ak05PreviewProps) {
                 Terdapat {props.unconfirmedNamesCount} asesi yang belum memiliki konfirmasi nama sertifikat (otoritas KTP).
               </li>
             )}
+            {(props.undecidedCount ?? 0) > 0 && (
+              <li>
+                Terdapat {props.undecidedCount} asesi yang belum memiliki keputusan per unit K/BK (ditampilkan sebagai &ldquo;Belum diputuskan&rdquo;, bukan K).
+              </li>
+            )}
           </ul>
+        </div>
+      )}
+
+      {!blocked && (props.undecidedCount ?? 0) > 0 && (
+        <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+          <span>
+            Terdapat <strong>{props.undecidedCount}</strong> asesi yang belum memiliki keputusan K/BK per unit (kolom Rekomendasi dibiarkan kosong dengan keterangan &ldquo;Belum diputuskan&rdquo;).
+          </span>
         </div>
       )}
 

@@ -57,7 +57,7 @@ export function classifyDriveFileName(
   // 1. Training materials & syllabus live in Materi folders or carry module prefixes
   if (
     /(?:^|\/)\s*materi(?:\s|$|\/)/i.test(ppNorm) ||
-    /^(?:cover\s+materi|silabus|tata\s*tertib|\d+(?:\s*&\s*\d+)?\.\s*ahli\s*k3|modul\b|materi\b|handout\b|bahan\s*ajar\b)/i.test(
+    /^(?:cover\s+materi|silabus|tata\s*tertib|\d+(?:\s*&\s*\d+)?\.\s*ahli\s*k3|modul\b|materi\b|handout\b|bahan\s*ajar\b|\d+\.\s*pengantar\s*pelatihan\b)/i.test(
       fnBase,
     )
   ) {
@@ -74,10 +74,10 @@ export function classifyDriveFileName(
   if (/\bapl[\s.]*0?2\b|asesmen\s*mandiri/i.test(fnBase)) {
     return { docType: "apl02", confidence: 0.95 };
   }
-  if (/\b04a\b|ia[\s.]*04a|\bdit\b|instruksi\s*terstruktur/i.test(fnBase)) {
+  if (/\b04a\b|ia[\s._-]*04a|instruksi\s*terstruktur/i.test(fnBase)) {
     return { docType: "04a", confidence: 0.92 };
   }
-  if (/\b04b\b|ia[\s.]*04b|observasi\s*demonstrasi/i.test(fnBase)) {
+  if (/\b04b\b|ia[\s._-]*04b|observasi\s*demonstrasi|\bpresentasi\b/i.test(fnBase)) {
     return { docType: "04b", confidence: 0.9 };
   }
   if (/\b06a\b|ia[\s.]*06a/i.test(fnBase)) {
@@ -127,9 +127,14 @@ export function classifyDriveFileName(
     return { docType: "sertifikat_pelatihan", confidence: 0.82 };
   }
 
-  // 3. Safe folder fallback for trainee DIT slides without 04A in filename
-  if (/tugas\s*dit/i.test(ppNorm) && /\.(pptx?|pdf|docx?)$/i.test(fnLower)) {
-    return { docType: "04a", confidence: 0.85 };
+  // 3. Safe folder/token fallback for trainee DIT slides (.pptx -> 04b presentation) vs written docs (.docx/.pdf -> 04a)
+  if (/tugas\s*dit/i.test(ppNorm) || /\bdit\b/i.test(fnBase)) {
+    if (/\.pptx?$/i.test(fnLower)) {
+      return { docType: "04b", confidence: 0.85 };
+    }
+    if (/\.(pdf|docx?)$/i.test(fnLower)) {
+      return { docType: "04a", confidence: 0.85 };
+    }
   }
 
   return { docType: "unknown", confidence: 0.1 };

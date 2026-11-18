@@ -12,6 +12,7 @@ import { getActiveSignature } from "@/repositories/signatures.repository";
 import { getAssessorProfile } from "@/repositories/auth.repository";
 import { getAk05ReportForBatch } from "@/repositories/assessment.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
+import { resolveAk05BatchRows } from "@/lib/ak05/rollup";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 function extractSchemeNumber(name?: string, fallback?: string): string {
@@ -100,6 +101,8 @@ export async function GET(
     scheme?.manifest?.decisionRuleRef,
   );
 
+  const rollupRows = await resolveAk05BatchRows(user.id, batchId, assessees);
+
   const payload = {
     schemeCode: scheme?.code ?? "SKEMA",
     schemeTitle,
@@ -109,11 +112,11 @@ export async function GET(
     assessorName: (profile?.fullName as string) || (profile?.full_name as string) || user.email || "Asesor",
     assessorRegNo: (profile?.regNoMet as string) || (profile?.reg_no_met as string) || "-",
     assessmentDate: batch.assessmentDate ?? new Date().toISOString().slice(0, 10),
-    rows: assessees.map((a, idx) => ({
-      no: idx + 1,
-      assesseeName: a.certificateNameConfirmed || a.displayName,
-      recommendation: "K" as const,
-      keterangan: "",
+    rows: rollupRows.map((r) => ({
+      no: r.no,
+      assesseeName: r.assesseeName,
+      recommendation: r.recommendation,
+      keterangan: r.keterangan,
     })),
     notesPositiveNegative: String(
       report?.notes_positive_negative ?? report?.notesPositiveNegative ?? "-",

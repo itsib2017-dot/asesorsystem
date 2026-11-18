@@ -11,7 +11,8 @@
 Executed via `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql`:
 - **RLS-01..RLS-25**: Foundation tables (`lsps`, `schemes`, `batches`, `assessees`, `app_config`, `audit_log`) — **25/25 PASS**.
 - **RLS-26..RLS-31**: Phase 1–5 tables (`scheme_form_manifests`, `drive_files`, `decisions`, `ak05_reports`, `assessor_llm_config`) — **6/6 PASS**.
-- **Total DB RLS Suite**: **31/31 PASS (0 FAIL)**.
+- **RLS-32**: Phase A (`interview_assessments` cross-LSP isolation) — **1/1 PASS**.
+- **Total DB RLS Suite**: **32/32 PASS (0 FAIL)**.
 
 ---
 

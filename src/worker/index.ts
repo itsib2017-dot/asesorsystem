@@ -10,7 +10,6 @@ import {
   upsertAssesseesForBatch,
 } from "@/repositories/assessees.repository";
 import {
-  listDecisionsForAssessee,
   saveAk05ReportForBatch,
   saveDitAnalysis,
   saveSimilarityPairsForBatch,
@@ -33,17 +32,23 @@ import {
   extractDriveFolderId,
   inferCandidateNameFromDrivePath,
 } from "@/services/drive";
+import { extractTextFromBuffer } from "@/services/extract";
 import {
-  extractTextFromDocx,
-  extractTextFromPptx,
-  extractTextFromXlsx,
-} from "@/services/extract";
+  downloadPublicDriveFileBuffer,
+  ensureDriveFileExtracted,
+  resolveAssesseeDitInputs,
+} from "@/services/drive-extract";
 import { resolveWrittenTestFiles, runWrittenGradingPipeline } from "@/services/grading";
 import { runNameJury } from "@/services/name-jury";
 import {
   DEFAULT_SIMILARITY_THRESHOLDS,
   evaluateSimilarityPair,
 } from "@/services/similarity";
+import { resolveAk05BatchRows } from "@/lib/ak05/rollup";
+import {
+  resolveUnitsForScheme,
+  syncAssesseeVatmRecommendations,
+} from "@/lib/forms/sync-vatm-decisions";
 import { handleHelloJob } from "./handlers/hello.handler";
 
 export interface WorkerJobInput {
@@ -83,6 +88,18 @@ async function resolveOptionalLlmConfig(
     temperature: stored.temperature,
     maxTokens: stored.maxTokens,
   };
+}
+
+async function resolveOptionalDriveApiKey(
+  userId: string,
+): Promise<string | undefined> {
+  const storedProvider = await getLatestProviderConfigForAssessor(userId);
+  if (!storedProvider?.googleDriveApiKeyEncrypted) return undefined;
+  try {
+    return decryptSecret(storedProvider.googleDriveApiKeyEncrypted) || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function requireLlmConfig(userId: string): Promise<RuntimeLlmConfig> {
@@ -151,12 +168,8 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
 
   const payloadApiKey =
     typeof job.payload.apiKey === "string" ? job.payload.apiKey.trim() : "";
-  const storedProvider = await getLatestProviderConfigForAssessor(userId);
   const driveApiKey =
-    payloadApiKey ||
-    (storedProvider?.googleDriveApiKeyEncrypted
-      ? decryptSecret(storedProvider.googleDriveApiKeyEncrypted)
-      : "");
+    payloadApiKey || (await resolveOptionalDriveApiKey(userId)) || "";
 
   const discovered = await crawlPublicDriveFolder({
     folderId,
@@ -238,8 +251,11 @@ async function handleExtractFileJob(job: WorkerJobInput): Promise<WorkerJobResul
   }
 
   const mimeType = String(job.payload.mimeType ?? "").toLowerCase();
+  const fileName = String(job.payload.fileName ?? "");
   const base64Content =
     typeof job.payload.base64Content === "string" ? job.payload.base64Content : "";
+  const driveFileId =
+    typeof job.payload.driveFileId === "string" ? job.payload.driveFileId.trim() : "";
   const rawText = typeof job.payload.text === "string" ? job.payload.text : "";
 
   let extractedText = rawText.trim();
@@ -247,28 +263,26 @@ async function handleExtractFileJob(job: WorkerJobInput): Promise<WorkerJobResul
 
   if (base64Content) {
     const buffer = Buffer.from(base64Content, "base64");
-    if (
-      mimeType.includes("presentationml") ||
-      mimeType.endsWith(".pptx") ||
-      String(job.payload.fileName ?? "").toLowerCase().endsWith(".pptx")
-    ) {
-      extractedText = await extractTextFromPptx(buffer);
-      extractionMethod = "ooxml_pptx";
-    } else if (
-      mimeType.includes("spreadsheetml") ||
-      mimeType.endsWith(".xlsx") ||
-      String(job.payload.fileName ?? "").toLowerCase().endsWith(".xlsx")
-    ) {
-      extractedText = await extractTextFromXlsx(buffer);
-      extractionMethod = "ooxml_xlsx";
-    } else {
-      const docxRes = await extractTextFromDocx(buffer);
-      extractedText =
-        docxRes.embeddedImageCount > 0 && !docxRes.text
-          ? `[Dokumen berisi ${docxRes.embeddedImageCount} gambar tersemat — perlu tinjauan manual]`
-          : docxRes.text;
-      extractionMethod = "ooxml_docx";
-    }
+    const parsed = await extractTextFromBuffer({
+      buffer,
+      fileName: fileName || "document.docx",
+      mimeType,
+    });
+    extractedText = parsed.text;
+    extractionMethod = parsed.extractionMethod;
+  } else if (!extractedText && driveFileId) {
+    const driveApiKey = await resolveOptionalDriveApiKey(userId);
+    const buffer = await downloadPublicDriveFileBuffer({
+      driveFileId,
+      apiKey: driveApiKey,
+    });
+    const parsed = await extractTextFromBuffer({
+      buffer,
+      fileName: fileName || "document.docx",
+      mimeType,
+    });
+    extractedText = parsed.text;
+    extractionMethod = parsed.extractionMethod;
   }
 
   if (!extractedText) {
@@ -365,21 +379,32 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
   const files = await listDriveFilesForBatch(userId, batch.id);
   const assesseeFiles = files.filter((f) => f.assesseeId === assessee.id);
 
-  const frIa04aText = String(
-    job.payload.frIa04aText ??
-      assesseeFiles.find((f) => f.docType === "04a")?.extractedText ??
-      "",
-  );
-  const presentationTranscript = String(
-    job.payload.presentationTranscript ??
-      assesseeFiles.find((f) => f.docType === "04b")?.extractedText ??
-      "",
-  );
-  const candidateProfileSummary = String(
-    job.payload.candidateProfileSummary ??
-      assesseeFiles.find((f) => f.docType === "cv")?.extractedText ??
-      "",
-  );
+  const payload04a = typeof job.payload.frIa04aText === "string" ? job.payload.frIa04aText.trim() : "";
+  const payload04b =
+    typeof job.payload.presentationTranscript === "string"
+      ? job.payload.presentationTranscript.trim()
+      : "";
+  const payloadCv =
+    typeof job.payload.candidateProfileSummary === "string"
+      ? job.payload.candidateProfileSummary.trim()
+      : "";
+
+  const driveApiKey =
+    !payload04a || !payload04b || !payloadCv
+      ? await resolveOptionalDriveApiKey(userId)
+      : undefined;
+  const resolvedInputs =
+    !payload04a || !payload04b || !payloadCv
+      ? await resolveAssesseeDitInputs({
+          userId,
+          files: assesseeFiles,
+          apiKey: driveApiKey,
+        })
+      : null;
+
+  const frIa04aText = payload04a || resolvedInputs?.frIa04aText || "";
+  const presentationTranscript = payload04b || resolvedInputs?.presentationTranscript || "";
+  const candidateProfileSummary = payloadCv || resolvedInputs?.candidateProfileSummary || "";
 
   const schemes = await listSchemes(userId, assessee.lspId);
   const scheme = schemes.find((s) => s.id === batch.schemeId);
@@ -426,6 +451,14 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
     rawOutput: result.output,
   });
 
+  await syncAssesseeVatmRecommendations({
+    userId,
+    lspId: assessee.lspId,
+    batchId: batch.id,
+    assesseeId: assessee.id,
+    scheme,
+  });
+
   return {
     status: "done",
     progress: 100,
@@ -461,13 +494,35 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
     };
 
   const files = await listDriveFilesForBatch(userId, batch.id);
+  const relevantDocTypes = new Set([
+    mapping.soal.toLowerCase(),
+    mapping.kunci.toLowerCase(),
+    mapping.jawaban.toLowerCase(),
+  ]);
+  const candidateFiles = files.filter(
+    (f) => (!f.assesseeId || f.assesseeId === assessee.id) && relevantDocTypes.has(f.docType.toLowerCase()),
+  );
+  const needsDriveExtraction =
+    (!job.payload.masterKeyText || !job.payload.studentAnswerText) &&
+    candidateFiles.some((f) => !f.extractedText);
+  const driveApiKey = needsDriveExtraction
+    ? await resolveOptionalDriveApiKey(userId)
+    : undefined;
+
   const byDocType: Record<string, string> = {};
-  for (const f of files) {
-    if (!f.extractedText) continue;
-    const isOwnerOrShared = !f.assesseeId || f.assesseeId === assessee.id;
-    if (!isOwnerOrShared) continue;
-    byDocType[f.docType.toUpperCase()] = f.extractedText;
-    byDocType[f.docType.toLowerCase()] = f.extractedText;
+  for (const f of candidateFiles) {
+    let text = f.extractedText ?? "";
+    if (!text) {
+      const extracted = await ensureDriveFileExtracted({
+        userId,
+        file: f,
+        apiKey: driveApiKey,
+      });
+      text = extracted.text ?? "";
+    }
+    if (!text) continue;
+    byDocType[f.docType.toUpperCase()] = text;
+    byDocType[f.docType.toLowerCase()] = text;
   }
 
   const resolved = resolveWrittenTestFiles(byDocType, mapping);
@@ -478,7 +533,7 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
   const graded = await runWrittenGradingPipeline({
     pseudonym: assessee.pseudonym ?? "ASESI-001",
     schemeName: scheme?.name ?? batch.name,
-    units: scheme?.manifest?.units ?? [],
+    units: resolveUnitsForScheme(scheme),
     masterKeyText,
     studentAnswerText,
     llmConfig,
@@ -501,6 +556,14 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
     plagiarismReport: graded.output.plagiarismReport,
     model: `${llmConfig.provider}/${llmConfig.model}`,
     promptVersion: graded.promptVersion,
+  });
+
+  await syncAssesseeVatmRecommendations({
+    userId,
+    lspId: assessee.lspId,
+    batchId: batch.id,
+    assesseeId: assessee.id,
+    scheme,
   });
 
   return {
@@ -529,26 +592,42 @@ async function handleSimilarityRunJob(job: WorkerJobInput): Promise<WorkerJobRes
   const files = await listDriveFilesForBatch(userId, batchId);
   const assessees = await listAssesseesByBatch(userId, batchId);
   const answerDocType = String(job.payload.docType ?? "06c").toLowerCase();
+  const dbScope: "dit" | "written" =
+    answerDocType === "dit" || answerDocType.startsWith("04") ? "dit" : "written";
 
-  const entries: Array<{ assesseeId: string; text: string }> = Array.isArray(
-    job.payload.submissions,
-  )
-    ? job.payload.submissions
-        .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === "object"))
-        .map((s) => ({
-          assesseeId: String(s.assesseeId ?? ""),
-          text: String(s.text ?? ""),
-        }))
-        .filter((s) => s.assesseeId && s.text.trim().length > 0)
-    : assessees
-        .map((a) => ({
-          assesseeId: a.id,
-          text:
-            files.find(
-              (f) => f.assesseeId === a.id && f.docType.toLowerCase() === answerDocType,
-            )?.extractedText ?? "",
-        }))
-        .filter((s) => s.text.trim().length > 0);
+  let entries: Array<{ assesseeId: string; text: string }>;
+  if (Array.isArray(job.payload.submissions)) {
+    entries = job.payload.submissions
+      .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === "object"))
+      .map((s) => ({
+        assesseeId: String(s.assesseeId ?? ""),
+        text: String(s.text ?? ""),
+      }))
+      .filter((s) => s.assesseeId && s.text.trim().length > 0);
+  } else {
+    const driveApiKey = await resolveOptionalDriveApiKey(userId);
+    const resolved: Array<{ assesseeId: string; text: string }> = [];
+    const CHUNK = 5;
+    for (let i = 0; i < assessees.length; i += CHUNK) {
+      const slice = assessees.slice(i, i + CHUNK);
+      const batchTexts = await Promise.all(
+        slice.map(async (a) => {
+          const targetFile = files.find(
+            (f) => f.assesseeId === a.id && f.docType.toLowerCase() === answerDocType,
+          );
+          if (!targetFile) return { assesseeId: a.id, text: "" };
+          const outcome = await ensureDriveFileExtracted({
+            userId,
+            file: targetFile,
+            apiKey: driveApiKey,
+          });
+          return { assesseeId: a.id, text: outcome.text ?? "" };
+        }),
+      );
+      resolved.push(...batchTexts);
+    }
+    entries = resolved.filter((s) => s.text.trim().length > 0);
+  }
 
   const pairs: Array<{
     scope: string;
@@ -569,7 +648,7 @@ async function handleSimilarityRunJob(job: WorkerJobInput): Promise<WorkerJobRes
       const metrics = evaluateSimilarityPair(entryA.text, entryB.text, thresholds);
       if (metrics.flagLevel !== "clean") {
         pairs.push({
-          scope: answerDocType,
+          scope: dbScope,
           assesseeAId: entryA.assesseeId,
           assesseeBId: entryB.assesseeId,
           jaccardScore: metrics.jaccardScore,
@@ -623,21 +702,7 @@ async function handleAk05ExportJob(job: WorkerJobInput): Promise<WorkerJobResult
   }
 
   const profile = await getAssessorProfile(userId);
-  const rows = await Promise.all(
-    assessees.map(async (a, idx) => {
-      const unitDecisions = await listDecisionsForAssessee(userId, a.id);
-      const bkUnits = unitDecisions
-        .filter((d) => String(d.decision) === "BK")
-        .map((d) => String((d as Record<string, unknown>).unitCode ?? (d as Record<string, unknown>).unit_code ?? ""));
-      return {
-        no: idx + 1,
-        assesseeId: a.id,
-        assesseeName: a.certificateNameConfirmed || a.displayName,
-        recommendation: bkUnits.length > 0 ? "BK" : "K",
-        keterangan: bkUnits.join(", "),
-      };
-    }),
-  );
+  const rows = await resolveAk05BatchRows(userId, batchId, assessees);
 
   await saveAk05ReportForBatch({
     userId,

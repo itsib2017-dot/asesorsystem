@@ -67,7 +67,7 @@ export interface Ak05ExportPayload {
   rows: Array<{
     no: number;
     assesseeName: string;
-    recommendation: "K" | "BK";
+    recommendation: "K" | "BK" | "-";
     keterangan: string;
   }>;
   notesPositiveNegative: string;

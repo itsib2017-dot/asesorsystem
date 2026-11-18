@@ -9,6 +9,7 @@ import { getAssessorProfile } from "@/repositories/auth.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import {
   getLatestDitAnalysis,
+  getLatestInterviewAssessment,
   getLatestWrittenGrading,
   listDecisionsForAssessee,
 } from "@/repositories/assessment.repository";
@@ -106,12 +107,13 @@ export async function GET(
     }
   }
 
-  const [profile, schemes, decisions, ditAnalysis, writtenGrading] = await Promise.all([
+  const [profile, schemes, decisions, ditAnalysis, writtenGrading, interviewAssessment] = await Promise.all([
     getAssessorProfile(user.id),
     listSchemes(user.id, batch.lspId),
     listDecisionsForAssessee(user.id, assesseeId),
     getLatestDitAnalysis(user.id, assesseeId),
     getLatestWrittenGrading(user.id, assesseeId),
+    getLatestInterviewAssessment(user.id, assesseeId),
   ]);
 
   const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
@@ -139,6 +141,7 @@ export async function GET(
         decisions: rawDecisions,
         hasDit: Boolean(ditAnalysis),
         hasWritten: Boolean(writtenGrading),
+        hasInterview: Boolean(interviewAssessment),
         signaturePngBytes: signatureBytes,
         signatureMimeType,
       }),

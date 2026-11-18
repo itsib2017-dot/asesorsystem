@@ -1,10 +1,15 @@
 import { z } from "zod";
+import { isUuid } from "@/db";
 import { getUser } from "@/lib/auth/get-session";
+import { decryptSecret } from "@/lib/crypto/encryption";
 import { apiError, apiSuccess } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/security/rate-limit";
-import { checkDitCompletenessGate } from "@/services/dit";
-import { enqueueJob } from "@/worker/queue";
 import { getAssesseeById } from "@/repositories/assessees.repository";
+import { listDriveFilesForBatch } from "@/repositories/batches.repository";
+import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
+import { checkDitCompletenessGate } from "@/services/dit";
+import { resolveAssesseeDitInputs } from "@/services/drive-extract";
+import { enqueueJob } from "@/worker/queue";
 
 const analyseSchema = z.object({
   frIa04aText: z.string().optional(),
@@ -30,6 +35,10 @@ export async function POST(
   }
 
   const { assesseeId } = await context.params;
+  if (!isUuid(assesseeId)) {
+    return apiError("NOT_FOUND", "Asesi tidak ditemukan.");
+  }
+
   const assessee = await getAssesseeById(user.id, assesseeId);
   if (!assessee) {
     return apiError("NOT_FOUND", "Asesi tidak ditemukan.");
@@ -47,13 +56,64 @@ export async function POST(
     return apiError("VALIDATION_ERROR", "Format permintaan tidak valid.");
   }
 
+  const body04a = parsed.data.frIa04aText?.trim() ?? "";
+  const body04b = parsed.data.presentationTranscript?.trim() ?? "";
+  const bodyCv = parsed.data.candidateProfileSummary?.trim() ?? "";
+
+  let resolvedInputs = {
+    frIa04aText: body04a,
+    presentationTranscript: body04b,
+    candidateProfileSummary: bodyCv,
+    extractionErrors: [] as string[],
+  };
+
+  if (!body04a || !body04b || !bodyCv) {
+    const [batchFiles, providerCfg] = await Promise.all([
+      listDriveFilesForBatch(user.id, assessee.batchId),
+      getLatestProviderConfigForAssessor(user.id),
+    ]);
+    const assesseeFiles = batchFiles.filter((f) => f.assesseeId === assesseeId);
+    let driveApiKey: string | undefined;
+    if (providerCfg?.googleDriveApiKeyEncrypted) {
+      try {
+        driveApiKey = decryptSecret(providerCfg.googleDriveApiKeyEncrypted) || undefined;
+      } catch {
+        driveApiKey = undefined;
+      }
+    }
+
+    const fromDb = await resolveAssesseeDitInputs({
+      userId: user.id,
+      files: assesseeFiles,
+      apiKey: driveApiKey,
+    });
+
+    resolvedInputs = {
+      frIa04aText: body04a || fromDb.frIa04aText,
+      presentationTranscript: body04b || fromDb.presentationTranscript,
+      candidateProfileSummary: bodyCv || fromDb.candidateProfileSummary,
+      extractionErrors: fromDb.extractionErrors,
+    };
+  }
+
   // Enforce Rule 26 Completeness Gate before enqueueing
-  const gate = checkDitCompletenessGate(parsed.data);
+  const gate = checkDitCompletenessGate({
+    frIa04aText: resolvedInputs.frIa04aText,
+    presentationTranscript: resolvedInputs.presentationTranscript,
+    candidateProfileSummary: resolvedInputs.candidateProfileSummary,
+  });
   if (!gate.passed) {
+    const errorSuffix =
+      resolvedInputs.extractionErrors.length > 0
+        ? ` (${resolvedInputs.extractionErrors.join("; ")})`
+        : "";
     return apiError(
       "UNPROCESSABLE",
-      "Analisis ditunda — bahan belum lengkap.",
-      gate.missing.map((m) => ({ field: m.input, issue: `Dokumen wajib belum tersedia: ${m.label}` })),
+      `Analisis ditunda — bahan belum lengkap.${errorSuffix}`,
+      gate.missing.map((m) => ({
+        field: m.input,
+        issue: `Dokumen wajib belum tersedia: ${m.label}`,
+      })),
     );
   }
 
@@ -63,13 +123,9 @@ export async function POST(
     payload: {
       assesseeId,
       batchId: assessee.batchId,
-      ...(parsed.data.frIa04aText ? { frIa04aText: parsed.data.frIa04aText } : {}),
-      ...(parsed.data.presentationTranscript
-        ? { presentationTranscript: parsed.data.presentationTranscript }
-        : {}),
-      ...(parsed.data.candidateProfileSummary
-        ? { candidateProfileSummary: parsed.data.candidateProfileSummary }
-        : {}),
+      frIa04aText: resolvedInputs.frIa04aText,
+      presentationTranscript: resolvedInputs.presentationTranscript,
+      candidateProfileSummary: resolvedInputs.candidateProfileSummary,
     },
   });
 

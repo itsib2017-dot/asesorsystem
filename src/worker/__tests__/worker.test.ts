@@ -37,6 +37,11 @@ vi.mock("@/repositories/assessees.repository", () => ({
 
 vi.mock("@/repositories/assessment.repository", () => ({
   listDecisionsForAssessee: vi.fn(),
+  listDecisionsForBatch: vi.fn().mockResolvedValue([]),
+  getLatestDitAnalysis: vi.fn().mockResolvedValue(null),
+  getLatestWrittenGrading: vi.fn().mockResolvedValue(null),
+  getLatestInterviewAssessment: vi.fn().mockResolvedValue(null),
+  upsertAiUnitRecommendations: vi.fn().mockResolvedValue(undefined),
   saveAk05ReportForBatch: vi.fn(),
   saveDitAnalysis: vi.fn(),
   saveSimilarityPairsForBatch: mocks.saveSimilarityPairsForBatch,

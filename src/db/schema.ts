@@ -326,3 +326,20 @@ export const ak05Reports = pgTable("ak05_reports", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const interviewAssessments = pgTable("interview_assessments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  lspId: uuid("lsp_id").notNull(),
+  batchId: uuid("batch_id").notNull(),
+  assesseeId: uuid("assessee_id").notNull(),
+  sourceFileId: uuid("source_file_id"),
+  questions: jsonb("questions").notNull().default([]),
+  overallRecommendation: text("overall_recommendation").notNull(),
+  vatmUnitRecommendations: jsonb("vatm_unit_recommendations").notNull().default([]),
+  assessorNotes: text("assessor_notes").notNull().default(""),
+  assessedBy: uuid("assessed_by"),
+  assessedAt: timestamp("assessed_at", { withTimezone: true }).notNull().defaultNow(),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

@@ -120,6 +120,10 @@ BEGIN
     (v_lsp_a, v_batch_a1, v_assessor_a, 'sewaktu', 'draft'),
     (v_lsp_b, v_batch_b1, v_assessor_b, 'sewaktu', 'draft');
 
+  INSERT INTO public.interview_assessments (lsp_id, batch_id, assessee_id, overall_recommendation, assessed_by) VALUES
+    (v_lsp_a, v_batch_a1, v_assessee_a1, 'K', v_assessor_a),
+    (v_lsp_b, v_batch_b1, v_assessee_b1, 'K', v_assessor_b);
+
   INSERT INTO public.assessor_llm_config (assessor_id, provider, model, encrypted_api_key) VALUES
     (v_assessor_a, 'anthropic', 'claude-3-7-sonnet-20250219', 'iv:tag:cipher_a'),
     (v_assessor_b, 'anthropic', 'claude-3-7-sonnet-20250219', 'iv:tag:cipher_b');
@@ -355,6 +359,11 @@ INSERT INTO test_results (test_id, role_tested, target_lsp, resource, expected, 
 SELECT 'RLS-31', 'assessor', 'SELF', 'assessor_llm_config', '1', count(*)::text,
        CASE WHEN count(*) = 1 THEN 'PASS' ELSE 'FAIL' END
 FROM public.assessor_llm_config WHERE assessor_id = '10000000-0000-0000-0000-000000000001';
+
+INSERT INTO test_results (test_id, role_tested, target_lsp, resource, expected, actual, status)
+SELECT 'RLS-32', 'assessor', 'LSP-B', 'interview_assessments', '0', count(*)::text,
+       CASE WHEN count(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM public.interview_assessments WHERE lsp_id = 'b0000000-0000-0000-0000-000000000002';
 
 -- Switch back to postgres session to query results
 RESET ROLE;

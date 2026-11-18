@@ -33,6 +33,9 @@
 | `jobs` | `jobs_insert` | INSERT | authenticated | `created_by = auth.uid()` |
 | `assessor_llm_config`| `llm_config_select` | SELECT | authenticated | `assessor_id = auth.uid()` |
 | `assessor_llm_config`| `llm_config_insert/update/delete` | INSERT/UPDATE/DELETE | authenticated | `assessor_id = auth.uid()` |
+| `interview_assessments`| `ia09_select` | SELECT | authenticated | `lsp_admin`/`tuk_admin` of LSP OR assigned assessor (`auth_on_batch`) |
+| `interview_assessments`| `ia09_insert` | INSERT | authenticated | `lsp_admin` OR assigned assessor (`auth_on_batch`) |
+| `interview_assessments`| `ia09_update` | UPDATE | authenticated | `lsp_admin` OR assigned assessor (`auth_on_batch`) |
 
 ---
 

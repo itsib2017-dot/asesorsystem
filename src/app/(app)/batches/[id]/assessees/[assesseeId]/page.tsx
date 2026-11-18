@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { FileSearch, FileSpreadsheet } from "lucide-react";
+import { FileSearch, FileSpreadsheet, MessageSquare } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { getLatestNameJuryVerdict } from "@/repositories/assessees.repository";
 import {
   getLatestDitAnalysis,
+  getLatestInterviewAssessment,
   getLatestWrittenGrading,
   listDecisionsForAssessee,
 } from "@/repositories/assessment.repository";
@@ -13,6 +14,8 @@ import { DecisionToggle } from "@/components/ak05/decision-toggle";
 import { Ak02BlankoPreview } from "@/components/forms/ak02-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import { buildAk02Payload, type RawDecisionRow } from "@/lib/forms/assessee-forms";
+import { resolveUnitsForScheme } from "@/lib/forms/sync-vatm-decisions";
+import { computeVatmUnitRollup } from "@/services/vatm-rollup";
 import { confirmCertificateNameAction, saveUnitDecisionAction } from "./actions";
 
 export const metadata = {
@@ -37,12 +40,44 @@ export default async function AssesseeDetailPage({
   if (!common) return notFound();
   const { assessee } = common;
 
-  const [jury, decisions, ditAnalysis, writtenGrading] = await Promise.all([
+  const [jury, decisions, ditAnalysis, writtenGrading, interviewAssessment] = await Promise.all([
     getLatestNameJuryVerdict(user.id, assesseeId),
     listDecisionsForAssessee(user.id, assesseeId),
     getLatestDitAnalysis(user.id, assesseeId),
     getLatestWrittenGrading(user.id, assesseeId),
+    getLatestInterviewAssessment(user.id, assesseeId),
   ]);
+
+  const rollupUnits = computeVatmUnitRollup({
+    units: resolveUnitsForScheme(common.scheme),
+    ditAnalysis: ditAnalysis as Record<string, unknown> | null,
+    writtenGrading: writtenGrading as Record<string, unknown> | null,
+    interviewAssessment: interviewAssessment as Record<string, unknown> | null,
+  });
+
+  const decisionByCode = new Map(
+    (decisions as Array<Record<string, unknown>>).map((d) => [
+      String(d.unitCode ?? d.unit_code ?? "").trim().toLowerCase(),
+      d,
+    ]),
+  );
+
+  const mergedUnitRows = rollupUnits.map((u) => {
+    const saved = decisionByCode.get(u.unitCode.trim().toLowerCase());
+    return {
+      unitCode: u.unitCode,
+      unitTitle: u.unitTitle,
+      aiRecommendation:
+        ((saved?.aiRecommendation ?? saved?.ai_recommendation) as "K" | "BK" | null | undefined) ??
+        u.aiRecommendation,
+      vatmReasoning:
+        ((saved?.vatmReasoning ?? saved?.vatm_reasoning) as string | null | undefined) ??
+        u.vatmReasoning,
+      decision: (saved?.decision as "K" | "BK" | null | undefined) ?? null,
+      assessorNote:
+        ((saved?.assessorNote ?? saved?.assessor_note) as string | null | undefined) ?? null,
+    };
+  });
 
   const ak02Payload = buildAk02Payload({
     schemeTitle: common.schemeTitle,
@@ -55,6 +90,7 @@ export default async function AssesseeDetailPage({
     decisions: decisions as unknown as RawDecisionRow[],
     hasDit: Boolean(ditAnalysis),
     hasWritten: Boolean(writtenGrading),
+    hasInterview: Boolean(interviewAssessment),
   });
 
   return (
@@ -72,13 +108,13 @@ export default async function AssesseeDetailPage({
           </p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Link
             href={`/batches/${batchId}/assessees/${assesseeId}/dit`}
             className="px-4 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-800 inline-flex items-center gap-1.5"
           >
             <FileSearch className="w-4 h-4 text-teal-700" />
-            Analisis DIT (FR.IA.04A & 04B)
+            Analisis DIT (FR.IA.04A &amp; 04B)
           </Link>
           <Link
             href={`/batches/${batchId}/assessees/${assesseeId}/written`}
@@ -86,6 +122,13 @@ export default async function AssesseeDetailPage({
           >
             <FileSpreadsheet className="w-4 h-4 text-indigo-700" />
             Penilaian Tertulis (FR.IA.06)
+          </Link>
+          <Link
+            href={`/batches/${batchId}/assessees/${assesseeId}/interview`}
+            className="px-4 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-800 inline-flex items-center gap-1.5"
+          >
+            <MessageSquare className="w-4 h-4 text-amber-700" />
+            Wawancara (FR.IA.09)
           </Link>
         </div>
       </div>
@@ -126,28 +169,22 @@ export default async function AssesseeDetailPage({
           </p>
         </div>
 
-        {decisions.length === 0 ? (
-          <p className="text-xs text-slate-500">
-            Belum ada rekomendasi unit yang tercatat. Jalankan penilaian tertulis atau analisis DIT untuk memunculkan rekomendasi VATM per unit.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {decisions.map((d: Record<string, unknown>) => (
-              <DecisionToggle
-                key={String(d.unitCode ?? d.unit_code)}
-                assesseeId={assessee.id}
-                batchId={batchId}
-                unitCode={String(d.unitCode ?? d.unit_code)}
-                unitTitle={String(d.unitTitle ?? d.unit_title)}
-                aiRecommendation={(d.aiRecommendation ?? d.ai_recommendation) as "K" | "BK" | null}
-                vatmReasoning={(d.vatmReasoning ?? d.vatm_reasoning) as string | null}
-                initialDecision={(d.decision as "K" | "BK" | null)}
-                initialNote={(d.assessorNote ?? d.assessor_note) as string | null}
-                onSaveDecision={saveUnitDecisionAction}
-              />
-            ))}
-          </div>
-        )}
+        <div className="space-y-3">
+          {mergedUnitRows.map((d) => (
+            <DecisionToggle
+              key={d.unitCode}
+              assesseeId={assessee.id}
+              batchId={batchId}
+              unitCode={d.unitCode}
+              unitTitle={d.unitTitle}
+              aiRecommendation={d.aiRecommendation}
+              vatmReasoning={d.vatmReasoning}
+              initialDecision={d.decision}
+              initialNote={d.assessorNote}
+              onSaveDecision={saveUnitDecisionAction}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Official Unaltered FR.AK.02 Blanko Preview & DOCX Export */}

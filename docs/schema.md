@@ -22,6 +22,7 @@
 | `public.audit_log` | `id bigint` | `lsp_id` (optional) | Append-only immutable audit trail | YES |
 | `public.jobs` | `id uuid` | via `created_by` | Background worker queue jobs | YES |
 | `public.assessor_llm_config` | `id uuid` | via `assessor_id` | Encrypted BYOK AI credentials per assessor | YES |
+| `public.interview_assessments` | `id uuid` | `lsp_id` | FR.IA.09 structured interview evaluations & VATM rollup | YES |
 
 ---
 
@@ -31,3 +32,7 @@
 2. `20261118000002_hardening.sql`: Isolated helper functions to schema `private`, fixed init-plan RLS optimization.
 3. `20261118000003_jobs_and_byok.sql`: Added `jobs` queue and `assessor_llm_config` table for encrypted BYOK.
 4. `20261118000004_fix_advisor.sql`: Resolved multiple permissive policies advisor finding.
+5. `20261118000005_full_platform_schema.sql`: Added signatures, manifests, prompt registry, drive_files, ocr_runs, name_jury_verdicts, decisions, dit_analyses, written_gradings, similarity_pairs, ak05_reports.
+6. `20261118000006_jobs_update_policy.sql`: Added UPDATE RLS policy on `jobs`.
+7. `20261118000007_audit_null_lsp_actor_scope.sql`: Scoped historical null-`lsp_id` logs to LSP admins.
+8. `20261118000008_interview_assessments.sql`: Added `interview_assessments` table with multi-LSP RLS (`ia09_*`).

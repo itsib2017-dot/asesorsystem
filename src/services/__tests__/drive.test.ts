@@ -64,6 +64,51 @@ describe("Drive folder crawling & BNSP path classification", () => {
     ).toBe("04a");
     expect(
       classifyDriveFileName(
+        "Presentasi DIT - Andi Demo.pptx",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT",
+      ).docType,
+    ).toBe("04b");
+    expect(
+      classifyDriveFileName(
+        "Andi Demo - Presentasi.pptx",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT",
+      ).docType,
+    ).toBe("04b");
+    expect(
+      classifyDriveFileName(
+        "TUGAS PRESENTASI DIT Andi Demo.pptx",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT",
+      ).docType,
+    ).toBe("04b");
+    expect(
+      classifyDriveFileName(
+        "DIT Andi Demo.pptx",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT",
+      ).docType,
+    ).toBe("04b");
+    expect(
+      classifyDriveFileName(
+        "Andi Demo.pptx",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT",
+      ).docType,
+    ).toBe("04b");
+    expect(
+      classifyDriveFileName(
+        "FR.IA.04B - Presentasi - Andi.docx",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT",
+      ).docType,
+    ).toBe("04b");
+    expect(
+      classifyDriveFileName(
+        "Tugas_DIT_Andi.docx",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT/Andi",
+      ).docType,
+    ).toBe("04a");
+    expect(
+      classifyDriveFileName("01. Pengantar Pelatihan K3.pdf", "").docType,
+    ).toBe("materi_pelatihan");
+    expect(
+      classifyDriveFileName(
         "foto kiki.jpeg",
         "Persyaratan Pelatihan AK3 umum BNSP/10. Kiki Triyana",
       ).docType,

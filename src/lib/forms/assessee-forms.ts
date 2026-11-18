@@ -217,6 +217,12 @@ export const IA04B_KELOMPOK_PEKERJAAN: Ia04bKelompokSpec[] = [
   },
 ];
 
+export function getFallbackAk3uUnits(): Array<{ code: string; title: string }> {
+  return IA04B_KELOMPOK_PEKERJAAN.flatMap((kp) =>
+    kp.units.map((u) => ({ code: u.code, title: u.title })),
+  );
+}
+
 export function extractSchemeMeta(scheme?: SchemeRecord | null): {
   schemeTitle: string;
   schemeNumber: string;
@@ -269,6 +275,7 @@ export function buildAk02Payload(params: {
   decisions: RawDecisionRow[];
   hasDit: boolean;
   hasWritten: boolean;
+  hasInterview?: boolean;
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
 }): Ak02ExportPayload {
@@ -290,11 +297,15 @@ export function buildAk02Payload(params: {
     const evidenceTypes: Ak02EvidenceType[] = ["portofolio"];
     if (params.hasWritten) evidenceTypes.push("tertulis");
     if (params.hasDit) evidenceTypes.push("proyek");
+    if (params.hasInterview) evidenceTypes.push("pihak_ketiga");
 
     return {
       unitCode: matched?.unitCode,
       unitTitle: officialTitle,
-      evidenceTypes: matched || params.hasDit || params.hasWritten ? evidenceTypes : [],
+      evidenceTypes:
+        matched || params.hasDit || params.hasWritten || params.hasInterview
+          ? evidenceTypes
+          : [],
     };
   });
 

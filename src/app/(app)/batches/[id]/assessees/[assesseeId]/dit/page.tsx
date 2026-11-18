@@ -11,6 +11,7 @@ import { checkDitCompletenessGate } from "@/services/dit";
 import { Ia04bBlankoPreview } from "@/components/forms/ia04b-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import { buildIa04bPayload, type RawDecisionRow } from "@/lib/forms/assessee-forms";
+import { DitAnalysisTrigger } from "./_components/dit-analysis-trigger";
 
 export const metadata = {
   title: "Analisis DIT — AsesorKompetensi",
@@ -40,14 +41,18 @@ export default async function DitAnalysisPage({
     listDecisionsForAssessee(user.id, assesseeId),
   ]);
   const assesseeFiles = files.filter((f) => f.assesseeId === assesseeId);
-  const fr04a = assesseeFiles.find((f) => f.docType === "04a")?.extractedText ?? null;
-  const presentation = assesseeFiles.find((f) => f.docType === "04b")?.extractedText ?? null;
-  const cv = assesseeFiles.find((f) => f.docType === "cv")?.extractedText ?? null;
+  const file04a = assesseeFiles.find((f) => f.docType === "04a") ?? null;
+  const file04b = assesseeFiles.find((f) => f.docType === "04b") ?? null;
+  const fileCv = assesseeFiles.find((f) => f.docType === "cv") ?? null;
+
+  const fr04a = file04a?.extractedText ?? null;
+  const presentation = file04b?.extractedText ?? null;
+  const cv = fileCv?.extractedText ?? null;
 
   const gate = checkDitCompletenessGate({
-    frIa04aText: fr04a,
-    presentationTranscript: presentation,
-    candidateProfileSummary: cv,
+    frIa04aText: fr04a ?? (file04a ? "pending-drive-extraction" : null),
+    presentationTranscript: presentation ?? (file04b ? "pending-drive-extraction" : null),
+    candidateProfileSummary: cv ?? (fileCv ? "pending-drive-extraction" : null),
   });
 
   const ia04bPayload = buildIa04bPayload({
@@ -110,6 +115,29 @@ export default async function DitAnalysisPage({
           </div>
         </div>
       )}
+
+      {/* Explicit DIT Trigger (Cacat 1) */}
+      <DitAnalysisTrigger
+        assesseeId={assesseeId}
+        hasExistingAnalysis={Boolean(analysis)}
+        inputs={{
+          fr04a: {
+            label: "FR.IA.04A (Instruksi DIT)",
+            fileName: file04a?.fileName ?? null,
+            hasExtractedText: Boolean(fr04a?.trim()),
+          },
+          fr04b: {
+            label: "Presentasi / 04B",
+            fileName: file04b?.fileName ?? null,
+            hasExtractedText: Boolean(presentation?.trim()),
+          },
+          cv: {
+            label: "Profil Kandidat (CV)",
+            fileName: fileCv?.fileName ?? null,
+            hasExtractedText: Boolean(cv?.trim()),
+          },
+        }}
+      />
 
       {/* Official FR.IA.04B Section (D14) */}
       <div className="glass-card rounded-2xl p-6 space-y-4">

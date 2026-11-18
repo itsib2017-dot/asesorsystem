@@ -7,6 +7,7 @@ import { getActiveSignature } from "@/repositories/signatures.repository";
 import { getAssessorProfile } from "@/repositories/auth.repository";
 import { getAk05ReportForBatch } from "@/repositories/assessment.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
+import { resolveAk05BatchRows } from "@/lib/ak05/rollup";
 import { Ak05Preview } from "@/components/ak05/ak05-preview";
 
 export const metadata = {
@@ -53,6 +54,8 @@ export default async function Ak05Page({
   const unconfirmedCount = assessees.filter(
     (a) => !a.certificateNameConfirmed,
   ).length;
+  const rows = await resolveAk05BatchRows(user.id, batchId, assessees);
+  const undecidedCount = rows.filter((r) => r.undecided).length;
 
   return (
     <div className="space-y-6">
@@ -79,11 +82,12 @@ export default async function Ak05Page({
         hasActiveSignature={Boolean(signature)}
         signatureUrl={signature?.signedUrl}
         unconfirmedNamesCount={unconfirmedCount}
-        rows={assessees.map((a, idx) => ({
-          no: idx + 1,
-          assesseeName: a.certificateNameConfirmed || a.displayName,
-          recommendation: "K" as const,
-          keterangan: "",
+        undecidedCount={undecidedCount}
+        rows={rows.map((r) => ({
+          no: r.no,
+          assesseeName: r.assesseeName,
+          recommendation: r.recommendation,
+          keterangan: r.keterangan,
         }))}
         notesPositiveNegative={String(
           report?.notes_positive_negative ?? report?.notesPositiveNegative ?? "",
