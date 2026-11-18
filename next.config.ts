@@ -15,6 +15,9 @@ const contentSecurityPolicy = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  outputFileTracingIncludes: {
+    "/api/v1/batches/[id]/ak05/export": ["./src/templates/**/*"],
+  },
   turbopack: {
     rules: {
       "*.css": {

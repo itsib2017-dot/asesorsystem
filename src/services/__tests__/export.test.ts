@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import JSZip from "jszip";
+import { PDFDocument } from "pdf-lib";
 import {
   validateExportFormat,
   generateAk05Docx,
@@ -78,10 +79,56 @@ describe("Export Format Rule D8 & Document Generators", () => {
     const docxBuf = await generateAk05Docx(payload);
     const zip = await JSZip.loadAsync(docxBuf);
     const mediaFiles = Object.keys(zip.files).filter((k) => k.startsWith("word/media/"));
-    expect(mediaFiles.length).toBeGreaterThan(0);
+    expect(mediaFiles).toContain("word/media/signature.png");
+
+    const docXml = await zip.file("word/document.xml")!.async("string");
+    const relsXml = await zip.file("word/_rels/document.xml.rels")!.async("string");
+    expect(relsXml).toContain("rIdSig1");
+    expect(docXml).toContain("rIdSig1");
+    expect(docXml).toContain("TUK Mairodi");
+    expect(docXml).toContain("SKM/2037/00013/2/2021/1");
+    expect(docXml).toContain("Zaenudin");
+    expect(docxBuf.length).toBeGreaterThan(500_000);
+
+    // Ensure all 5 blanko tables remain intact
+    const tblCount = (docXml.match(/<w:tbl\b/g) ?? []).length;
+    expect(tblCount).toBe(5);
 
     const pdfWithSig = await generateAk05Pdf(payload);
     const pdfWithoutSig = await generateAk05Pdf({ ...payload, signaturePngBytes: undefined });
     expect(pdfWithSig.length).toBeGreaterThan(pdfWithoutSig.length);
+
+    const parsedPdf = await PDFDocument.load(pdfWithSig);
+    expect(parsedPdf.getPageCount()).toBe(2);
+  });
+
+  it("handles >12 candidates by cloning rows cleanly in template-filled DOCX", async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      no: i + 1,
+      assesseeName: `Peserta Uji ${i + 1}`,
+      recommendation: (i === 19 ? "BK" : "K") as "K" | "BK",
+      keterangan: i === 19 ? "K3.001" : "",
+    }));
+
+    const docxBuf = await generateAk05Docx({
+      schemeCode: "AK3U",
+      schemeTitle: "Ahli Keselamatan dan Kesehatan Kerja Umum",
+      schemeNumber: "SKM/2037/00013/2/2021/1",
+      tukName: "TUK Demo",
+      tukType: "mandiri",
+      assessorName: "Asesor Uji",
+      assessorRegNo: "MET.000.001.2026",
+      assessmentDate: "2026-11-18",
+      rows,
+      notesPositiveNegative: "Lancar",
+      notesRejection: "-",
+      notesImprovement: "-",
+    });
+
+    const zip = await JSZip.loadAsync(docxBuf);
+    const docXml = await zip.file("word/document.xml")!.async("string");
+    expect(docXml).toContain("Peserta Uji 1");
+    expect(docXml).toContain("Peserta Uji 20");
+    expect(docXml).toContain("K3.001");
   });
 });
