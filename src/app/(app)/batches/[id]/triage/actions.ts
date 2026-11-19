@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
-import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
+import { requireLspRole, resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { getUser } from "@/lib/auth/get-session";
 import { decryptSecret } from "@/lib/crypto/encryption";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -13,6 +13,7 @@ import {
 } from "@/repositories/assessees.repository";
 import {
   getBatchById,
+  insertBatchRosterNote,
   listDriveFilesForBatch,
   updateDriveFileTriage,
 } from "@/repositories/batches.repository";
@@ -151,4 +152,69 @@ export async function reclassifyBatchContentAction(formData: FormData): Promise<
 
   revalidatePath(`/batches/${batchId}/triage`);
   revalidatePath(`/batches/${batchId}`);
+}
+
+const addRosterNoteSchema = z.object({
+  batchId: z.string().uuid("Parameter batchId tidak valid."),
+  beforeCount: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().min(0).max(10000).nullable(),
+  ),
+  afterCount: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
+    z.number().int().min(0).max(10000).nullable(),
+  ),
+  summary: z
+    .string()
+    .trim()
+    .min(10, "Ringkasan perubahan minimal 10 karakter.")
+    .max(600, "Ringkasan maksimal 600 karakter."),
+  sourceLabel: z
+    .string()
+    .trim()
+    .min(5, "Keterangan sumber minimal 5 karakter.")
+    .max(200, "Keterangan sumber maksimal 200 karakter."),
+  referenceDoc: z.string().trim().max(200).optional(),
+});
+
+export async function addBatchRosterNoteAction(formData: FormData): Promise<void> {
+  const user = await getUser();
+  if (!user) return;
+
+  const parsed = addRosterNoteSchema.safeParse({
+    batchId: String(formData.get("batchId") ?? "").trim(),
+    beforeCount: String(formData.get("beforeCount") ?? "").trim(),
+    afterCount: String(formData.get("afterCount") ?? "").trim(),
+    summary: String(formData.get("summary") ?? "").trim(),
+    sourceLabel: String(formData.get("sourceLabel") ?? "").trim(),
+    referenceDoc: String(formData.get("referenceDoc") ?? "").trim() || undefined,
+  });
+
+  if (!parsed.success) return;
+
+  const { batchId, beforeCount, afterCount, summary, sourceLabel, referenceDoc } = parsed.data;
+  const batch = await getBatchById(user.id, batchId);
+  if (!batch) return;
+
+  const authz = await requireLspRole(batch.lspId, user.id, [
+    "lsp_admin",
+    "tuk_admin",
+    "assessor",
+  ]);
+  if (!authz.allowed) return;
+
+  await insertBatchRosterNote({
+    userId: user.id,
+    lspId: batch.lspId,
+    batchId: batch.id,
+    beforeCount,
+    afterCount,
+    summary,
+    sourceKind: "manual_assessor_note",
+    sourceLabel,
+    referenceDoc: referenceDoc ?? null,
+    eventOccurredAt: new Date().toISOString(),
+  });
+
+  revalidatePath(`/batches/${batchId}/triage`);
 }

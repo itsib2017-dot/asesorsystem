@@ -87,10 +87,31 @@ export const batches = pgTable("batches", {
   assessmentDate: date("assessment_date"),
   driveFolderUrl: text("drive_folder_url"),
   kelompokSheetUrl: text("kelompok_sheet_url"),
+  activeMasterKeyFileId: uuid("active_master_key_file_id"),
+  activeMasterKeySource: text("active_master_key_source"),
+  activeMasterKeyValidationStatus: text("active_master_key_validation_status"),
+  activeMasterKeyValidationSummary: text("active_master_key_validation_summary"),
+  activeMasterKeyActivatedAt: timestamp("active_master_key_activated_at", { withTimezone: true }),
+  activeMasterKeyActivatedBy: uuid("active_master_key_activated_by"),
   createdBy: uuid("created_by").notNull(),
   version: integer("version").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const batchRosterNotes = pgTable("batch_roster_notes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  lspId: uuid("lsp_id").notNull(),
+  batchId: uuid("batch_id").notNull(),
+  beforeCount: integer("before_count"),
+  afterCount: integer("after_count"),
+  summary: text("summary").notNull(),
+  sourceKind: text("source_kind").notNull(),
+  sourceLabel: text("source_label").notNull(),
+  referenceDoc: text("reference_doc"),
+  eventOccurredAt: timestamp("event_occurred_at", { withTimezone: true }),
+  recordedBy: uuid("recorded_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const batchAssessors = pgTable(

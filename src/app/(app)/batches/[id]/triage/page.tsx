@@ -2,9 +2,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getUser } from "@/lib/auth/get-session";
 import { listAuditLogsForResource } from "@/repositories/audit.repository";
-import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
+import {
+  getBatchById,
+  listBatchRosterNotes,
+  listDriveFilesForBatch,
+} from "@/repositories/batches.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
-import { assignDriveFileAction, reclassifyBatchContentAction } from "./actions";
+import {
+  addBatchRosterNoteAction,
+  assignDriveFileAction,
+  reclassifyBatchContentAction,
+} from "./actions";
 
 export const metadata = {
   title: "Triage Berkas Drive — AsesorKompetensi",
@@ -62,10 +70,11 @@ export default async function TriagePage({
   const batch = await getBatchById(user.id, id);
   if (!batch) return notFound();
 
-  const [files, assessees, batchAuditLogs] = await Promise.all([
+  const [files, assessees, batchAuditLogs, rosterNotes] = await Promise.all([
     listDriveFilesForBatch(user.id, id),
     listAssesseesByBatch(user.id, id),
     listAuditLogsForResource(user.id, batch.lspId, "batches", id, 10),
+    listBatchRosterNotes(user.id, id),
   ]);
 
   const rosterAuditEntries = batchAuditLogs.filter(
@@ -132,21 +141,26 @@ export default async function TriagePage({
         </div>
       </div>
 
-      {rosterAuditEntries.length > 0 && (
-        <div className="glass-card rounded-2xl p-4 border border-teal-200 bg-teal-50/50 space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-teal-900">
-              Jejak Penyelarasan Daftar Asesi (Rescan Terakhir)
-            </h2>
-            <Link
-              href="/settings/audit"
-              className="text-xs text-teal-700 hover:underline font-medium"
-            >
-              Lihat Log Audit Lengkap &rarr;
-            </Link>
-          </div>
-          <ul className="space-y-1.5 text-xs text-slate-800">
-            {rosterAuditEntries.slice(0, 3).map((entry) => {
+      <div className="glass-card rounded-2xl p-4 border border-teal-200 bg-teal-50/50 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-teal-900">
+            Jejak Penyelarasan Daftar Asesi
+          </h2>
+          <Link
+            href="/settings/audit"
+            className="text-xs text-teal-700 hover:underline font-medium"
+          >
+            Lihat Log Audit Lengkap &rarr;
+          </Link>
+        </div>
+
+        {rosterAuditEntries.length === 0 && rosterNotes.length === 0 ? (
+          <p className="text-xs text-slate-600">
+            Belum ada perubahan daftar asesi otomatis maupun catatan penyelarasan manual pada batch ini.
+          </p>
+        ) : (
+          <ul className="space-y-2 text-xs text-slate-800">
+            {rosterAuditEntries.slice(0, 5).map((entry) => {
               const summary = entry.afterSummary ?? {};
               const changeText =
                 typeof summary.rosterChangeSummary === "string"
@@ -158,10 +172,18 @@ export default async function TriagePage({
                 typeof summary.afterCount === "number" ? summary.afterCount : null;
               return (
                 <li
-                  key={entry.id}
-                  className="flex flex-wrap items-baseline justify-between gap-2 bg-white/80 border border-teal-100 rounded-xl px-3 py-2"
+                  key={`audit-${entry.id}`}
+                  className="bg-white/90 border border-teal-100 rounded-xl px-3.5 py-2.5 space-y-1"
                 >
-                  <div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-900 border border-teal-200">
+                      Log Sistem (Otomatis)
+                    </span>
+                    <span className="font-mono text-[11px] text-slate-500">
+                      {entry.createdAt}
+                    </span>
+                  </div>
+                  <div className="leading-relaxed">
                     {beforeCount !== null && afterCount !== null && (
                       <span className="font-mono font-semibold text-teal-800 mr-2">
                         [{beforeCount} &rarr; {afterCount} asesi]
@@ -169,15 +191,120 @@ export default async function TriagePage({
                     )}
                     <span>{changeText}</span>
                   </div>
-                  <span className="font-mono text-[11px] text-slate-500">
-                    {entry.createdAt}
-                  </span>
                 </li>
               );
             })}
+
+            {rosterNotes.map((note) => (
+              <li
+                key={`note-${note.id}`}
+                className="bg-amber-50/90 border border-amber-200 rounded-xl px-3.5 py-2.5 space-y-1"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-900 border border-amber-300">
+                    Catatan Non-Log Sistem
+                  </span>
+                  <span className="font-mono text-[11px] text-slate-500">
+                    {note.eventOccurredAt ?? note.createdAt}
+                  </span>
+                </div>
+                <div className="leading-relaxed text-slate-900">
+                  {note.beforeCount !== null && note.afterCount !== null && (
+                    <span className="font-mono font-semibold text-amber-900 mr-2">
+                      [{note.beforeCount} &rarr; {note.afterCount} asesi]
+                    </span>
+                  )}
+                  <span>{note.summary}</span>
+                </div>
+                <div className="text-[11px] text-amber-900 flex flex-wrap gap-x-3 gap-y-0.5">
+                  <span>
+                    <strong>Sumber:</strong> {note.sourceLabel}
+                  </span>
+                  {note.referenceDoc && (
+                    <span className="font-mono text-slate-600">
+                      Ref: {note.referenceDoc}
+                    </span>
+                  )}
+                </div>
+              </li>
+            ))}
           </ul>
-        </div>
-      )}
+        )}
+
+        <details className="pt-1">
+          <summary className="text-[11px] font-medium text-teal-800 hover:underline cursor-pointer">
+            + Catat Penyelarasan Roster di Luar Jalur Scan (Manual / Non-Scan)
+          </summary>
+          <form
+            action={addBatchRosterNoteAction}
+            className="mt-2 p-3 rounded-xl bg-white border border-teal-200 grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-xs"
+          >
+            <input type="hidden" name="batchId" value={id} />
+            <div>
+              <label htmlFor="rosterNoteBefore" className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                Jumlah Sebelum
+              </label>
+              <input
+                id="rosterNoteBefore"
+                name="beforeCount"
+                type="number"
+                min={0}
+                placeholder="Mis. 26"
+                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300"
+              />
+            </div>
+            <div>
+              <label htmlFor="rosterNoteAfter" className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                Jumlah Sesudah
+              </label>
+              <input
+                id="rosterNoteAfter"
+                name="afterCount"
+                type="number"
+                min={0}
+                placeholder="Mis. 23"
+                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label htmlFor="rosterNoteSource" className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                Sumber Keterangan (Wajib Jujur)
+              </label>
+              <input
+                id="rosterNoteSource"
+                name="sourceLabel"
+                type="text"
+                required
+                minLength={5}
+                placeholder="Mis. Catatan manual asesor / penyesuaian TUK tanggal ..."
+                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300"
+              />
+            </div>
+            <div className="sm:col-span-3">
+              <label htmlFor="rosterNoteSummary" className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                Penjelasan Perubahan Roster
+              </label>
+              <input
+                id="rosterNoteSummary"
+                name="summary"
+                type="text"
+                required
+                minLength={10}
+                placeholder="Jelaskan mengapa jumlah/daftar asesi berubah (tanpa menyalin data sensitif KTP/NIK)..."
+                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300"
+              />
+            </div>
+            <div className="flex items-end">
+              <button
+                type="submit"
+                className="w-full px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-medium cursor-pointer"
+              >
+                Simpan Catatan
+              </button>
+            </div>
+          </form>
+        </details>
+      </div>
 
       {/* Filter & Search Bar */}
       <form
@@ -276,6 +403,21 @@ export default async function TriagePage({
                     <td className="py-3 px-4 max-w-md">
                       <div className="font-medium text-slate-900 break-words flex flex-wrap items-center gap-1.5">
                         <span>{f.fileName}</span>
+                        {f.docType.toLowerCase() === "06b" && (
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                              batch.activeMasterKeyFileId === f.id &&
+                              batch.activeMasterKeyValidationStatus === "valid"
+                                ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                : "bg-amber-100 text-amber-900 border-amber-200"
+                            }`}
+                          >
+                            {batch.activeMasterKeyFileId === f.id &&
+                            batch.activeMasterKeyValidationStatus === "valid"
+                              ? "Kunci 06B Aktif"
+                              : "Tidak Aktif (Blanko/Kandidat)"}
+                          </span>
+                        )}
                         {f.triageStatus === "unextractable" && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-100 text-rose-800 border border-rose-200">
                             Tidak Bisa Diproses

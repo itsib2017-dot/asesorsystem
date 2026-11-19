@@ -51,8 +51,10 @@ import {
 import {
   EXTRACTABLE_TEXT_EXT_RE,
   extractTextFromBuffer,
+  isOleEncryptedBuffer,
   unpackSafeZipEntries,
 } from "@/services/extract";
+import { validateMasterKey06bContent } from "@/lib/written/master-key";
 import {
   downloadPublicDriveFileBuffer,
   enrichFilesByContent,
@@ -260,6 +262,7 @@ async function expandZipArchivesForScan(
         let cls = item.cls;
         let extractedText: string | null = null;
         let extractionMethod: string | null = null;
+        let isOleEncryptedEntry = false;
 
         const shouldExtractEntryText =
           EXTRACTABLE_TEXT_EXT_RE.test(entry.fileName) &&
@@ -267,26 +270,30 @@ async function expandZipArchivesForScan(
           cls.docType !== "template_muk";
 
         if (shouldExtractEntryText) {
-          try {
-            const parsed = await extractTextFromBuffer({
-              buffer: entry.buffer,
-              fileName: entry.fileName,
-              mimeType: entry.mimeType,
-            });
-            if (parsed.text.trim()) {
-              extractedText = parsed.text.trim();
-              extractionMethod = parsed.extractionMethod;
-              const byText = classifyDocumentTextContent(
-                extractedText,
-                entry.fileName,
-                parentPath,
-              );
-              if (byText && cls.docType === "unknown") {
-                cls = byText;
+          if (entry.fileName.toLowerCase().endsWith(".docx") && isOleEncryptedBuffer(entry.buffer)) {
+            isOleEncryptedEntry = true;
+          } else {
+            try {
+              const parsed = await extractTextFromBuffer({
+                buffer: entry.buffer,
+                fileName: entry.fileName,
+                mimeType: entry.mimeType,
+              });
+              if (parsed.text.trim()) {
+                extractedText = parsed.text.trim();
+                extractionMethod = parsed.extractionMethod;
+                const byText = classifyDocumentTextContent(
+                  extractedText,
+                  entry.fileName,
+                  parentPath,
+                );
+                if (byText && cls.docType === "unknown") {
+                  cls = byText;
+                }
               }
+            } catch {
+              // Keep filename-based classification when ZIP member is encrypted/image PDF
             }
-          } catch {
-            // Keep filename-based classification when ZIP member is encrypted/image PDF
           }
         }
 
@@ -297,12 +304,22 @@ async function expandZipArchivesForScan(
               ? "not_needed"
               : undefined;
 
-        const entryReason =
-          isMasterMukArchive && cls.docType !== "template_muk"
-            ? BATCH_MASTER_INSTRUMENT_TYPES.has(cls.docType)
+        let entryReason = cls.reason;
+        if (isMasterMukArchive && cls.docType !== "template_muk") {
+          if (cls.docType === "06b") {
+            if (isOleEncryptedEntry) {
+              entryReason = `Blanko/template 06B terenkripsi dari arsip MUK ${file.fileName} — tidak diaktifkan otomatis sebagai kunci master`;
+            } else if (!validateMasterKey06bContent(extractedText).valid) {
+              entryReason = `Blanko/template 06B (belum berisi jawaban kunci) dari arsip MUK ${file.fileName} — tidak diaktifkan otomatis sebagai kunci master`;
+            } else {
+              entryReason = `Kandidat 06B dari arsip MUK ${file.fileName} — tidak diaktifkan otomatis tanpa verifikasi asesor`;
+            }
+          } else {
+            entryReason = BATCH_MASTER_INSTRUMENT_TYPES.has(cls.docType)
               ? `Instrumen master batch (${cls.docType}) dari arsip MUK ${file.fileName}`
-              : `Blanko template (${cls.docType}) dari arsip MUK master ${file.fileName}`
-            : cls.reason;
+              : `Blanko template (${cls.docType}) dari arsip MUK master ${file.fileName}`;
+          }
+        }
 
         output.push({
           driveFileId: `${file.driveFileId}::${entry.entryPath}`,
@@ -1004,15 +1021,26 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
     };
 
   const files = await listDriveFilesForBatch(userId, batch.id);
+  const kunciDocTypeLower = mapping.kunci.toLowerCase();
   const relevantDocTypes = new Set([
     mapping.soal.toLowerCase(),
-    mapping.kunci.toLowerCase(),
+    kunciDocTypeLower,
     mapping.jawaban.toLowerCase(),
   ]);
   const candidateFiles = files
-    .filter(
-      (f) => (!f.assesseeId || f.assesseeId === assessee.id) && relevantDocTypes.has(f.docType.toLowerCase()),
-    )
+    .filter((f) => {
+      const dtLower = f.docType.toLowerCase();
+      if (!relevantDocTypes.has(dtLower)) return false;
+      if (f.assesseeId && f.assesseeId !== assessee.id) return false;
+      if (dtLower === kunciDocTypeLower) {
+        return (
+          Boolean(batch.activeMasterKeyFileId) &&
+          f.id === batch.activeMasterKeyFileId &&
+          batch.activeMasterKeyValidationStatus === "valid"
+        );
+      }
+      return true;
+    })
     .sort(compareDriveFileFreshnessDesc);
   const needsDriveExtraction =
     (!job.payload.masterKeyText || !job.payload.studentAnswerText) &&
@@ -1041,6 +1069,13 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
   const resolved = resolveWrittenTestFiles(byDocType, mapping);
   const masterKeyText = String(job.payload.masterKeyText ?? resolved.kunciText);
   const studentAnswerText = String(job.payload.studentAnswerText ?? resolved.jawabanText);
+
+  const keyValidation = validateMasterKey06bContent(masterKeyText);
+  if (!keyValidation.valid) {
+    throw new Error(
+      `INVALID_MASTER_KEY_06B: ${keyValidation.summary} Aktifkan kunci 06B kerja yang valid di halaman Detail Batch terlebih dahulu.`,
+    );
+  }
 
   const llmConfig = await requireLlmConfig(userId);
   const graded = await runWrittenGradingPipeline({

@@ -17,6 +17,7 @@ import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.rep
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { getLatestJobForBatch } from "@/repositories/jobs.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
+import { resolveBatchActiveMasterKey } from "@/lib/written/master-key";
 import { resolveSchemeDocColumns } from "@/lib/forms/assessee-forms";
 import { pickLatestDriveFile } from "@/services/drive-revisions";
 import { enqueueJob } from "@/worker/queue";
@@ -107,7 +108,7 @@ export default async function BatchDetailPage({
 
   const unmatchedCount = files.filter((f) => f.triageStatus === "unmatched").length;
   const unextractableCount = files.filter((f) => f.triageStatus === "unextractable").length;
-  const active06bFile = files.find((f) => f.docType.toLowerCase() === "06b") ?? null;
+  const resolvedMasterKey = resolveBatchActiveMasterKey(batch, files);
 
   return (
     <div className="space-y-6">
@@ -244,8 +245,26 @@ export default async function BatchDetailPage({
       {/* Batch-level 06B Master Answer Key Upload */}
       <BatchKeyUploadPanel
         batchId={batch.id}
-        activeKeyFileName={active06bFile?.fileName ?? null}
-        activeKeySource={active06bFile?.drivePath ?? null}
+        activeKeyFileName={resolvedMasterKey.activeFile?.fileName ?? null}
+        activeKeySourceLabel={resolvedMasterKey.activeOriginLabel}
+        activeKeyDrivePath={resolvedMasterKey.activeFile?.drivePath ?? null}
+        activeKeyValidationSummary={
+          batch.activeMasterKeyValidationSummary ?? resolvedMasterKey.validation?.summary ?? null
+        }
+        activeKeyActivatedAt={resolvedMasterKey.activatedAt}
+        isReadyForGrading={resolvedMasterKey.isReadyForGrading}
+        blockingWarning={resolvedMasterKey.blockingWarning}
+        candidates={resolvedMasterKey.candidates.map((c) => ({
+          id: c.id,
+          fileName: c.fileName,
+          drivePath: c.drivePath,
+          originLabel: c.originLabel,
+          isActive: c.isActive,
+          isEncryptedOrUnextracted: c.isEncryptedOrUnextracted,
+          canActivate: c.canActivate,
+          statusLabel: c.statusLabel,
+          reasonSummary: c.reasonSummary,
+        }))}
       />
 
       {/* Completeness Matrix */}

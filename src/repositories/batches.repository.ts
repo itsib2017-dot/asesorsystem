@@ -1,7 +1,38 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { isUuid, runRepositoryDualPath } from "@/db";
-import { assessees, batches, batchAssessors, driveFiles } from "@/db/schema";
+import { assessees, batchAssessors, batchRosterNotes, batches, driveFiles } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+
+export type MasterKeySource =
+  | "assessor_upload"
+  | "manual_text"
+  | "drive_file"
+  | "archive_extract";
+
+export type MasterKeyValidationStatus =
+  | "valid"
+  | "empty_or_blanko"
+  | "encrypted_unreadable";
+
+export type BatchRosterNoteSourceKind =
+  | "developer_remediation"
+  | "manual_assessor_note"
+  | "system_migration";
+
+export interface BatchRosterNoteRecord {
+  id: string;
+  lspId: string;
+  batchId: string;
+  beforeCount: number | null;
+  afterCount: number | null;
+  summary: string;
+  sourceKind: BatchRosterNoteSourceKind;
+  sourceLabel: string;
+  referenceDoc: string | null;
+  eventOccurredAt: string | null;
+  recordedBy: string | null;
+  createdAt: string;
+}
 
 export interface BatchSummary {
   id: string;
@@ -14,6 +45,12 @@ export interface BatchSummary {
   assessmentDate: string | null;
   driveFolderUrl: string | null;
   kelompokSheetUrl: string | null;
+  activeMasterKeyFileId: string | null;
+  activeMasterKeySource: MasterKeySource | null;
+  activeMasterKeyValidationStatus: MasterKeyValidationStatus | null;
+  activeMasterKeyValidationSummary: string | null;
+  activeMasterKeyActivatedAt: string | null;
+  activeMasterKeyActivatedBy: string | null;
   createdBy: string;
   createdAt: string;
 }
@@ -58,6 +95,13 @@ function mapDrizzleBatchRow(r: typeof batches.$inferSelect): BatchSummary {
     assessmentDate: r.assessmentDate,
     driveFolderUrl: r.driveFolderUrl,
     kelompokSheetUrl: r.kelompokSheetUrl,
+    activeMasterKeyFileId: r.activeMasterKeyFileId ?? null,
+    activeMasterKeySource: (r.activeMasterKeySource as MasterKeySource | null) ?? null,
+    activeMasterKeyValidationStatus:
+      (r.activeMasterKeyValidationStatus as MasterKeyValidationStatus | null) ?? null,
+    activeMasterKeyValidationSummary: r.activeMasterKeyValidationSummary ?? null,
+    activeMasterKeyActivatedAt: r.activeMasterKeyActivatedAt?.toISOString() ?? null,
+    activeMasterKeyActivatedBy: r.activeMasterKeyActivatedBy ?? null,
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
   };
@@ -75,6 +119,14 @@ function mapSupabaseBatchRow(r: Record<string, unknown>): BatchSummary {
     assessmentDate: (r.assessment_date as string | null) ?? null,
     driveFolderUrl: (r.drive_folder_url as string | null) ?? null,
     kelompokSheetUrl: (r.kelompok_sheet_url as string | null) ?? null,
+    activeMasterKeyFileId: (r.active_master_key_file_id as string | null) ?? null,
+    activeMasterKeySource: (r.active_master_key_source as MasterKeySource | null) ?? null,
+    activeMasterKeyValidationStatus:
+      (r.active_master_key_validation_status as MasterKeyValidationStatus | null) ?? null,
+    activeMasterKeyValidationSummary:
+      (r.active_master_key_validation_summary as string | null) ?? null,
+    activeMasterKeyActivatedAt: (r.active_master_key_activated_at as string | null) ?? null,
+    activeMasterKeyActivatedBy: (r.active_master_key_activated_by as string | null) ?? null,
     createdBy: r.created_by as string,
     createdAt: r.created_at as string,
   };
@@ -663,6 +715,298 @@ export async function listBatchResourceCountsForUser(
       }
 
       return counts;
+    },
+  });
+}
+
+export async function getDriveFileByDriveFileId(
+  userId: string,
+  batchId: string,
+  driveFileId: string,
+): Promise<DriveFileRecord | null> {
+  const trimmedDriveFileId = driveFileId.trim();
+  if (!isUuid(batchId) || !trimmedDriveFileId) return null;
+  return runRepositoryDualPath({
+    userId,
+    label: "BatchesRepository.getDriveFileByDriveFileId",
+    drizzle: async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(driveFiles)
+        .where(and(eq(driveFiles.batchId, batchId), eq(driveFiles.driveFileId, trimmedDriveFileId)))
+        .limit(1);
+      return row ? mapDrizzleDriveFileRow(row) : null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("drive_files")
+        .select("*")
+        .eq("batch_id", batchId)
+        .eq("drive_file_id", trimmedDriveFileId)
+        .maybeSingle();
+      return data ? mapSupabaseDriveFileRow(data as Record<string, unknown>) : null;
+    },
+  });
+}
+
+/**
+ * Sets a verified `drive_files` row as the explicit active FR.IA.06B master key for a batch
+ * after verifying file ownership within the batch.
+ */
+export async function setBatchActiveMasterKey(params: {
+  userId: string;
+  batchId: string;
+  fileId: string;
+  source: MasterKeySource;
+  validationStatus: MasterKeyValidationStatus;
+  validationSummary: string;
+  activatedAt?: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isUuid(params.batchId) || !isUuid(params.fileId)) {
+    return { ok: false, error: "Parameter ID batch atau berkas kunci 06B tidak valid." };
+  }
+  const activatedIso =
+    params.activatedAt && !Number.isNaN(Date.parse(params.activatedAt))
+      ? new Date(params.activatedAt).toISOString()
+      : new Date().toISOString();
+
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "BatchesRepository.setBatchActiveMasterKey",
+    drizzle: async (tx) => {
+      const [targetFile] = await tx
+        .select({ id: driveFiles.id })
+        .from(driveFiles)
+        .where(and(eq(driveFiles.id, params.fileId), eq(driveFiles.batchId, params.batchId)))
+        .limit(1);
+      if (!targetFile) {
+        return { ok: false, error: "Berkas kunci 06B tidak ditemukan pada batch ini." } as const;
+      }
+
+      await tx
+        .update(batches)
+        .set({
+          activeMasterKeyFileId: params.fileId,
+          activeMasterKeySource: params.source,
+          activeMasterKeyValidationStatus: params.validationStatus,
+          activeMasterKeyValidationSummary: params.validationSummary,
+          activeMasterKeyActivatedAt: new Date(activatedIso),
+          activeMasterKeyActivatedBy: params.userId,
+        })
+        .where(eq(batches.id, params.batchId));
+      return { ok: true } as const;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data: targetFile } = await supabase
+        .from("drive_files")
+        .select("id")
+        .eq("id", params.fileId)
+        .eq("batch_id", params.batchId)
+        .maybeSingle();
+      if (!targetFile) {
+        return { ok: false, error: "Berkas kunci 06B tidak ditemukan pada batch ini." } as const;
+      }
+
+      const { error } = await supabase
+        .from("batches")
+        .update({
+          active_master_key_file_id: params.fileId,
+          active_master_key_source: params.source,
+          active_master_key_validation_status: params.validationStatus,
+          active_master_key_validation_summary: params.validationSummary,
+          active_master_key_activated_at: activatedIso,
+          active_master_key_activated_by: params.userId,
+        })
+        .eq("id", params.batchId);
+
+      if (error) {
+        return { ok: false, error: error.message } as const;
+      }
+      return { ok: true } as const;
+    },
+  });
+}
+
+/**
+ * Deactivates the active 06B master key pointer on the batch without deleting any drive_files rows.
+ */
+export async function clearBatchActiveMasterKey(params: {
+  userId: string;
+  batchId: string;
+}): Promise<void> {
+  if (!isUuid(params.batchId)) return;
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "BatchesRepository.clearBatchActiveMasterKey",
+    drizzle: async (tx) => {
+      await tx
+        .update(batches)
+        .set({
+          activeMasterKeyFileId: null,
+          activeMasterKeySource: null,
+          activeMasterKeyValidationStatus: null,
+          activeMasterKeyValidationSummary: null,
+          activeMasterKeyActivatedAt: null,
+          activeMasterKeyActivatedBy: null,
+        })
+        .where(eq(batches.id, params.batchId));
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase
+        .from("batches")
+        .update({
+          active_master_key_file_id: null,
+          active_master_key_source: null,
+          active_master_key_validation_status: null,
+          active_master_key_validation_summary: null,
+          active_master_key_activated_at: null,
+          active_master_key_activated_by: null,
+        })
+        .eq("id", params.batchId);
+    },
+  });
+}
+
+function mapDrizzleRosterNoteRow(
+  r: typeof batchRosterNotes.$inferSelect,
+): BatchRosterNoteRecord {
+  return {
+    id: r.id,
+    lspId: r.lspId,
+    batchId: r.batchId,
+    beforeCount: r.beforeCount ?? null,
+    afterCount: r.afterCount ?? null,
+    summary: r.summary,
+    sourceKind: r.sourceKind as BatchRosterNoteSourceKind,
+    sourceLabel: r.sourceLabel,
+    referenceDoc: r.referenceDoc ?? null,
+    eventOccurredAt: r.eventOccurredAt?.toISOString() ?? null,
+    recordedBy: r.recordedBy ?? null,
+    createdAt: r.createdAt.toISOString(),
+  };
+}
+
+function mapSupabaseRosterNoteRow(r: Record<string, unknown>): BatchRosterNoteRecord {
+  return {
+    id: String(r.id),
+    lspId: String(r.lsp_id),
+    batchId: String(r.batch_id),
+    beforeCount: r.before_count != null ? Number(r.before_count) : null,
+    afterCount: r.after_count != null ? Number(r.after_count) : null,
+    summary: String(r.summary),
+    sourceKind: r.source_kind as BatchRosterNoteSourceKind,
+    sourceLabel: String(r.source_label),
+    referenceDoc: (r.reference_doc as string | null) ?? null,
+    eventOccurredAt: (r.event_occurred_at as string | null) ?? null,
+    recordedBy: (r.recorded_by as string | null) ?? null,
+    createdAt: String(r.created_at),
+  };
+}
+
+export async function listBatchRosterNotes(
+  userId: string,
+  batchId: string,
+): Promise<BatchRosterNoteRecord[]> {
+  if (!isUuid(batchId)) return [];
+  return runRepositoryDualPath({
+    userId,
+    label: "BatchesRepository.listBatchRosterNotes",
+    drizzle: async (tx) => {
+      const rows = await tx
+        .select()
+        .from(batchRosterNotes)
+        .where(eq(batchRosterNotes.batchId, batchId))
+        .orderBy(
+          desc(sql`coalesce(${batchRosterNotes.eventOccurredAt}, ${batchRosterNotes.createdAt})`),
+          desc(batchRosterNotes.createdAt),
+        );
+      return rows.map(mapDrizzleRosterNoteRow);
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("batch_roster_notes")
+        .select("*")
+        .eq("batch_id", batchId)
+        .order("event_occurred_at", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false });
+      return (data ?? []).map((r) => mapSupabaseRosterNoteRow(r as Record<string, unknown>));
+    },
+  });
+}
+
+export async function insertBatchRosterNote(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  beforeCount?: number | null;
+  afterCount?: number | null;
+  summary: string;
+  sourceKind: BatchRosterNoteSourceKind;
+  sourceLabel: string;
+  referenceDoc?: string | null;
+  eventOccurredAt?: string | null;
+}): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  if (!isUuid(params.batchId) || !isUuid(params.lspId)) {
+    return { ok: false, error: "ID batch atau LSP tidak valid." };
+  }
+  const eventIso =
+    params.eventOccurredAt && !Number.isNaN(Date.parse(params.eventOccurredAt))
+      ? new Date(params.eventOccurredAt).toISOString()
+      : null;
+
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "BatchesRepository.insertBatchRosterNote",
+    drizzle: async (tx) => {
+      const [row] = await tx
+        .insert(batchRosterNotes)
+        .values({
+          lspId: params.lspId,
+          batchId: params.batchId,
+          beforeCount: params.beforeCount ?? null,
+          afterCount: params.afterCount ?? null,
+          summary: params.summary.trim(),
+          sourceKind: params.sourceKind,
+          sourceLabel: params.sourceLabel.trim(),
+          referenceDoc: params.referenceDoc?.trim() || null,
+          eventOccurredAt: eventIso ? new Date(eventIso) : null,
+          recordedBy: params.userId,
+        })
+        .returning({ id: batchRosterNotes.id });
+      if (!row) {
+        return { ok: false, error: "Gagal menyimpan catatan penyelarasan roster." } as const;
+      }
+      return { ok: true, id: row.id } as const;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data, error } = await supabase
+        .from("batch_roster_notes")
+        .insert({
+          lsp_id: params.lspId,
+          batch_id: params.batchId,
+          before_count: params.beforeCount ?? null,
+          after_count: params.afterCount ?? null,
+          summary: params.summary.trim(),
+          source_kind: params.sourceKind,
+          source_label: params.sourceLabel.trim(),
+          reference_doc: params.referenceDoc?.trim() || null,
+          event_occurred_at: eventIso,
+          recorded_by: params.userId,
+        })
+        .select("id")
+        .single();
+      if (error || !data) {
+        return {
+          ok: false,
+          error: error?.message ?? "Gagal menyimpan catatan penyelarasan roster.",
+        } as const;
+      }
+      return { ok: true, id: String(data.id) } as const;
     },
   });
 }

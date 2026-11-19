@@ -4,6 +4,7 @@ import {
   WRITTEN_GRADING_PROMPT_META,
 } from "@/ai/prompts/written-test-grading.v1";
 import { generateStructured, type RuntimeLlmConfig } from "@/ai/llm";
+import { validateMasterKey06bContent } from "@/lib/written/master-key";
 
 export interface FormSuffixConfig {
   soal: string;
@@ -40,6 +41,15 @@ export async function runWrittenGradingPipeline(params: {
       ok: false as const,
       code: "UNPROCESSABLE" as const,
       error: "Kunci jawaban atau lembar jawaban asesi masih kosong.",
+    };
+  }
+
+  const keyValidation = validateMasterKey06bContent(params.masterKeyText);
+  if (!keyValidation.valid) {
+    return {
+      ok: false as const,
+      code: "UNPROCESSABLE" as const,
+      error: `Kunci jawaban 06B ditolak: ${keyValidation.summary}`,
     };
   }
 

@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   updateDriveFileExtraction: vi.fn(),
   updateDriveFileClassification: vi.fn(),
   upsertDriveFilesForBatch: vi.fn(),
+  getDriveFileByDriveFileId: vi.fn(),
+  setBatchActiveMasterKey: vi.fn(),
+  clearBatchActiveMasterKey: vi.fn(),
   getBatchById: vi.fn(),
   getDriveFileById: vi.fn(),
   listDriveFilesForBatch: vi.fn(),
@@ -22,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   getSupabaseServerClient: vi.fn(),
   writeAuditLog: vi.fn(),
   listUserMemberships: vi.fn(),
+  listSchemes: vi.fn(),
 }));
 
 vi.mock("@/repositories/jobs.repository", () => ({
@@ -33,7 +37,10 @@ vi.mock("@/repositories/jobs.repository", () => ({
 vi.mock("@/repositories/batches.repository", () => ({
   getBatchById: mocks.getBatchById,
   getDriveFileById: mocks.getDriveFileById,
+  getDriveFileByDriveFileId: mocks.getDriveFileByDriveFileId,
   listDriveFilesForBatch: mocks.listDriveFilesForBatch,
+  setBatchActiveMasterKey: mocks.setBatchActiveMasterKey,
+  clearBatchActiveMasterKey: mocks.clearBatchActiveMasterKey,
   updateDriveFileExtraction: mocks.updateDriveFileExtraction,
   updateDriveFileClassification: mocks.updateDriveFileClassification,
   upsertDriveFilesForBatch: mocks.upsertDriveFilesForBatch,
@@ -81,6 +88,10 @@ vi.mock("@/repositories/auth.repository", () => ({
   listUserMemberships: mocks.listUserMemberships,
 }));
 
+vi.mock("@/repositories/schemes.repository", () => ({
+  listSchemes: mocks.listSchemes,
+}));
+
 import JSZip from "jszip";
 import { runWorkerJob } from "../index";
 import { enqueueJob, executeJob } from "../queue";
@@ -94,6 +105,7 @@ describe("Worker dispatcher and queue runner", () => {
     mocks.getSupabaseServerClient.mockResolvedValue({});
     mocks.writeAuditLog.mockResolvedValue("corr-1");
     mocks.listUserMemberships.mockResolvedValue([]);
+    mocks.listSchemes.mockResolvedValue([]);
     mocks.updateAssesseeDisplayName.mockResolvedValue(undefined);
     mocks.upsertAssesseesForBatch.mockResolvedValue([]);
     mocks.upsertDriveFilesForBatch.mockResolvedValue(0);
@@ -661,5 +673,123 @@ describe("Worker dispatcher and queue runner", () => {
     expect(unknownPpt).toMatchObject({ assesseeId: null, triageStatus: "unmatched" });
     expect(encZip).toMatchObject({ triageStatus: "unextractable" });
     expect(encZip?.triageReason).toContain("terenkripsi");
+  });
+
+  it("never auto-activates 06B blanko/encrypted extracted from master MUK archive on drive_scan (R11 Cacat 1)", async () => {
+    const batchId = "44444444-4444-4344-8344-444444444444";
+    mocks.getBatchById.mockResolvedValue({
+      id: batchId,
+      lspId: "lsp-1",
+      schemeId: "scheme-1",
+      name: "Batch MUK Blanko",
+      driveFolderUrl: "https://drive.google.com/drive/folders/mukrootfolder",
+    });
+    mocks.listDriveFilesForBatch.mockResolvedValue([]);
+    mocks.listAssesseesByBatch.mockResolvedValue([]);
+    mocks.upsertDriveFilesForBatch.mockImplementation(async (args: { files: unknown[] }) => args.files.length);
+
+    const mukZip = new JSZip();
+    mukZip.file("FR.MAPA.01.docx", "template mapa 01");
+    mukZip.file("FR.VA.docx", "template validasi");
+    mukZip.file("FR.AK.01.docx", "template ak01");
+    mukZip.file(
+      "FR.IA.06B. LEMBAR KUNCI JAWABAN PERTANYAAN TERTULIS ESAI.docx",
+      Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00, 0x00]),
+    );
+    const mukZipBuffer = await mukZip.generateAsync({ type: "nodebuffer" });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const fid = new URL(String(input)).searchParams.get("id");
+      if (fid === "mukrootfolder") {
+        return new Response(
+          `<div class="flip-entry" id="entry-mukzip99999"><a href="https://drive.google.com/file/d/mukzip99999/view"><div class="flip-entry-title">AK3U MUK.zip</div></a></div>`,
+          { status: 200 },
+        );
+      }
+      if (fid === "mukzip99999") {
+        return new Response(new Uint8Array(mukZipBuffer), {
+          status: 200,
+          headers: { "content-type": "application/zip" },
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const res = await runWorkerJob({
+      id: "job-muk-scan",
+      type: "drive_scan",
+      userId: "user-1",
+      payload: { batchId },
+    });
+
+    expect(res.status).toBe("done");
+    expect(mocks.setBatchActiveMasterKey).not.toHaveBeenCalled();
+
+    const savedPayload = mocks.upsertDriveFilesForBatch.mock.calls[0]?.[0] as {
+      files: Array<{ docType: string; triageStatus?: string; triageReason?: string | null }>;
+    };
+    const extracted06b = savedPayload.files.find((f) => f.docType === "06b");
+    expect(extracted06b).toMatchObject({
+      docType: "06b",
+      triageStatus: "not_needed",
+    });
+    expect(extracted06b?.triageReason).toContain("tidak diaktifkan otomatis sebagai kunci master");
+  });
+
+  it("blocks written_grading when activeMasterKeyFileId is null or key text is a blanko (R11 Cacat 1)", async () => {
+    mocks.getAssesseeById.mockResolvedValue({
+      id: "as-1",
+      lspId: "lsp-1",
+      batchId: "b-1",
+      displayName: "Budi Santoso",
+      pseudonym: "ASESI-001",
+    });
+    mocks.getBatchById.mockResolvedValue({
+      id: "b-1",
+      lspId: "lsp-1",
+      schemeId: "scheme-1",
+      name: "Demo Audit R4",
+      activeMasterKeyFileId: null,
+      activeMasterKeyValidationStatus: null,
+    });
+    mocks.listDriveFilesForBatch.mockResolvedValue([
+      {
+        id: "blanko-06b-id",
+        assesseeId: null,
+        docType: "06b",
+        fileName: "FR.IA.06B. LEMBAR KUNCI.docx",
+        extractedText: null,
+      },
+      {
+        id: "student-06c-id",
+        assesseeId: "as-1",
+        docType: "06c",
+        fileName: "FR.IA.06C_Budi.docx",
+        extractedText: "1. Bahaya adalah sumber potensi bahaya kerja di lapangan.",
+      },
+    ]);
+
+    await expect(
+      runWorkerJob({
+        id: "job-wg-blocked-no-active",
+        type: "written_grading",
+        userId: "user-1",
+        payload: { batchId: "b-1", assesseeId: "as-1" },
+      }),
+    ).rejects.toThrow("INVALID_MASTER_KEY_06B");
+
+    await expect(
+      runWorkerJob({
+        id: "job-wg-blocked-blanko-text",
+        type: "written_grading",
+        userId: "user-1",
+        payload: {
+          batchId: "b-1",
+          assesseeId: "as-1",
+          masterKeyText:
+            "FR.IA.06B.\nLEMBAR KUNCI JAWABAN PERTANYAAN TERTULIS ESAI\nSkema Sertifikasi\nJawaban:\n1.\n2.\nUmpan balik untuk Asesi :",
+        },
+      }),
+    ).rejects.toThrow("INVALID_MASTER_KEY_06B");
   });
 });

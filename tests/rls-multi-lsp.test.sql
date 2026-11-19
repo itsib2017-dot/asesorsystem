@@ -132,6 +132,9 @@ BEGIN
     (v_assessor_a, 'anthropic', 'claude-3-7-sonnet-20250219', 'iv:tag:cipher_a'),
     (v_assessor_b, 'anthropic', 'claude-3-7-sonnet-20250219', 'iv:tag:cipher_b');
 
+  INSERT INTO public.batch_roster_notes (lsp_id, batch_id, before_count, after_count, summary, source_kind, source_label) VALUES
+    (v_lsp_b, v_batch_b1, 10, 9, 'Seeded roster reconciliation note for LSP-B isolation verification', 'manual_assessor_note', 'Verification test seed');
+
 END $test$;
 
 -- 2. RUN ASSERTIONS AS DIFFERENT ROLES
@@ -421,6 +424,39 @@ BEGIN
     INSERT INTO test_results VALUES ('RLS-37', 'assessor', 'LSP-A', 'drive_files (unextractable status)', 'ALLOW', 'ALLOWED', 'PASS');
   EXCEPTION WHEN OTHERS THEN
     INSERT INTO test_results VALUES ('RLS-37', 'assessor', 'LSP-A', 'drive_files (unextractable status)', 'ALLOW', SQLERRM, 'FAIL');
+  END;
+END $mut$;
+
+-- T5.6: Cross-LSP Read batch_roster_notes (Assessor A on LSP-B) -> MUST return empty (0)
+SELECT set_config('request.jwt.claims', '{"sub":"10000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+INSERT INTO test_results (test_id, role_tested, target_lsp, resource, expected, actual, status)
+SELECT 'RLS-38', 'assessor', 'LSP-B', 'batch_roster_notes', '0', count(*)::text,
+       CASE WHEN count(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM public.batch_roster_notes WHERE lsp_id = 'b0000000-0000-0000-0000-000000000002';
+
+-- T5.7: Assessor A can insert & read batch_roster_notes on assigned Batch A1 -> ALLOW
+DO $mut$
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"sub":"10000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+  BEGIN
+    INSERT INTO public.batch_roster_notes (lsp_id, batch_id, before_count, after_count, summary, source_kind, source_label, recorded_by)
+    VALUES ('a0000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000001', 12, 11, 'Manual roster alignment note by assigned assessor', 'manual_assessor_note', 'Catatan manual asesor uji', '10000000-0000-0000-0000-000000000001');
+    INSERT INTO test_results VALUES ('RLS-39', 'assessor', 'LSP-A', 'batch_roster_notes (assigned insert)', 'ALLOW', 'ALLOWED', 'PASS');
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO test_results VALUES ('RLS-39', 'assessor', 'LSP-A', 'batch_roster_notes (assigned insert)', 'ALLOW', SQLERRM, 'FAIL');
+  END;
+END $mut$;
+
+-- T5.8: Assessor A cannot insert batch_roster_notes on unassigned Batch A2 -> REJECT
+DO $mut$
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"sub":"10000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+  BEGIN
+    INSERT INTO public.batch_roster_notes (lsp_id, batch_id, before_count, after_count, summary, source_kind, source_label, recorded_by)
+    VALUES ('a0000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000002', 12, 11, 'Unauthorized roster note on unassigned batch', 'manual_assessor_note', 'Attempted bypass', '10000000-0000-0000-0000-000000000001');
+    INSERT INTO test_results VALUES ('RLS-40', 'assessor', 'LSP-A', 'batch_roster_notes (unassigned insert)', 'REJECT', 'ALLOWED', 'FAIL');
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO test_results VALUES ('RLS-40', 'assessor', 'LSP-A', 'batch_roster_notes (unassigned insert)', 'REJECT', 'REJECTED', 'PASS');
   END;
 END $mut$;
 

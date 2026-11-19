@@ -3,11 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
+import { requireLspRole } from "@/lib/auth/get-role";
 import { getUser } from "@/lib/auth/get-session";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
   parseMasterKey06bFile,
   persistBatchMasterKey06b,
+  resolveBatchActiveMasterKey,
+  validateMasterKey06bContent,
 } from "@/lib/written/master-key";
 import {
   getBatchById,
@@ -17,8 +20,8 @@ import { pickLatestDriveFile } from "@/services/drive-revisions";
 import { enqueueJob } from "@/worker/queue";
 
 const WrittenGradingInputSchema = z.object({
-  batchId: z.string().trim().min(1, "Parameter batchId wajib diisi."),
-  assesseeId: z.string().trim().min(1, "Parameter assesseeId wajib diisi."),
+  batchId: z.string().uuid("Parameter batchId tidak valid."),
+  assesseeId: z.string().uuid("Parameter assesseeId tidak valid."),
 });
 
 export async function runWrittenGradingWithKeyAction(formData: FormData): Promise<{
@@ -33,8 +36,8 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
   }
 
   const parsedInput = WrittenGradingInputSchema.safeParse({
-    batchId: String(formData.get("batchId") ?? ""),
-    assesseeId: String(formData.get("assesseeId") ?? ""),
+    batchId: String(formData.get("batchId") ?? "").trim(),
+    assesseeId: String(formData.get("assesseeId") ?? "").trim(),
   });
   if (!parsedInput.success) {
     return {
@@ -56,6 +59,14 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
     return { ok: false, error: "Batch tidak ditemukan atau akses ditolak." };
   }
 
+  const roleCheck = await requireLspRole(batch.lspId, user.id, ["lsp_admin", "assessor"]);
+  if (!roleCheck.allowed) {
+    return {
+      ok: false,
+      error: "Akses ditolak: hanya Asesor atau Admin LSP yang dapat menjalankan koreksi tertulis.",
+    };
+  }
+
   const files = await listDriveFilesForBatch(user.id, batch.id);
   const existing06c = pickLatestDriveFile(
     files.filter((f) => f.assesseeId === assesseeId && f.docType.toLowerCase() === "06c"),
@@ -64,7 +75,8 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
   const manualAnswerEdited =
     Boolean(inputStudentAnswerText) && inputStudentAnswerText !== stored06cText;
 
-  let resolvedMasterKeyText = inputMasterKeyText;
+  const resolvedBatchKey = resolveBatchActiveMasterKey(batch, files);
+  let resolvedMasterKeyText = "";
   const hasUploadedFile = Boolean(
     uploadedFile &&
       typeof uploadedFile === "object" &&
@@ -77,8 +89,7 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
     if (!parsed.ok) {
       return { ok: false, error: parsed.error };
     }
-    resolvedMasterKeyText = parsed.text;
-    await persistBatchMasterKey06b({
+    const persisted = await persistBatchMasterKey06b({
       userId: user.id,
       lspId: batch.lspId,
       batchId: batch.id,
@@ -88,12 +99,24 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
       extractionMethod: parsed.extractionMethod,
       assesseeId,
       hasUploadedFile: true,
+      source: "assessor_upload",
       usedRuntimePassword: Boolean(runtimePassword),
     });
-  } else if (resolvedMasterKeyText) {
-    const has06b = files.some((f) => f.docType.toLowerCase() === "06b");
-    if (!has06b) {
-      await persistBatchMasterKey06b({
+    if (!persisted.ok) {
+      return { ok: false, error: persisted.error };
+    }
+    resolvedMasterKeyText = parsed.text;
+  } else if (inputMasterKeyText) {
+    const validation = validateMasterKey06bContent(inputMasterKeyText);
+    if (!validation.valid) {
+      return {
+        ok: false,
+        error: `Teks kunci 06B ditolak: ${validation.summary}`,
+      };
+    }
+    resolvedMasterKeyText = inputMasterKeyText;
+    if (!resolvedBatchKey.activeFile || !resolvedBatchKey.isReadyForGrading) {
+      const persisted = await persistBatchMasterKey06b({
         userId: user.id,
         lspId: batch.lspId,
         batchId: batch.id,
@@ -103,8 +126,30 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
         extractionMethod: "raw_text",
         assesseeId,
         hasUploadedFile: false,
+        source: "manual_text",
       });
+      if (!persisted.ok) {
+        return { ok: false, error: persisted.error };
+      }
     }
+  } else {
+    if (!resolvedBatchKey.isReadyForGrading || !resolvedBatchKey.activeFile?.extractedText) {
+      return {
+        ok: false,
+        error:
+          resolvedBatchKey.blockingWarning ??
+          "Koreksi tertulis diblokir: belum ada kunci 06B aktif yang lolos validasi isi di batch ini.",
+      };
+    }
+    resolvedMasterKeyText = resolvedBatchKey.activeFile.extractedText.trim();
+  }
+
+  const finalCheck = validateMasterKey06bContent(resolvedMasterKeyText);
+  if (!finalCheck.valid) {
+    return {
+      ok: false,
+      error: `Koreksi tertulis diblokir: ${finalCheck.summary}`,
+    };
   }
 
   const jobRes = await enqueueJob({
@@ -114,7 +159,7 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
     payload: {
       batchId,
       assesseeId,
-      ...(resolvedMasterKeyText ? { masterKeyText: resolvedMasterKeyText } : {}),
+      masterKeyText: resolvedMasterKeyText,
       ...(inputStudentAnswerText ? { studentAnswerText: inputStudentAnswerText } : {}),
     },
   });
@@ -157,6 +202,7 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
     };
   }
 
+  revalidatePath(`/batches/${batchId}`);
   revalidatePath(`/batches/${batchId}/assessees/${assesseeId}/written`);
   revalidatePath(`/batches/${batchId}/assessees/${assesseeId}`);
 

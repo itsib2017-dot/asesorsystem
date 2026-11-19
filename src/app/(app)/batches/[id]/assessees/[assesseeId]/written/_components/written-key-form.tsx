@@ -2,13 +2,17 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Lock, Play, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Lock, Play, Upload } from "lucide-react";
 import { runWrittenGradingWithKeyAction } from "../actions";
 
 interface WrittenKeyFormProps {
   batchId: string;
   assesseeId: string;
-  initialMasterKeyFileName: string | null;
+  activeKeyFileName: string | null;
+  activeKeySourceLabel: string | null;
+  activeKeyValidationSummary: string | null;
+  isBatchKeyReady: boolean;
+  blockingWarning: string | null;
   initialMasterKeyText: string;
   initialStudentAnswerText: string;
 }
@@ -16,7 +20,11 @@ interface WrittenKeyFormProps {
 export function WrittenKeyForm({
   batchId,
   assesseeId,
-  initialMasterKeyFileName,
+  activeKeyFileName,
+  activeKeySourceLabel,
+  activeKeyValidationSummary,
+  isBatchKeyReady,
+  blockingWarning,
   initialMasterKeyText,
   initialStudentAnswerText,
 }: WrittenKeyFormProps) {
@@ -31,8 +39,20 @@ export function WrittenKeyForm({
     text: string;
   } | null>(null);
 
+  const canSubmit = isBatchKeyReady || Boolean(file) || masterKeyText.trim().length > 0;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canSubmit) {
+      setStatus({
+        type: "error",
+        text:
+          blockingWarning ??
+          "Belum ada kunci jawaban 06B yang valid dan aktif untuk menjalankan koreksi tertulis.",
+      });
+      return;
+    }
+
     setSubmitting(true);
     setStatus(null);
 
@@ -76,16 +96,46 @@ export function WrittenKeyForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+      {!isBatchKeyReady && blockingWarning ? (
+        <div
+          role="alert"
+          className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-950 flex items-start gap-2.5"
+        >
+          <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-semibold text-amber-900">
+              Belum Ada Kunci Jawaban 06B Kerja yang Aktif — Koreksi Diblokir
+            </p>
+            <p className="leading-relaxed">{blockingWarning}</p>
+          </div>
+        </div>
+      ) : (
+        activeKeyFileName && (
+          <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs text-emerald-950 flex items-start gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <div className="space-y-0.5 min-w-0">
+              <div>
+                Kunci aktif terverifikasi: <strong className="break-words">{activeKeyFileName}</strong>
+                {activeKeySourceLabel && ` (${activeKeySourceLabel})`}
+              </div>
+              {activeKeyValidationSummary && (
+                <div className="text-emerald-800">{activeKeyValidationSummary}</div>
+              )}
+            </div>
+          </div>
+        )
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-1.5">
           <label
             htmlFor="masterKeyFile"
             className="block text-xs font-semibold text-slate-700"
           >
-            Unggah Berkas Kunci 06B (.docx / .txt){" "}
-            {initialMasterKeyFileName && (
+            Unggah Berkas Kunci 06B Kerja (.docx / .txt){" "}
+            {activeKeyFileName && isBatchKeyReady && (
               <span className="font-mono text-emerald-700 font-normal">
-                (Aktif di batch: {initialMasterKeyFileName})
+                (Aktif di batch: {activeKeyFileName})
               </span>
             )}
           </label>
@@ -128,8 +178,8 @@ export function WrittenKeyForm({
 
           <button
             type="submit"
-            disabled={submitting}
-            className="px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-xs font-medium text-white inline-flex items-center gap-2 cursor-pointer"
+            disabled={submitting || !canSubmit}
+            className="px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium text-white inline-flex items-center gap-2 cursor-pointer"
           >
             <Play className="w-3.5 h-3.5" />
             {submitting
@@ -152,7 +202,7 @@ export function WrittenKeyForm({
             rows={4}
             value={masterKeyText}
             onChange={(e) => setMasterKeyText(e.target.value)}
-            placeholder="Tempel teks kunci 06B di sini jika belum mengunggah file .docx..."
+            placeholder="Tempel teks kunci jawaban 06B kerja di sini jika belum mengunggah file .docx..."
             className="w-full rounded-xl bg-white border border-slate-300 p-3 text-xs text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-teal-600"
           />
         </div>
