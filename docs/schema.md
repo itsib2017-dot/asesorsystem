@@ -24,6 +24,7 @@
 | `public.assessor_llm_config` | `id uuid` | via `assessor_id` | Encrypted BYOK AI credentials per assessor | YES |
 | `public.interview_assessments` | `id uuid` | `lsp_id` | FR.IA.09 structured interview evaluations & VATM rollup | YES |
 | `public.assessee_decision_overrides` | `id uuid` | `lsp_id` | Manual final-call override for AK.02 & AK.05 recommendations | YES |
+| `public.batch_roster_notes` | `id uuid` | `lsp_id` | Append-only non-system roster reconciliation notes (distinct from `audit_log`) | YES |
 
 ---
 
@@ -39,3 +40,5 @@
 8. `20261118000008_interview_assessments.sql`: Added `interview_assessments` table with multi-LSP RLS (`ia09_*`).
 9. `20261119000009_assessee_decision_overrides.sql`: Added `assessee_decision_overrides` table (`ado_*`) storing assessor/admin final-call overrides (`K`/`BK`) with mandatory audit reason (`>= 5` chars when active).
 10. `20261119000010_drive_file_metadata.sql`: Added `drive_modified_time`, `archive_parent_id`, `archive_entry_path` and `drive_files_modified_idx` on `public.drive_files`, plus `grant delete` and `assessees_delete` RLS policy on `public.assessees`.
+11. `20261119000011_add_triage_unextractable.sql`: Expanded `drive_files.triage_status` CHECK constraint to include `'unextractable'`.
+12. `20261119000012_batch_active_key_and_roster_notes.sql`: Added explicit active FR.IA.06B master key governance columns (`active_master_key_file_id`, `active_master_key_source`, `active_master_key_validation_status`, `active_master_key_validation_summary`, `active_master_key_activated_at`, `active_master_key_activated_by`) on `public.batches`, created append-only `public.batch_roster_notes` table with RLS (`brn_select`, `brn_insert`), and seeded the PII-free retroactive `26 -> 23` reconciliation note for `Demo Audit R4`.

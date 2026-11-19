@@ -1,6 +1,6 @@
 # Feature Test Report
 
-- **Date:** 2026-11-19 (Round 10 Audit Remediation)
+- **Date:** 2026-11-19 (Round 11 Audit Remediation)
 - **Environment:** Remote Supabase (`oiplhsmmfuqriaqrxjud`) + Local Node.js + Live Vercel (`https://assessor-zeta.vercel.app`)
 - **Authority:** `ground_rules_v5.md` (§Feature/Module Testing)
 
@@ -13,7 +13,8 @@
 - **RLS-32**: Phase A (`interview_assessments` cross-LSP isolation) — **1/1 PASS**.
 - **RLS-33..RLS-35**: Migration `20261119000009_assessee_decision_overrides.sql` (`assessee_decision_overrides` cross-LSP isolation, `tuk_admin` write block, unassigned assessor batch block) — **3/3 PASS**.
 - **RLS-36**: Migration `20261119000010_drive_file_metadata.sql` (`assessees_delete` cross-LSP `DELETE` blocked with `0` rows affected) — **1/1 PASS**.
-- **RLS-37**: Migration `20261119000011_add_triage_unextractable.sql` (`drive_files.triage_status = 'unextractable'` permitted for authorized LSP assessor) — **1/1 PASS** (`supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql`: **37/37 PASS**, **0 FAIL**).
+- **RLS-37**: Migration `20261119000011_add_triage_unextractable.sql` (`drive_files.triage_status = 'unextractable'` permitted for authorized LSP assessor) — **1/1 PASS**.
+- **RLS-38..RLS-40**: Migration `20261119000012_batch_active_key_and_roster_notes.sql` (`batch_roster_notes` cross-LSP isolation, assigned-batch insert allowed, unassigned-batch insert rejected) — **3/3 PASS** (`supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql`: **40/40 PASS**, **0 FAIL**).
 
 ---
 
@@ -40,7 +41,8 @@
 | `src/lib/ak05/__tests__/rollup.test.ts` | 6 tests (undecided neutral, partial-K undecided, >=1 BK auto-BK, manual assessor override/clear, DOCX/PDF export) | **PASS** | `npm test` |
 | `src/services/__tests__/vatm-rollup.test.ts` | 2 tests (VATM multi-channel rollup incl. `FR.IA.09` interview) | **PASS** | `npm test` |
 | `src/services/__tests__/official-forms-export.test.ts` | 7 tests (AK.02, IA.04B, IA.06C DOCX exports, neutral unassessed rendering, auto-BK, XML `pgMar`/`bodyPr` normalization, `dit_form` `proyek` flag) | **PASS** | `npm test` |
-| `src/worker/__tests__/worker.test.ts` | 10 tests (`extract_file` raw + cached reuse, `similarity_run`, `ocr_ktp`, inline run, job audit lifecycle, two-pass roster merge + audit trail + ZIP unpack + duplicate pruning, in-place `TUGAS SUANGI -> Suangi` rename, `TUGAS DIT WIWI -> Wiwi`, encrypted ZIP `unextractable`, newest `06C` revision) | **PASS** | `npm test` |
+| `src/worker/__tests__/worker.test.ts` | 12 tests (`extract_file` raw + cached reuse, `similarity_run`, `ocr_ktp`, inline run, job audit lifecycle, two-pass roster merge + audit trail + ZIP unpack + duplicate pruning, in-place `TUGAS SUANGI -> Suangi` rename, `TUGAS DIT WIWI -> Wiwi`, encrypted ZIP `unextractable`, newest `06C` revision, MUK archive `06B` non-activation, `written_grading` blanko/inactive key block) | **PASS** | `npm test` |
+| `src/lib/written/__tests__/master-key.test.ts` | 3 tests (`validateMasterKey06bContent` blanko/06A/empty rejection & working key acceptance, `resolveBatchActiveMasterKey` explicit pointer & MUK blanko isolation) | **PASS** | `npm test` |
 | `src/lib/written/__tests__/ooxml-decrypt.test.ts` | 3 tests (CFB + MS-OFFCRYPTO Agile v4.4 missing/wrong/valid password) | **PASS** | `npm test` |
 | `src/lib/similarity/__tests__/load-batch-similarity.test.ts` | 2 tests (threshold provenance label, uncalibrated notice, per-assessee summaries) | **PASS** | `npm test` |
 | `src/lib/forms/__tests__/scheme-manifest-portability.test.ts` | 3 tests (Non-AK3U manifest units, KP, `resolveUnitsForScheme` parity on `kelompokPekerjaan`-only manifests, `isGenericFallback` indicator, doc columns, branding) | **PASS** | `npm test` |
@@ -55,6 +57,6 @@
 | :--- | :--- | :--- |
 | TypeScript Strict | `npm run typecheck` | **PASS (0 errors)** |
 | ESLint Zero Warnings | `npx eslint . --max-warnings 0` | **PASS (0 errors, 0 warnings)** |
-| Vitest Unit Suite | `npm test` | **PASS (25 files, 105/105 tests)** |
+| Vitest Unit Suite | `npm test` | **PASS (26 files, 110/110 tests)** |
 | Production Build | `npm run build` | **PASS (36 app routes incl. Proxy Middleware)** |
-| Multi-LSP Postgres RLS | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS (37/37 tests on remote Supabase incl. `RLS-37` unextractable status)** |
+| Multi-LSP Postgres RLS | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS (40/40 tests on remote Supabase incl. `RLS-38..RLS-40` `batch_roster_notes`)** |

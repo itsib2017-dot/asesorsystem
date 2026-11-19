@@ -1,7 +1,7 @@
 # F4 Companion — Row Level Security (RLS) Policy Table
 
 - **Database:** Supabase PostgreSQL (`oiplhsmmfuqriaqrxjud`)
-- **Verification Evidence:** `tests/rls-multi-lsp.test.sql` (37/37 PASS)
+- **Verification Evidence:** `tests/rls-multi-lsp.test.sql` (40/40 PASS)
 - **Report Reference:** `docs/testing/feature-test-report.md`
 
 ---
@@ -40,6 +40,8 @@
 | `assessee_decision_overrides`| `ado_select` | SELECT | authenticated | `lsp_admin`/`tuk_admin` of LSP OR assigned assessor (`auth_on_batch`) |
 | `assessee_decision_overrides`| `ado_insert` | INSERT | authenticated | `lsp_admin` OR assigned `assessor` on batch (`tuk_admin` blocked) |
 | `assessee_decision_overrides`| `ado_update` | UPDATE | authenticated | `lsp_admin` OR assigned `assessor` on batch (`tuk_admin` blocked) |
+| `batch_roster_notes`| `brn_select` | SELECT | authenticated | `lsp_admin`/`tuk_admin` of LSP OR assigned assessor (`auth_on_batch`) |
+| `batch_roster_notes`| `brn_insert` | INSERT | authenticated | `lsp_admin`/`tuk_admin` of LSP OR assigned assessor (`auth_on_batch`) and `recorded_by = auth.uid()` (append-only: no UPDATE/DELETE) |
 
 ---
 
