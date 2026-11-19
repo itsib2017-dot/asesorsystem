@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { AlertTriangle, FileText } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { loadBatchSimilarityReportData } from "@/lib/similarity/load-batch-similarity";
+import { SimilarityRunTrigger } from "./similarity-run-trigger";
 
 export const metadata = {
   title: "Laporan Kemiripan & Gabungan — AsesorKompetensi",
@@ -56,6 +57,8 @@ export default async function SimilarityReportPage({
           Ekspor Laporan Gabungan (.docx)
         </a>
       </div>
+
+      <SimilarityRunTrigger batchId={batchId} />
 
       <div className="glass-card rounded-2xl p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
