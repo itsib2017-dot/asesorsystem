@@ -234,6 +234,30 @@ export async function activateBatchMasterKey06bAction(formData: FormData): Promi
 
   const validation = validateMasterKey06bContent(textRes.text);
   if (!validation.valid) {
+    const source = classifyMasterKeyOrigin(file);
+    try {
+      const supabase = await getSupabaseServerClient();
+      await writeAuditLog(
+        {
+          lsp_id: batch.lspId,
+          actor_id: user.id,
+          action: "batch.key_06b.activate.rejected",
+          resource: "batches",
+          resource_id: batch.id,
+          after_summary: {
+            fileId: file.id,
+            fileName: file.fileName,
+            source,
+            validationStatus: validation.status,
+            substantiveWords: validation.substantiveWords,
+            rejectionReason: validation.summary,
+          },
+        },
+        supabase,
+      );
+    } catch (err) {
+      console.warn("[MasterKey06bActivateRejected] audit log failed:", err instanceof Error ? err.message : String(err));
+    }
     return {
       ok: false,
       error: `Aktivasi kunci "${file.fileName}" ditolak: ${validation.summary}`,

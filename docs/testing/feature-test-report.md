@@ -1,8 +1,9 @@
 # Feature Test Report
 
-- **Date:** 2026-11-19 (Round 11 Audit Remediation)
+- **Date:** 2026-11-19 (Round 11 Audit Remediation + Round 12 Defect Fixes)
 - **Environment:** Remote Supabase (`oiplhsmmfuqriaqrxjud`) + Local Node.js + Live Vercel (`https://assessor-zeta.vercel.app`)
 - **Authority:** `ground_rules_v5.md` (§Feature/Module Testing)
+- **Mode:** FAST MODE (§0.2 ground_rules_v5.md) — bug fixes in existing patterns, no trust boundary changes
 
 ---
 
@@ -60,3 +61,19 @@
 | Vitest Unit Suite | `npm test` | **PASS (26 files, 110/110 tests)** |
 | Production Build | `npm run build` | **PASS (36 app routes incl. Proxy Middleware)** |
 | Multi-LSP Postgres RLS | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS (40/40 tests on remote Supabase incl. `RLS-38..RLS-40` `batch_roster_notes`)** |
+
+---
+
+## 4. Round 12 Defect Fixes (per brief-developer-putaran-12-2026-11-19.md)
+
+| Cacat | Severity | Issue | Fix | Files Changed | Verification Needed |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Cacat 1** | Menengah | 06B key activation rejection not written to audit log (`/settings/audit` shows no "06B"/"kunci" entries) | Added `batch.key_06b.activate.rejected` audit entry when activation is rejected due to invalid content validation, with actor, file, source, validation status, and rejection reason | `src/app/(app)/batches/[id]/actions.ts` | Live UI: activate blanko 06B → expect rejection entry in `/settings/audit` |
+| **Cacat 2** | Rendah | Disabled "Simpan Kunci 06B & Jalankan Koreksi Tertulis" button looks teal solid (indistinguishable from active) | Changed disabled styling from `disabled:opacity-50` to `disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed disabled:hover:bg-slate-200` for clear visual distinction | `src/app/(app)/batches/[id]/assessees/[assesseeId]/written/_components/written-key-form.tsx` | Live UI: disabled grading button should appear gray/slate, not teal |
+| **Cacat 3** | Rendah | Duplicate `job.drive_scan.failed` audit entries for same job | Added terminal-state guard in `executeJob`: skips re-execution of `done`/`failed` jobs unless explicit `triggerAction: "retry"` | `src/worker/queue.ts` | Live UI: `/settings/audit` should show exactly one `job.drive_scan.failed` per failed job |
+
+**Gates pending (no Node.js/network in this sandbox — to be run in Claude Code / local checkout):**
+- `npx tsc --noEmit` — must pass 0 errors
+- `npx eslint . --ext .ts,.tsx --max-warnings 0` — must pass 0 warnings
+- `npm test` — all existing tests must still pass (guard allows retries; pending jobs execute normally)
+- Playwright E2E on preview — verify all three cacat fixes live

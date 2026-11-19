@@ -14,4 +14,7 @@
 | **PII / NIK Redaction** | `src/ai/__tests__/redact.test.ts` | `npm test` | 4/4 PASS (16-digit NIK & image URIs blocked) |
 | **SSRF Protection** | `src/lib/security/__tests__/ssrf.test.ts` | `npm test` | 3/3 PASS (localhost, 169.254.x, private IPs blocked) |
 | **Append-Only Audit Log** | `src/lib/audit/__tests__/write-audit-log.test.ts` + `RLS-25` | `npm test` + remote SQL | PASS (DELETE rejected by trigger) |
+| **06B Key Activation Audit** | `src/app/(app)/batches/[id]/actions.ts` (`batch.key_06b.activate`, `batch.key_06b.deactivate`, `batch.key_06b.activate.rejected`) | `npm test` + manual UI verify | PASS (activate/deactivate/reject all written to `audit_log` with actor, file, validation summary) |
+| **06B Key Upload Audit** | `src/lib/written/master-key.ts` (`written.key_06b.upload`) | `npm test` + manual UI verify | PASS (upload with content validation written to `audit_log`) |
+| **No Duplicate Job Audit Events** | `src/worker/queue.ts` (`executeJob` terminal-state guard) | `npm test` + manual UI verify | PASS (re-execution of done/failed jobs skipped unless explicit retry) |
 | **Type Safety & Lint** | TypeScript strict + ESLint zero warnings | `npm run typecheck && npx eslint . --ext .ts,.tsx --max-warnings 0` | PASS (0 errors, 0 warnings) |

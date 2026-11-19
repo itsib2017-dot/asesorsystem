@@ -98,6 +98,15 @@ export async function executeJob(
   const job = await getJobRecordById(userId, jobId);
   if (!job) return null;
 
+  // Guard: do not re-execute a job already in a terminal state unless an
+  // explicit retry is requested. Prevents duplicate audit events (e.g.
+  // job.drive_scan.failed written twice) when executeJob is invoked more
+  // than once for the same job id (via enqueueJob and/or POST /api/v1/jobs/:id).
+  const isTerminal = job.status === "done" || job.status === "failed";
+  if (isTerminal && options?.triggerAction !== "retry") {
+    return job;
+  }
+
   const lspId = await resolveJobLspId(userId, job.payload, options?.lspId);
 
   if (options?.triggerAction === "retry") {
