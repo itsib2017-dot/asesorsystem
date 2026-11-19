@@ -1,7 +1,16 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { hasDatabaseUrl, isUuid, runRepositoryDualPath, withRlsTransaction } from "@/db";
-import { assessees, nameJuryVerdicts } from "@/db/schema";
-import { normalisePersonName } from "@/lib/names";
+import {
+  assessees,
+  assesseeDecisionOverrides,
+  decisions,
+  ditAnalyses,
+  driveFiles,
+  interviewAssessments,
+  nameJuryVerdicts,
+  writtenGradings,
+} from "@/db/schema";
+import { findBestMatchingCandidate } from "@/lib/names";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export interface AssesseeRecord {
@@ -279,17 +288,7 @@ function findMatchingAssessee(
   candidateName: string,
   pool: AssesseeRecord[],
 ): AssesseeRecord | undefined {
-  const norm = normalisePersonName(candidateName);
-  if (!norm) return undefined;
-  return pool.find((a) => {
-    const existingNorm = normalisePersonName(a.displayName);
-    if (!existingNorm) return false;
-    return (
-      existingNorm === norm ||
-      existingNorm.includes(norm) ||
-      norm.includes(existingNorm)
-    );
-  });
+  return findBestMatchingCandidate(candidateName, pool);
 }
 
 export async function upsertAssesseesForBatch(params: {
@@ -375,4 +374,113 @@ export async function upsertAssesseesForBatch(params: {
   }
 
   return listAssesseesByBatch(params.userId, params.batchId);
+}
+
+/**
+ * Safely removes zero-file unconfirmed duplicate/folder-named assessee records after files
+ * have been reassigned to canonical assessees (never removes confirmed names or records
+ * carrying decisions, AI runs, written gradings, or interview assessments).
+ */
+export async function pruneOrphanedDuplicateAssessees(params: {
+  userId: string;
+  batchId: string;
+}): Promise<string[]> {
+  if (!isUuid(params.batchId)) return [];
+
+  const allAssessees = await listAssesseesByBatch(params.userId, params.batchId);
+  const unconfirmed = allAssessees.filter((a) => !a.certificateNameConfirmed);
+  if (unconfirmed.length === 0) return [];
+
+  const candidateIds = unconfirmed.map((a) => a.id);
+
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssesseesRepository.pruneOrphanedDuplicateAssessees",
+    drizzle: async (tx) => {
+      const [files, decs, dits, writtens, interviews, overrides] = await Promise.all([
+        tx
+          .select({ assesseeId: driveFiles.assesseeId })
+          .from(driveFiles)
+          .where(eq(driveFiles.batchId, params.batchId)),
+        tx
+          .select({ assesseeId: decisions.assesseeId })
+          .from(decisions)
+          .where(inArray(decisions.assesseeId, candidateIds)),
+        tx
+          .select({ assesseeId: ditAnalyses.assesseeId })
+          .from(ditAnalyses)
+          .where(inArray(ditAnalyses.assesseeId, candidateIds)),
+        tx
+          .select({ assesseeId: writtenGradings.assesseeId })
+          .from(writtenGradings)
+          .where(inArray(writtenGradings.assesseeId, candidateIds)),
+        tx
+          .select({ assesseeId: interviewAssessments.assesseeId })
+          .from(interviewAssessments)
+          .where(inArray(interviewAssessments.assesseeId, candidateIds)),
+        tx
+          .select({ assesseeId: assesseeDecisionOverrides.assesseeId })
+          .from(assesseeDecisionOverrides)
+          .where(inArray(assesseeDecisionOverrides.assesseeId, candidateIds)),
+      ]);
+
+      const protectedIds = new Set<string>();
+      for (const r of files) if (r.assesseeId) protectedIds.add(r.assesseeId);
+      for (const r of decs) protectedIds.add(r.assesseeId);
+      for (const r of dits) protectedIds.add(r.assesseeId);
+      for (const r of writtens) protectedIds.add(r.assesseeId);
+      for (const r of interviews) protectedIds.add(r.assesseeId);
+      for (const r of overrides) protectedIds.add(r.assesseeId);
+
+      const deletable = unconfirmed.filter((a) => !protectedIds.has(a.id));
+      if (deletable.length === 0) return [];
+
+      await tx
+        .delete(assessees)
+        .where(inArray(assessees.id, deletable.map((a) => a.id)));
+      return deletable.map((a) => a.displayName);
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const [
+        { data: files },
+        { data: decs },
+        { data: dits },
+        { data: writtens },
+        { data: interviews },
+        { data: overrides },
+      ] = await Promise.all([
+        supabase.from("drive_files").select("assessee_id").eq("batch_id", params.batchId),
+        supabase.from("decisions").select("assessee_id").in("assessee_id", candidateIds),
+        supabase.from("dit_analyses").select("assessee_id").in("assessee_id", candidateIds),
+        supabase.from("written_gradings").select("assessee_id").in("assessee_id", candidateIds),
+        supabase.from("interview_assessments").select("assessee_id").in("assessee_id", candidateIds),
+        supabase
+          .from("assessee_decision_overrides")
+          .select("assessee_id")
+          .in("assessee_id", candidateIds),
+      ]);
+
+      const protectedIds = new Set<string>();
+      for (const r of files ?? []) if (r.assessee_id) protectedIds.add(String(r.assessee_id));
+      for (const r of decs ?? []) if (r.assessee_id) protectedIds.add(String(r.assessee_id));
+      for (const r of dits ?? []) if (r.assessee_id) protectedIds.add(String(r.assessee_id));
+      for (const r of writtens ?? []) if (r.assessee_id) protectedIds.add(String(r.assessee_id));
+      for (const r of interviews ?? []) if (r.assessee_id) protectedIds.add(String(r.assessee_id));
+      for (const r of overrides ?? []) if (r.assessee_id) protectedIds.add(String(r.assessee_id));
+
+      const deletable = unconfirmed.filter((a) => !protectedIds.has(a.id));
+      if (deletable.length === 0) return [];
+
+      const { error: delError } = await supabase
+        .from("assessees")
+        .delete()
+        .in("id", deletable.map((a) => a.id));
+      if (delError) {
+        console.warn("[AssesseesRepository Warning] prune duplicates skipped:", delError.message);
+        return [];
+      }
+      return deletable.map((a) => a.displayName);
+    },
+  });
 }

@@ -4,20 +4,26 @@ import zlib from "node:zlib";
 
 const mocks = vi.hoisted(() => ({
   updateDriveFileExtraction: vi.fn(),
+  updateDriveFileClassification: vi.fn(),
 }));
 
 vi.mock("@/repositories/batches.repository", () => ({
   updateDriveFileExtraction: mocks.updateDriveFileExtraction,
+  updateDriveFileClassification: mocks.updateDriveFileClassification,
 }));
 
 import {
   extractTextFromBuffer,
   extractTextFromPdfBasic,
   isOleEncryptedBuffer,
+  repairBrokenZipCrcBuffer,
+  unpackSafeZipEntries,
 } from "../extract";
 import {
   downloadPublicDriveFileBuffer,
   ensureDriveFileExtracted,
+  reclassifyBatchFilesByContent,
+  resolveAssesseeDitInputs,
 } from "../drive-extract";
 
 describe("File text extraction & SSRF-guarded Drive download (T2)", () => {
@@ -124,6 +130,9 @@ describe("File text extraction & SSRF-guarded Drive download (T2)", () => {
         extractedText: null,
         extractionMethod: null,
         ocrConfidence: null,
+        driveModifiedTime: null,
+        archiveParentId: null,
+        archiveEntryPath: null,
       },
     });
 
@@ -159,5 +168,158 @@ describe("File text extraction & SSRF-guarded Drive download (T2)", () => {
     await expect(
       downloadPublicDriveFileBuffer({ driveFileId: "abc1234567890", maxBytes: 1024 }),
     ).rejects.toThrow("FILE_TOO_LARGE");
+  });
+
+  it("safely unpacks ZIP entries, blocks traversal paths, repairs broken OOXML CRC, and extracts ZIP child buffer (R8)", async () => {
+    const zip = new JSZip();
+    zip.file("Peserta/1. Budi/1. Form IBPR.txt", "Identifikasi Bahaya Potensial Lift Barang", {
+      date: new Date("2026-11-18T10:00:00Z"),
+    });
+    zip.file("../../etc/passwd", "bad");
+    const zipBuf = await zip.generateAsync({ type: "nodebuffer" });
+
+    const entries = await unpackSafeZipEntries(zipBuf);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.entryPath).toBe("Peserta/1. Budi/1. Form IBPR.txt");
+    expect(entries[0]?.modifiedTimeIso).toBe("2026-11-18T10:00:00.000Z");
+
+    const repaired = await repairBrokenZipCrcBuffer(zipBuf);
+    expect(repaired.subarray(0, 2).toString("utf8")).toBe("PK");
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(new Uint8Array(zipBuf), {
+        status: 200,
+        headers: { "content-type": "application/zip" },
+      }),
+    );
+
+    const extractedChild = await downloadPublicDriveFileBuffer({
+      driveFileId: "zipParent12345::Peserta/1. Budi/1. Form IBPR.txt",
+    });
+    expect(extractedChild.toString("utf8")).toContain("Identifikasi Bahaya");
+  });
+
+  it("aggregates multi-part DIT forms, picks newest duplicate revisions, and falls back to scheme 04A", async () => {
+    const baseFile = {
+      lspId: "lsp-1",
+      batchId: "b-1",
+      assesseeId: "a-1",
+      mimeType: "application/pdf",
+      drivePath: "Tugas DIT/Andi",
+      classificationConfidence: 0.9,
+      triageStatus: "assigned" as const,
+      triageReason: null,
+      extractionMethod: "cached",
+      ocrConfidence: null,
+      driveModifiedTime: null as string | null,
+      archiveParentId: null as string | null,
+      archiveEntryPath: null as string | null,
+    };
+
+    const resolved = await resolveAssesseeDitInputs({
+      userId: "user-1",
+      files: [
+        {
+          ...baseFile,
+          id: "f-ibpr-old",
+          driveFileId: "d1",
+          fileName: "1. Form IBPR.pdf",
+          docType: "dit_form",
+          driveModifiedTime: "2026-11-10T00:00:00Z",
+          extractedText: "IBPR versi lama",
+        },
+        {
+          ...baseFile,
+          id: "f-ibpr-new",
+          driveFileId: "d2",
+          fileName: "1. Form IBPR_Revisi.pdf",
+          docType: "dit_form",
+          driveModifiedTime: "2026-11-18T00:00:00Z",
+          extractedText: "IBPR versi revisi terbaru",
+        },
+        {
+          ...baseFile,
+          id: "f-erp",
+          driveFileId: "d3",
+          fileName: "2. Form ERP.pdf",
+          docType: "dit_form",
+          extractedText: "Prosedur Tanggap Darurat Gedung",
+        },
+        {
+          ...baseFile,
+          id: "f-cv",
+          driveFileId: "d4",
+          fileName: "CV Andi.pdf",
+          docType: "cv",
+          extractedText: "Pengalaman HSE 5 tahun",
+        },
+      ],
+      scheme: {
+        id: "s-1",
+        lspId: "lsp-1",
+        code: "AK3U",
+        name: "Ahli K3 Umum",
+        version: 1,
+        forms: [],
+        manifest: {
+          questionCounts: { official04bCount: 10, written06aCount: 10, questionBankCount: 10 },
+          decisionRule: "VATM",
+          decisionRuleRef: "SKKNI K3",
+          prerequisites: [],
+          registrationRequirements: [],
+          units: [{ code: "M.71KKK01.001.1", title: "Merancang Strategi Pengendalian Risiko K3" }],
+          formSuffixMapping: { soal: "06A", kunci: "06B", jawaban: "06C" },
+        },
+      },
+    });
+
+    expect(resolved.frIa04aSource).toBe("scheme");
+    expect(resolved.frIa04aText).toContain("Kelompok Pekerjaan");
+    expect(resolved.presentationTranscript).toContain("IBPR versi revisi terbaru");
+    expect(resolved.presentationTranscript).not.toContain("IBPR versi lama");
+    expect(resolved.presentationTranscript).toContain("Prosedur Tanggap Darurat Gedung");
+    expect(resolved.candidateProfileSummary).toContain("Pengalaman HSE");
+  });
+
+  it("reclassifies unknown files by extracted text content in reclassifyBatchFilesByContent", async () => {
+    mocks.updateDriveFileClassification.mockResolvedValue(undefined);
+    const out = await reclassifyBatchFilesByContent({
+      userId: "user-1",
+      assessees: [{ id: "a-1", displayName: "Budi Santoso" }],
+      files: [
+        {
+          id: "f-unk",
+          lspId: "lsp-1",
+          batchId: "b-1",
+          assesseeId: null,
+          driveFileId: "drive-unk-1",
+          fileName: "Dokumen_Tanpa_Label.txt",
+          mimeType: "text/plain",
+          drivePath: "Lampiran/Dokumen_Tanpa_Label.txt",
+          docType: "unknown",
+          classificationConfidence: 0.4,
+          triageStatus: "unmatched",
+          triageReason: null,
+          extractedText:
+            "FR.APL.01 Permohonan Sertifikasi\nNama lengkap: Budi Santoso\nSkema AK3U",
+          extractionMethod: "cached",
+          ocrConfidence: null,
+          driveModifiedTime: null,
+          archiveParentId: null,
+          archiveEntryPath: null,
+        },
+      ],
+    });
+
+    expect(out.reclassified).toBe(1);
+    expect(out.reassigned).toBe(1);
+    expect(mocks.updateDriveFileClassification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileId: "f-unk",
+        docType: "apl01",
+        assesseeId: "a-1",
+        triageStatus: "assigned",
+      }),
+    );
   });
 });

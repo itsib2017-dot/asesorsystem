@@ -4,6 +4,7 @@ import {
   generateAk02Docx,
   generateIa04bDocx,
   generateIa06cDocx,
+  normalizeBlankoXmlForExport,
 } from "@/services/export";
 import {
   AK3U_OFFICIAL_UNITS,
@@ -279,5 +280,29 @@ describe("Official AK3U DOCX Template Exports (AK.02, IA.04B, IA.06C)", () => {
     const overrideZip = await JSZip.loadAsync(await generateAk02Docx(manualK));
     const overrideXml = await overrideZip.file("word/document.xml")!.async("string");
     expect(overrideXml).toContain("Asesi melampirkan bukti revisi sah");
+  });
+
+  it("normalises negative DOCX page margins and header textbox wrap attributes, and ticks AK.02 proyek for dit_form", () => {
+    const cleaned = normalizeBlankoXmlForExport({
+      docXml: '<w:pgMar w:top="-720" w:right="1440" w:bottom="-360" w:left="1440"/>',
+      headerXml: '<wps:txbx><wps:bodyPr wrap="square" lIns="0"/></wps:txbx>',
+    });
+    expect(cleaned.docXml).toContain('w:top="720"');
+    expect(cleaned.docXml).toContain('w:bottom="360"');
+    expect(cleaned.headerXml).toContain('wrap="none"');
+
+    const ak02FromDitForms = buildAk02Payload({
+      schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
+      schemeNumber: "SKM/2037/00013/2/2021/1",
+      assessorName: "Daniel Stefanus",
+      assessorRegNo: "MET. 000.003610 2023",
+      assesseeName: "Bagas Priambodo",
+      assessmentDate: "2026-11-18",
+      decisions: [],
+      hasDit: false,
+      hasDitForms: true,
+      hasWritten: false,
+    });
+    expect(ak02FromDitForms.unitDecisions[0]?.evidenceTypes).toContain("proyek");
   });
 });

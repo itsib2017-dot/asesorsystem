@@ -545,6 +545,28 @@ function fillAssesseeAndAssessorSigRows(
   });
 }
 
+/**
+ * Normalises blanko OOXML layout bugs adapted from MUK DOCX generator checks:
+ * 1) Prevents header textbox labels (`FR.IA.04B`, etc.) from wrapping awkwardly (`wrap="none"`).
+ * 2) Fixes negative top/bottom page margin attributes that trigger viewer layout warnings.
+ */
+export function normalizeBlankoXmlForExport(params: {
+  docXml: string;
+  headerXml?: string;
+}): { docXml: string; headerXml?: string } {
+  const fixedDocXml = params.docXml.replace(
+    /<w:pgMar\b[^>]+>/gi,
+    (tag) => tag.replace(/\b(w:(?:top|bottom))="-(\d+)"/gi, '$1="$2"'),
+  );
+  const fixedHeaderXml = params.headerXml
+    ? params.headerXml.replace(
+        /<(?:a|wps):bodyPr\b[^>]+>/gi,
+        (tag) => tag.replace(/\bwrap="(?:square|topAndBottom)"/gi, 'wrap="none"'),
+      )
+    : undefined;
+  return { docXml: fixedDocXml, headerXml: fixedHeaderXml };
+}
+
 async function loadDocxTemplateAndSig(params: {
   fileName: string;
   label: string;
@@ -557,7 +579,23 @@ async function loadDocxTemplateAndSig(params: {
   if (!docFile) {
     throw new Error(`TEMPLATE_ERROR: word/document.xml tidak ditemukan di blanko ${params.label}.`);
   }
-  const docXml = await docFile.async("string");
+  const rawDocXml = await docFile.async("string");
+  const { docXml } = normalizeBlankoXmlForExport({ docXml: rawDocXml });
+
+  const headerFiles = zip.file(/^word\/header\d*\.xml$/i);
+  await Promise.all(
+    headerFiles.map(async (hf) => {
+      const rawHeader = await hf.async("string");
+      const { headerXml } = normalizeBlankoXmlForExport({
+        docXml: "",
+        headerXml: rawHeader,
+      });
+      if (headerXml && headerXml !== rawHeader) {
+        zip.file(hf.name, headerXml);
+      }
+    }),
+  );
+
   const tableSpans = findTopLevelTags(docXml, "w:tbl");
   if (tableSpans.length < params.expectedTables) {
     throw new Error(

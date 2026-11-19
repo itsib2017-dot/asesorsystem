@@ -11,6 +11,7 @@ import {
   getLatestWrittenGrading,
   listDecisionsForAssessee,
 } from "@/repositories/assessment.repository";
+import { listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { NameJuryCard } from "@/components/identity/name-jury-card";
 import { DecisionToggle } from "@/components/ak05/decision-toggle";
 import { Ak02BlankoPreview } from "@/components/forms/ak02-blanko-preview";
@@ -64,6 +65,7 @@ export default async function AssesseeDetailPage({
     writtenGrading,
     interviewAssessment,
     role,
+    batchFiles,
   ] = await Promise.all([
     getLatestNameJuryVerdict(user.id, assesseeId),
     listDecisionsForAssessee(user.id, assesseeId),
@@ -72,7 +74,11 @@ export default async function AssesseeDetailPage({
     getLatestWrittenGrading(user.id, assesseeId),
     getLatestInterviewAssessment(user.id, assesseeId),
     getLspRole(common.batch.lspId, user.id),
+    listDriveFilesForBatch(user.id, batchId),
   ]);
+  const hasDitForms = batchFiles.some(
+    (f) => f.assesseeId === assesseeId && (f.docType === "dit_form" || f.docType === "04b"),
+  );
 
   const schemeUnitsList = resolveSchemeUnitsList(common.scheme);
   const resolvedOverall = resolveAssesseeOverallDecision({
@@ -125,6 +131,7 @@ export default async function AssesseeDetailPage({
     decisions: decisions as unknown as RawDecisionRow[],
     manualOverride: decisionOverride,
     hasDit: Boolean(ditAnalysis),
+    hasDitForms,
     hasWritten: Boolean(writtenGrading),
     hasInterview: Boolean(interviewAssessment),
   });

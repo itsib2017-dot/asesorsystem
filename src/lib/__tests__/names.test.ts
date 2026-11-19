@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   computeNameSimilarity,
+  findBestMatchingCandidate,
   isInitialAbbreviationMatch,
   normalisePersonName,
+  scoreCandidateNameMatch,
 } from "../names";
 import { runNameJury } from "@/services/name-jury";
 
@@ -46,5 +48,43 @@ describe("KTP-Authoritative Name Comparison & Jury (D6 & D10)", () => {
 
     expect(out.result.verdict).toBe("mismatch_resolved");
     expect(out.result.proposed_certificate_name).toBe("Declan Rice Pangabean");
+  });
+
+  it("matches ambiguous BNSP roster variants without prefix/substring collisions (R8)", () => {
+    const roster = [
+      { id: "c-wiwik", displayName: "Wiwik Suryani" },
+      { id: "c-wiwi", displayName: "Wiwi Lestari" },
+      { id: "c-riyan", displayName: "Muhammad Riyan Syahroni" },
+      { id: "c-suanggi", displayName: "Suanggi Pratama" },
+      { id: "c-faradhila", displayName: "Faradhila Aushafiana Manaf" },
+      { id: "c-chairunnisa", displayName: "Chairunnisa Putri" },
+      { id: "c-meidha", displayName: "Meidha Kurniawan" },
+    ];
+
+    // Must never hijack "Wiwi" into "Wiwik Suryani"
+    expect(scoreCandidateNameMatch("Wiwi", "Wiwik Suryani")).toBeLessThan(0.78);
+    expect(
+      findBestMatchingCandidate("Wiwi", [roster[0]!]),
+    ).toBeUndefined();
+    expect(
+      findBestMatchingCandidate("Wiwi", roster)?.id,
+    ).toBe("c-wiwi");
+
+    // Matches M. initial -> Muhammad, typo Suangi -> Suanggi, A.Manaf -> Aushafiana Manaf
+    expect(
+      findBestMatchingCandidate("M. RIYAN SYAHRONI", roster)?.id,
+    ).toBe("c-riyan");
+    expect(
+      findBestMatchingCandidate("SUANGI", roster)?.id,
+    ).toBe("c-suanggi");
+    expect(
+      findBestMatchingCandidate("Faradhila A.Manaf", roster)?.id,
+    ).toBe("c-faradhila");
+    expect(
+      findBestMatchingCandidate("Chairunisa Putri", roster)?.id,
+    ).toBe("c-chairunnisa");
+    expect(
+      findBestMatchingCandidate("Meida Kurniawan", roster)?.id,
+    ).toBe("c-meidha");
   });
 });

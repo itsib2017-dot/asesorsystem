@@ -1,7 +1,7 @@
 # F4 Companion — Row Level Security (RLS) Policy Table
 
 - **Database:** Supabase PostgreSQL (`oiplhsmmfuqriaqrxjud`)
-- **Verification Evidence:** `tests/rls-multi-lsp.test.sql` (25/25 PASS)
+- **Verification Evidence:** `tests/rls-multi-lsp.test.sql` (36/36 PASS)
 - **Report Reference:** `docs/testing/feature-test-report.md`
 
 ---
@@ -25,6 +25,7 @@
 | `batch_assessors` | `ba_select` | SELECT | authenticated | Self OR `lsp_admin`/`tuk_admin` of that LSP |
 | `batch_assessors` | `ba_insert/update/delete` | ALL | authenticated | `lsp_admin` or `tuk_admin` |
 | `assessees` | `assessees_select` | SELECT | authenticated | `lsp_admin`/`tuk_admin` OR assigned assessor on that batch |
+| `assessees` | `assessees_delete` | DELETE | authenticated | `lsp_admin`/`tuk_admin` OR assigned assessor (`assigned_assessor_id = auth.uid()` and `auth_on_batch(batch_id)`) |
 | `app_config` | `cfg_select` | SELECT | authenticated | Scope `global` OR member of LSP |
 | `app_config` | `cfg_insert/update` | INSERT/UPDATE | authenticated | `lsp_admin` for non-global scopes |
 | `audit_log` | `audit_select` | SELECT | authenticated | `lsp_admin` of that LSP |

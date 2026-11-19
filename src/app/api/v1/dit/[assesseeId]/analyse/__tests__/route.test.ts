@@ -3,7 +3,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   getUser: vi.fn(),
   getAssesseeById: vi.fn(),
+  getBatchById: vi.fn(),
   listDriveFilesForBatch: vi.fn(),
+  listSchemes: vi.fn(),
   getLatestProviderConfigForAssessor: vi.fn(),
   resolveAssesseeDitInputs: vi.fn(),
   enqueueJob: vi.fn(),
@@ -18,7 +20,12 @@ vi.mock("@/repositories/assessees.repository", () => ({
 }));
 
 vi.mock("@/repositories/batches.repository", () => ({
+  getBatchById: mocks.getBatchById,
   listDriveFilesForBatch: mocks.listDriveFilesForBatch,
+}));
+
+vi.mock("@/repositories/schemes.repository", () => ({
+  listSchemes: mocks.listSchemes,
 }));
 
 vi.mock("@/repositories/provider.repository", () => ({
@@ -47,6 +54,12 @@ describe("POST /api/v1/dit/[assesseeId]/analyse (T3)", () => {
       batchId: VALID_BATCH_ID,
       lspId: "lsp-1",
     });
+    mocks.getBatchById.mockResolvedValue({
+      id: VALID_BATCH_ID,
+      lspId: "lsp-1",
+      schemeId: "scheme-1",
+    });
+    mocks.listSchemes.mockResolvedValue([]);
     mocks.getLatestProviderConfigForAssessor.mockResolvedValue(null);
     mocks.listDriveFilesForBatch.mockResolvedValue([]);
   });

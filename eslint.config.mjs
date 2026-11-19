@@ -23,6 +23,8 @@ const eslintConfig = defineConfig([
     ".claude/**",
     ".codex-plugin/**",
     ".cursor-plugin/**",
+    "_backups_/**",
+    "_documentations_/**",
   ]),
 ]);
 

@@ -13,6 +13,7 @@ import {
   getBatchById,
   listDriveFilesForBatch,
 } from "@/repositories/batches.repository";
+import { pickLatestDriveFile } from "@/services/drive-revisions";
 import { enqueueJob } from "@/worker/queue";
 
 const WrittenGradingInputSchema = z.object({
@@ -56,8 +57,8 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
   }
 
   const files = await listDriveFilesForBatch(user.id, batch.id);
-  const existing06c = files.find(
-    (f) => f.assesseeId === assesseeId && f.docType.toLowerCase() === "06c",
+  const existing06c = pickLatestDriveFile(
+    files.filter((f) => f.assesseeId === assesseeId && f.docType.toLowerCase() === "06c"),
   );
   const stored06cText = (existing06c?.extractedText ?? "").trim();
   const manualAnswerEdited =

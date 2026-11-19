@@ -38,3 +38,4 @@
 7. `20261118000007_audit_null_lsp_actor_scope.sql`: Scoped historical null-`lsp_id` logs to LSP admins.
 8. `20261118000008_interview_assessments.sql`: Added `interview_assessments` table with multi-LSP RLS (`ia09_*`).
 9. `20261119000009_assessee_decision_overrides.sql`: Added `assessee_decision_overrides` table (`ado_*`) storing assessor/admin final-call overrides (`K`/`BK`) with mandatory audit reason (`>= 5` chars when active).
+10. `20261119000010_drive_file_metadata.sql`: Added `drive_modified_time`, `archive_parent_id`, `archive_entry_path` and `drive_files_modified_idx` on `public.drive_files`, plus `grant delete` and `assessees_delete` RLS policy on `public.assessees`.

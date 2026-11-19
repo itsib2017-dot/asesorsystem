@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { getUser } from "@/lib/auth/get-session";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
-import { assignDriveFileAction } from "./actions";
+import { assignDriveFileAction, reclassifyBatchContentAction } from "./actions";
 
 export const metadata = {
   title: "Triage Berkas Drive — AsesorKompetensi",
@@ -13,8 +13,9 @@ const DOC_TYPE_OPTIONS = [
   { value: "ktp", label: "KTP" },
   { value: "apl01", label: "FR.APL.01" },
   { value: "apl02", label: "FR.APL.02" },
-  { value: "04a", label: "FR.IA.04A (DIT)" },
-  { value: "04b", label: "FR.IA.04B (Presentasi)" },
+  { value: "04a", label: "FR.IA.04A (Instruksi DIT)" },
+  { value: "04b", label: "FR.IA.04B (Presentasi / Tugas DIT)" },
+  { value: "dit_form", label: "Formulir Pendukung Tugas DIT (IBPR/ERP/Permit/Inspeksi)" },
   { value: "06a", label: "FR.IA.06A (Soal)" },
   { value: "06b", label: "FR.IA.06B (Kunci)" },
   { value: "06c", label: "FR.IA.06C (Jawaban)" },
@@ -22,7 +23,7 @@ const DOC_TYPE_OPTIONS = [
   { value: "ijazah", label: "Ijazah" },
   { value: "cv", label: "CV" },
   { value: "surat_tugas", label: "Surat Tugas / SK Kerja" },
-  { value: "portofolio", label: "Portofolio" },
+  { value: "portofolio", label: "Portofolio Pengalaman Kerja" },
   { value: "pas_foto", label: "Pas Foto" },
   { value: "sertifikat_pelatihan", label: "Sertifikat Pelatihan" },
   { value: "materi_pelatihan", label: "Materi Pelatihan (Tidak Dipakai)" },
@@ -105,8 +106,19 @@ export default async function TriagePage({
             Petakan file Google Drive ke asesi dan perbaiki jenis dokumen (docType) maupun status triase.
           </p>
         </div>
-        <div className="text-xs text-slate-600 font-mono">
-          Total: {files.length} berkas · Terfilter: {filtered.length}
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-slate-600 font-mono">
+            Total: {files.length} berkas · Terfilter: {filtered.length}
+          </span>
+          <form action={reclassifyBatchContentAction}>
+            <input type="hidden" name="batchId" value={id} />
+            <button
+              type="submit"
+              className="px-3.5 py-2 rounded-xl bg-white border border-teal-700 text-teal-800 hover:bg-teal-50 text-xs font-medium cursor-pointer"
+            >
+              Deteksi Ulang Isi Berkas (Unknown / Ambigu)
+            </button>
+          </form>
         </div>
       </div>
 
@@ -208,6 +220,20 @@ export default async function TriagePage({
                       <div className="text-xs text-slate-400 font-mono break-all">
                         {f.drivePath}
                       </div>
+                      {(f.triageReason || f.driveModifiedTime) && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
+                          {f.triageReason && (
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                              {f.triageReason}
+                            </span>
+                          )}
+                          {f.driveModifiedTime && (
+                            <span className="font-mono text-slate-500">
+                              Mod: {f.driveModifiedTime.slice(0, 10)}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4">
                       <form action={assignDriveFileAction} className="flex flex-wrap gap-2 items-center">

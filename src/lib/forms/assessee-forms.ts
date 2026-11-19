@@ -355,6 +355,7 @@ export function buildAk02Payload(params: {
   decisions: RawDecisionRow[];
   manualOverride?: OverallDecisionOverrideLike | null;
   hasDit: boolean;
+  hasDitForms?: boolean;
   hasWritten: boolean;
   hasInterview?: boolean;
   signaturePngBytes?: Buffer;
@@ -386,7 +387,7 @@ export function buildAk02Payload(params: {
     const evidenceTypes: Ak02EvidenceType[] = [];
     if (matched) evidenceTypes.push("portofolio");
     if (params.hasWritten) evidenceTypes.push("tertulis");
-    if (params.hasDit) evidenceTypes.push("proyek");
+    if (params.hasDit || params.hasDitForms) evidenceTypes.push("proyek");
     if (params.hasInterview) evidenceTypes.push("pihak_ketiga");
 
     return {

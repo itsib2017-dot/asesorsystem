@@ -2,10 +2,11 @@ import type { RuntimeLlmConfig } from "@/ai/llm";
 import { decryptSecret } from "@/lib/crypto/encryption";
 import { getConfig } from "@/lib/config/get-config";
 import { logEvent } from "@/lib/logger";
-import { normalisePersonName } from "@/lib/names";
+import { findBestMatchingCandidate } from "@/lib/names";
 import {
   getAssesseeById,
   listAssesseesByBatch,
+  pruneOrphanedDuplicateAssessees,
   saveNameJuryVerdictAndOcr,
   upsertAssesseesForBatch,
 } from "@/repositories/assessees.repository";
@@ -21,18 +22,30 @@ import {
   listDriveFilesForBatch,
   updateDriveFileExtraction,
   upsertDriveFilesForBatch,
+  type DriveFileRecord,
 } from "@/repositories/batches.repository";
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import { getActiveSignature } from "@/repositories/signatures.repository";
 import { runDitPipeline } from "@/services/dit";
 import {
+  classifyDocumentTextContent,
   classifyDriveFileName,
+  cleanCandidateLabel,
   crawlPublicDriveFolder,
+  extractCandidateNamesFromDocumentText,
   extractDriveFolderId,
-  inferCandidateNameFromDrivePath,
+  inferCandidateFromDrivePath,
+  type ClassifiedDriveFile,
 } from "@/services/drive";
-import { extractTextFromBuffer } from "@/services/extract";
+import {
+  compareDriveFileFreshnessDesc,
+  pickLatestDriveFile,
+} from "@/services/drive-revisions";
+import {
+  extractTextFromBuffer,
+  unpackSafeZipEntries,
+} from "@/services/extract";
 import {
   downloadPublicDriveFileBuffer,
   ensureDriveFileExtracted,
@@ -111,6 +124,178 @@ async function requireLlmConfig(userId: string): Promise<RuntimeLlmConfig> {
   return cfg;
 }
 
+const MAX_ZIP_ARCHIVES_PER_SCAN = 5;
+const MAX_CONTENT_INSPECT_PER_SCAN = 12;
+const SCAN_EXTRACTABLE_EXT_RE = /\.(docx|pptx|xlsx|pdf|txt|csv|md)$/i;
+
+interface ScanCandidateFile extends ClassifiedDriveFile {
+  triageStatus?: "assigned" | "unmatched" | "not_needed";
+  archiveEntryPath?: string | null;
+  extractedText?: string | null;
+  extractionMethod?: string | null;
+}
+
+async function expandZipArchivesForScan(
+  discovered: ClassifiedDriveFile[],
+  apiKey: string | undefined,
+): Promise<{ items: ScanCandidateFile[]; unpackedZipCount: number }> {
+  const output: ScanCandidateFile[] = [];
+  let unpackedZipCount = 0;
+
+  for (const file of discovered) {
+    const isZip =
+      file.fileName.toLowerCase().endsWith(".zip") ||
+      file.mimeType === "application/zip" ||
+      file.mimeType === "application/x-zip-compressed";
+
+    if (!isZip || unpackedZipCount >= MAX_ZIP_ARCHIVES_PER_SCAN) {
+      output.push(file);
+      continue;
+    }
+
+    unpackedZipCount++;
+    try {
+      const zipBuffer = await downloadPublicDriveFileBuffer({
+        driveFileId: file.driveFileId,
+        apiKey,
+      });
+      const entries = await unpackSafeZipEntries(zipBuffer);
+      const lastSlash = file.drivePath.lastIndexOf("/");
+      const zipFolder = lastSlash > 0 ? file.drivePath.slice(0, lastSlash) : "";
+
+      output.push({
+        ...file,
+        triageStatus: entries.length > 0 ? "not_needed" : undefined,
+        classificationReason:
+          entries.length > 0
+            ? `Arsip ZIP diekstrak menjadi ${entries.length} berkas`
+            : file.classificationReason,
+      });
+
+      for (const entry of entries) {
+        const syntheticPath = zipFolder ? `${zipFolder}/${entry.entryPath}` : entry.entryPath;
+        const parentPath = syntheticPath.includes("/")
+          ? syntheticPath.slice(0, syntheticPath.lastIndexOf("/"))
+          : "";
+        let cls = classifyDriveFileName(entry.fileName, parentPath);
+        let extractedText: string | null = null;
+        let extractionMethod: string | null = null;
+
+        if (SCAN_EXTRACTABLE_EXT_RE.test(entry.fileName)) {
+          try {
+            const parsed = await extractTextFromBuffer({
+              buffer: entry.buffer,
+              fileName: entry.fileName,
+              mimeType: entry.mimeType,
+            });
+            if (parsed.text.trim()) {
+              extractedText = parsed.text.trim();
+              extractionMethod = parsed.extractionMethod;
+              const byText = classifyDocumentTextContent(
+                extractedText,
+                entry.fileName,
+                parentPath,
+              );
+              if (byText) cls = byText;
+            }
+          } catch {
+            // Keep filename-based classification when ZIP member is encrypted/image PDF
+          }
+        }
+
+        output.push({
+          driveFileId: `${file.driveFileId}::${entry.entryPath}`,
+          fileName: entry.fileName,
+          mimeType: entry.mimeType,
+          drivePath: syntheticPath,
+          docType: cls.docType,
+          confidence: cls.confidence,
+          classificationReason: cls.reason,
+          modifiedTime: entry.modifiedTimeIso ?? file.modifiedTime ?? null,
+          archiveEntryPath: entry.entryPath,
+          extractedText,
+          extractionMethod,
+        });
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "ZIP tidak dapat dibuka";
+      output.push({
+        ...file,
+        classificationReason: `Arsip ZIP belum diekstrak otomatis: ${reason}`,
+      });
+    }
+  }
+
+  return { items: output, unpackedZipCount };
+}
+
+async function enrichAmbiguousFilesByContent(
+  files: ScanCandidateFile[],
+  existingByDriveId: Map<string, DriveFileRecord>,
+  apiKey: string | undefined,
+): Promise<void> {
+  let networkInspected = 0;
+
+  for (const file of files) {
+    const existing = existingByDriveId.get(file.driveFileId);
+    const parentPath = file.drivePath.includes("/")
+      ? file.drivePath.slice(0, file.drivePath.lastIndexOf("/"))
+      : "";
+
+    const cachedText = file.extractedText ?? existing?.extractedText ?? null;
+    if (cachedText) {
+      const byText = classifyDocumentTextContent(
+        cachedText,
+        file.fileName,
+        parentPath,
+      );
+      if (byText && (file.docType === "unknown" || byText.confidence > file.confidence)) {
+        file.docType = byText.docType;
+        file.confidence = byText.confidence;
+        file.classificationReason = byText.reason;
+      }
+      continue;
+    }
+
+    const isAmbiguous =
+      file.docType === "unknown" ||
+      file.docType === "portofolio" ||
+      file.confidence < 0.85;
+    if (!isAmbiguous || !SCAN_EXTRACTABLE_EXT_RE.test(file.fileName)) continue;
+    if (networkInspected >= MAX_CONTENT_INSPECT_PER_SCAN) continue;
+
+    networkInspected++;
+    try {
+      const buffer = await downloadPublicDriveFileBuffer({
+        driveFileId: file.driveFileId,
+        apiKey,
+      });
+      const parsed = await extractTextFromBuffer({
+        buffer,
+        fileName: file.fileName,
+        mimeType: file.mimeType,
+      });
+      const trimmed = parsed.text.trim();
+      if (!trimmed) continue;
+
+      file.extractedText = trimmed;
+      file.extractionMethod = parsed.extractionMethod;
+      const byText = classifyDocumentTextContent(
+        trimmed,
+        file.fileName,
+        parentPath,
+      );
+      if (byText) {
+        file.docType = byText.docType;
+        file.confidence = byText.confidence;
+        file.classificationReason = byText.reason;
+      }
+    } catch {
+      // Ignore transient/mocked download misses during scan; assessor can re-run via Triage
+    }
+  }
+}
+
 async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult> {
   const userId = requireUserId(job);
   const batchId = String(job.payload.batchId ?? "");
@@ -138,6 +323,7 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
           docType: typeof item.docType === "string" ? item.docType : cls.docType,
           confidence:
             typeof item.confidence === "number" ? item.confidence : cls.confidence,
+          triageReason: cls.reason,
           extractedText:
             typeof item.extractedText === "string" ? item.extractedText : null,
           extractionMethod:
@@ -170,57 +356,188 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
   const driveApiKey =
     payloadApiKey || (await resolveOptionalDriveApiKey(userId)) || "";
 
-  const discovered = await crawlPublicDriveFolder({
-    folderId,
-    apiKey: driveApiKey || undefined,
+  const [discovered, existingFiles, existingAssesseesBefore] = await Promise.all([
+    crawlPublicDriveFolder({
+      folderId,
+      apiKey: driveApiKey || undefined,
+    }),
+    listDriveFilesForBatch(userId, batch.id),
+    listAssesseesByBatch(userId, batch.id),
+  ]);
+
+  const existingByDriveId = new Map(existingFiles.map((f) => [f.driveFileId, f]));
+
+  const { items: expandedFiles } = await expandZipArchivesForScan(
+    discovered,
+    driveApiKey || undefined,
+  );
+
+  await enrichAmbiguousFilesByContent(
+    expandedFiles,
+    existingByDriveId,
+    driveApiKey || undefined,
+  );
+
+  const suratTugasRoster: string[] = [];
+  const inferredPerFile = expandedFiles.map((file) => {
+    const inferred = inferCandidateFromDrivePath(file.drivePath, file.fileName);
+    let candidateName = inferred.candidateName;
+    let isAuthoritativeRoster = inferred.isAuthoritativeRoster;
+
+    if (file.extractedText) {
+      if (file.docType === "surat_tugas") {
+        const names = extractCandidateNamesFromDocumentText("surat_tugas", file.extractedText);
+        suratTugasRoster.push(...names);
+      } else if (!candidateName && file.docType === "apl01") {
+        const extractedName = extractCandidateNamesFromDocumentText(
+          "apl01",
+          file.extractedText,
+        )[0];
+        if (extractedName) {
+          candidateName = extractedName;
+          isAuthoritativeRoster = true;
+        }
+      }
+    }
+
+    return { file, candidateName, isAuthoritativeRoster };
   });
 
-  const inferredPerFile = discovered.map((f) => ({
-    file: f,
-    candidateName: inferCandidateNameFromDrivePath(f.drivePath, f.fileName),
-  }));
-
-  const candidateNames = Array.from(
+  const authoritativeNames = Array.from(
+    new Set([
+      ...inferredPerFile
+        .filter((x) => x.isAuthoritativeRoster && x.candidateName && x.candidateName.length > 1)
+        .map((x) => x.candidateName as string),
+      ...suratTugasRoster,
+    ]),
+  );
+  const nonAuthNames = Array.from(
     new Set(
       inferredPerFile
-        .map((x) => x.candidateName)
-        .filter((n): n is string => Boolean(n && n.length > 1)),
+        .filter((x) => !x.isAuthoritativeRoster && x.candidateName && x.candidateName.length > 1)
+        .map((x) => x.candidateName as string),
     ),
   );
 
-  const assesseeRecords =
-    candidateNames.length > 0
-      ? await upsertAssesseesForBatch({
-          userId,
-          lspId: batch.lspId,
-          batchId: batch.id,
-          names: candidateNames,
-        })
-      : await listAssesseesByBatch(userId, batch.id);
+  let upsertedRecords = existingAssesseesBefore;
+  const canonicalIds = new Set<string>();
+  const staleDuplicateIds = new Set<string>();
+
+  if (authoritativeNames.length > 0) {
+    const authUpserted = await upsertAssesseesForBatch({
+      userId,
+      lspId: batch.lspId,
+      batchId: batch.id,
+      names: authoritativeNames,
+    });
+    upsertedRecords = authUpserted;
+
+    const canonicalTargets: Array<{ id: string; displayName: string }> = [];
+    for (const authName of authoritativeNames) {
+      const m = findBestMatchingCandidate(authName, authUpserted);
+      if (m) {
+        canonicalIds.add(m.id);
+        canonicalTargets.push(m);
+      }
+    }
+
+    for (const existing of existingAssesseesBefore) {
+      if (canonicalIds.has(existing.id) || existing.certificateNameConfirmed) continue;
+      const cleanedExisting = cleanCandidateLabel(existing.displayName);
+      const dupMatch = findBestMatchingCandidate(
+        cleanedExisting || existing.displayName,
+        canonicalTargets,
+      );
+      if (dupMatch) {
+        staleDuplicateIds.add(existing.id);
+      }
+    }
+
+    const trulyNewNonAuth = nonAuthNames.filter(
+      (name) => !findBestMatchingCandidate(name, canonicalTargets),
+    );
+    if (trulyNewNonAuth.length > 0) {
+      upsertedRecords = await upsertAssesseesForBatch({
+        userId,
+        lspId: batch.lspId,
+        batchId: batch.id,
+        names: trulyNewNonAuth,
+      });
+    }
+  } else {
+    const fallbackNames = Array.from(new Set([...nonAuthNames]));
+    if (fallbackNames.length > 0) {
+      upsertedRecords = await upsertAssesseesForBatch({
+        userId,
+        lspId: batch.lspId,
+        batchId: batch.id,
+        names: fallbackNames,
+      });
+    }
+  }
+
+  const latestAssessees = await listAssesseesByBatch(userId, batch.id);
+  const assesseePool = latestAssessees.length > 0 ? latestAssessees : upsertedRecords;
+  const matchTargets = assesseePool.filter((a) => !staleDuplicateIds.has(a.id));
 
   const enrichedFiles = inferredPerFile.map(({ file, candidateName }) => {
-    if (!candidateName) {
+    const existing = existingByDriveId.get(file.driveFileId);
+    const matched = candidateName
+      ? findBestMatchingCandidate(candidateName, matchTargets)
+      : undefined;
+
+    if (matched) {
       return {
-        ...file,
-        assesseeId: null,
+        driveFileId: file.driveFileId,
+        fileName: file.fileName,
+        mimeType: file.mimeType,
+        drivePath: file.drivePath,
+        docType: file.docType,
+        confidence: file.confidence,
+        assesseeId: matched.id,
         triageStatus:
-          file.docType === "materi_pelatihan"
+          file.docType === "materi_pelatihan" || file.triageStatus === "not_needed"
             ? ("not_needed" as const)
-            : ("unmatched" as const),
+            : ("assigned" as const),
+        triageReason:
+          file.classificationReason ?? `Cocok ke ${matched.displayName}`,
+        driveModifiedTime: file.modifiedTime ?? null,
+        archiveEntryPath: file.archiveEntryPath ?? null,
+        ...(file.extractedText ? { extractedText: file.extractedText } : {}),
+        ...(file.extractionMethod ? { extractionMethod: file.extractionMethod } : {}),
       };
     }
-    const candNorm = normalisePersonName(candidateName);
-    const matched = assesseeRecords.find((a) => {
-      const aNorm = normalisePersonName(a.displayName);
-      return (
-        Boolean(aNorm && candNorm) &&
-        (aNorm === candNorm || aNorm.includes(candNorm) || candNorm.includes(aNorm))
-      );
-    });
+
+    const keepManualAssessee =
+      existing?.assesseeId &&
+      existing.triageStatus === "assigned" &&
+      !staleDuplicateIds.has(existing.assesseeId)
+        ? existing.assesseeId
+        : null;
+
+    const status =
+      file.docType === "materi_pelatihan" || file.triageStatus === "not_needed"
+        ? ("not_needed" as const)
+        : keepManualAssessee
+          ? ("assigned" as const)
+          : ("unmatched" as const);
+
     return {
-      ...file,
-      assesseeId: matched?.id ?? null,
-      triageStatus: matched ? ("assigned" as const) : ("unmatched" as const),
+      driveFileId: file.driveFileId,
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+      drivePath: file.drivePath,
+      docType: file.docType,
+      confidence: file.confidence,
+      assesseeId: keepManualAssessee,
+      triageStatus: status,
+      triageReason: candidateName
+        ? `Kandidat "${candidateName}" belum cocok unik — perlu verifikasi di Triage (${file.classificationReason ?? file.docType})`
+        : (file.classificationReason ?? "Berkas belum dipetakan ke asesi"),
+      driveModifiedTime: file.modifiedTime ?? null,
+      archiveEntryPath: file.archiveEntryPath ?? null,
+      ...(file.extractedText ? { extractedText: file.extractedText } : {}),
+      ...(file.extractionMethod ? { extractionMethod: file.extractionMethod } : {}),
     };
   });
 
@@ -231,12 +548,18 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     files: enrichedFiles,
   });
 
+  const prunedIds = await pruneOrphanedDuplicateAssessees({
+    userId,
+    batchId: batch.id,
+  });
+
   return {
     status: "done",
     progress: 100,
     meta: {
       scannedFiles: savedCount,
-      discoveredAssessees: assesseeRecords.length,
+      discoveredAssessees: Math.max(0, matchTargets.length),
+      prunedDuplicateAssessees: prunedIds.length,
       folderId,
     },
   };
@@ -377,6 +700,8 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
 
   const files = await listDriveFilesForBatch(userId, batch.id);
   const assesseeFiles = files.filter((f) => f.assesseeId === assessee.id);
+  const schemes = await listSchemes(userId, assessee.lspId);
+  const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
 
   const payload04a = typeof job.payload.frIa04aText === "string" ? job.payload.frIa04aText.trim() : "";
   const payload04b =
@@ -397,6 +722,8 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
       ? await resolveAssesseeDitInputs({
           userId,
           files: assesseeFiles,
+          batchFiles: files,
+          scheme,
           apiKey: driveApiKey,
         })
       : null;
@@ -405,8 +732,6 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
   const presentationTranscript = payload04b || resolvedInputs?.presentationTranscript || "";
   const candidateProfileSummary = payloadCv || resolvedInputs?.candidateProfileSummary || "";
 
-  const schemes = await listSchemes(userId, assessee.lspId);
-  const scheme = schemes.find((s) => s.id === batch.schemeId);
   const llmConfig = await requireLlmConfig(userId);
 
   const result = await runDitPipeline({
@@ -498,9 +823,11 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
     mapping.kunci.toLowerCase(),
     mapping.jawaban.toLowerCase(),
   ]);
-  const candidateFiles = files.filter(
-    (f) => (!f.assesseeId || f.assesseeId === assessee.id) && relevantDocTypes.has(f.docType.toLowerCase()),
-  );
+  const candidateFiles = files
+    .filter(
+      (f) => (!f.assesseeId || f.assesseeId === assessee.id) && relevantDocTypes.has(f.docType.toLowerCase()),
+    )
+    .sort(compareDriveFileFreshnessDesc);
   const needsDriveExtraction =
     (!job.payload.masterKeyText || !job.payload.studentAnswerText) &&
     candidateFiles.some((f) => !f.extractedText);
@@ -510,6 +837,9 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
 
   const byDocType: Record<string, string> = {};
   for (const f of candidateFiles) {
+    const upperKey = f.docType.toUpperCase();
+    // candidateFiles is sorted newest-first; keep newest extractable revision per docType
+    if (byDocType[upperKey]) continue;
     let text = f.extractedText ?? "";
     if (!text) {
       const extracted = await ensureDriveFileExtracted({
@@ -520,7 +850,7 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
       text = extracted.text ?? "";
     }
     if (!text) continue;
-    byDocType[f.docType.toUpperCase()] = text;
+    byDocType[upperKey] = text;
     byDocType[f.docType.toLowerCase()] = text;
   }
 
@@ -612,8 +942,10 @@ async function handleSimilarityRunJob(job: WorkerJobInput): Promise<WorkerJobRes
       const slice = assessees.slice(i, i + CHUNK);
       const batchTexts = await Promise.all(
         slice.map(async (a) => {
-          const targetFile = files.find(
-            (f) => f.assesseeId === a.id && f.docType.toLowerCase() === answerDocType,
+          const targetFile = pickLatestDriveFile(
+            files.filter(
+              (f) => f.assesseeId === a.id && f.docType.toLowerCase() === answerDocType,
+            ),
           );
           if (!targetFile) return { assesseeId: a.id, text: "" };
           const outcome = await ensureDriveFileExtracted({

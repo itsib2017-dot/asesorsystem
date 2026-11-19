@@ -15,6 +15,138 @@ export function isOleEncryptedBuffer(buffer: Buffer): boolean {
   return OLE_MAGIC_BYTES.every((byte, idx) => buffer[idx] === byte);
 }
 
+export interface SafeZipEntry {
+  entryPath: string;
+  fileName: string;
+  mimeType: string;
+  buffer: Buffer;
+  modifiedTimeIso: string | null;
+}
+
+const MAX_ZIP_ARCHIVE_BYTES = 15 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 120;
+const MAX_ZIP_UNCOMPRESSED_BYTES = 40 * 1024 * 1024;
+const ZIP_EXTRACTABLE_EXT_RE = /\.(docx|doc|pptx|ppt|xlsx|xls|pdf|txt|csv|md|jpe?g|png|webp)$/i;
+
+export function inferMimeTypeFromFileName(fileName: string): string {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".docx")) {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (lower.endsWith(".doc")) return "application/msword";
+  if (lower.endsWith(".pptx")) {
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  }
+  if (lower.endsWith(".ppt")) return "application/vnd.ms-powerpoint";
+  if (lower.endsWith(".xlsx")) {
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  }
+  if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".zip")) return "application/zip";
+  if (lower.endsWith(".csv")) return "text/csv";
+  return "application/octet-stream";
+}
+
+/**
+ * Rebuilds a malformed OOXML zip whose CRC-32 header bytes were zeroed by non-Word tools
+ * (adapted safely from MUK desktop helper `perbaiki_docx`), keeping operations strictly in memory.
+ */
+async function loadZipLenient(buffer: Buffer): Promise<JSZip> {
+  try {
+    return await JSZip.loadAsync(buffer, { checkCRC32: true });
+  } catch {
+    return await JSZip.loadAsync(buffer, { checkCRC32: false });
+  }
+}
+
+export async function repairBrokenZipCrcBuffer(buffer: Buffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(buffer, { checkCRC32: false });
+  const rebuilt = new JSZip();
+  const names = Object.keys(zip.files);
+  for (const name of names) {
+    const entry = zip.files[name];
+    if (!entry || entry.dir) continue;
+    const content = await entry.async("nodebuffer");
+    rebuilt.file(name, content, { date: entry.date });
+  }
+  return rebuilt.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+}
+
+/**
+ * Safely unpacks uploaded `.zip` archives in memory with path-traversal sanitization,
+ * entry-count limits, and uncompressed bomb guards while preserving entry `date` (`mtime`).
+ */
+export async function unpackSafeZipEntries(
+  buffer: Buffer,
+  options?: {
+    maxArchiveBytes?: number;
+    maxEntries?: number;
+    maxUncompressedBytes?: number;
+  },
+): Promise<SafeZipEntry[]> {
+  const maxArchive = options?.maxArchiveBytes ?? MAX_ZIP_ARCHIVE_BYTES;
+  const maxEntries = options?.maxEntries ?? MAX_ZIP_ENTRIES;
+  const maxUncompressed = options?.maxUncompressedBytes ?? MAX_ZIP_UNCOMPRESSED_BYTES;
+
+  if (buffer.length === 0 || buffer.length > maxArchive) {
+    throw new Error(`ZIP_TOO_LARGE: Ukuran arsip melebihi batas ${(maxArchive / (1024 * 1024)).toFixed(0)} MB.`);
+  }
+
+  const zip = await loadZipLenient(buffer);
+  const results: SafeZipEntry[] = [];
+  let totalBytes = 0;
+
+  for (const rawName of Object.keys(zip.files)) {
+    const entry = zip.files[rawName];
+    if (!entry || entry.dir) continue;
+
+    const normalizedPath = rawName.replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!normalizedPath || normalizedPath.includes("..") || normalizedPath.includes("\0")) {
+      continue;
+    }
+
+    const baseName = normalizedPath.split("/").pop() ?? "";
+    if (
+      !baseName ||
+      normalizedPath.startsWith("__MACOSX/") ||
+      baseName.startsWith("._") ||
+      baseName === ".DS_Store" ||
+      baseName.startsWith("~$") ||
+      !ZIP_EXTRACTABLE_EXT_RE.test(baseName)
+    ) {
+      continue;
+    }
+
+    if (results.length >= maxEntries) {
+      break;
+    }
+
+    const entryBuf = await entry.async("nodebuffer");
+    totalBytes += entryBuf.length;
+    if (totalBytes > maxUncompressed) {
+      throw new Error("ZIP_UNCOMPRESSED_LIMIT: Total isi arsip melebihi batas keamanan ekstraksi.");
+    }
+    if (entryBuf.length === 0) continue;
+
+    results.push({
+      entryPath: normalizedPath,
+      fileName: baseName,
+      mimeType: inferMimeTypeFromFileName(baseName),
+      buffer: entryBuf,
+      modifiedTimeIso:
+        entry.date instanceof Date && !Number.isNaN(entry.date.getTime())
+          ? entry.date.toISOString()
+          : null,
+    });
+  }
+
+  return results;
+}
+
 export async function extractTextFromDocx(buffer: Buffer): Promise<{
   text: string;
   embeddedImageCount: number;
@@ -23,11 +155,19 @@ export async function extractTextFromDocx(buffer: Buffer): Promise<{
     throw new Error("KEY_ENCRYPTED: Dokumen OOXML terenkripsi memerlukan kata sandi runtime.");
   }
 
-  const result = await mammoth.extractRawText({ buffer });
+  let effectiveBuffer = buffer;
+  let result: { value: string };
+  try {
+    result = await mammoth.extractRawText({ buffer: effectiveBuffer });
+  } catch {
+    effectiveBuffer = await repairBrokenZipCrcBuffer(buffer);
+    result = await mammoth.extractRawText({ buffer: effectiveBuffer });
+  }
+
   // Detect embedded images in word/media inside OOXML zip container (D12: never silently drop)
   let embeddedImageCount = 0;
   try {
-    const zip = await JSZip.loadAsync(buffer);
+    const zip = await loadZipLenient(effectiveBuffer);
     embeddedImageCount = Object.keys(zip.files).filter((name) =>
       name.startsWith("word/media/"),
     ).length;
@@ -42,7 +182,7 @@ export async function extractTextFromDocx(buffer: Buffer): Promise<{
 }
 
 export async function extractTextFromPptx(buffer: Buffer): Promise<string> {
-  const zip = await JSZip.loadAsync(buffer);
+  const zip = await loadZipLenient(buffer);
   const slideKeys = Object.keys(zip.files)
     .filter((k) => /^ppt\/(slides\/slide|notesSlides\/notesSlide)\d+\.xml$/.test(k))
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));

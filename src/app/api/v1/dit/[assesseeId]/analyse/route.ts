@@ -5,8 +5,9 @@ import { decryptSecret } from "@/lib/crypto/encryption";
 import { apiError, apiSuccess } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import { getAssesseeById } from "@/repositories/assessees.repository";
-import { listDriveFilesForBatch } from "@/repositories/batches.repository";
+import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
+import { listSchemes } from "@/repositories/schemes.repository";
 import { checkDitCompletenessGate } from "@/services/dit";
 import { resolveAssesseeDitInputs } from "@/services/drive-extract";
 import { enqueueJob } from "@/worker/queue";
@@ -68,11 +69,14 @@ export async function POST(
   };
 
   if (!body04a || !body04b || !bodyCv) {
-    const [batchFiles, providerCfg] = await Promise.all([
+    const [batchFiles, batch, schemes, providerCfg] = await Promise.all([
       listDriveFilesForBatch(user.id, assessee.batchId),
+      getBatchById(user.id, assessee.batchId),
+      listSchemes(user.id, assessee.lspId),
       getLatestProviderConfigForAssessor(user.id),
     ]);
     const assesseeFiles = batchFiles.filter((f) => f.assesseeId === assesseeId);
+    const scheme = batch?.schemeId ? (schemes.find((s) => s.id === batch.schemeId) ?? null) : null;
     let driveApiKey: string | undefined;
     if (providerCfg?.googleDriveApiKeyEncrypted) {
       try {
@@ -85,6 +89,8 @@ export async function POST(
     const fromDb = await resolveAssesseeDitInputs({
       userId: user.id,
       files: assesseeFiles,
+      batchFiles,
+      scheme,
       apiKey: driveApiKey,
     });
 

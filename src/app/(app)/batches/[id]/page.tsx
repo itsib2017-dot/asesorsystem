@@ -18,6 +18,7 @@ import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { getLatestJobForBatch } from "@/repositories/jobs.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import { resolveSchemeDocColumns } from "@/lib/forms/assessee-forms";
+import { pickLatestDriveFile } from "@/services/drive-revisions";
 import { enqueueJob } from "@/worker/queue";
 import { CompletenessMatrix, type CompletenessRow } from "@/components/batch/completeness-matrix";
 import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
@@ -81,7 +82,12 @@ export default async function BatchDetailPage({
     const docs: Record<string, "complete" | "warning" | "missing"> = {};
     for (const col of docColumns) {
       const key = col.toLowerCase().replace(/\./g, "").replace(/\s+/g, "_");
-      const matched = aFiles.find((f) => f.docType === key);
+      const matching = aFiles.filter((f) =>
+        key === "04b"
+          ? f.docType === "04b" || f.docType === "dit_form"
+          : f.docType === key,
+      );
+      const matched = pickLatestDriveFile(matching);
       docs[col] = matched
         ? matched.ocrConfidence !== null && matched.ocrConfidence < ktpOcrMinConfidence
           ? "warning"

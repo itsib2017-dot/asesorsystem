@@ -9,6 +9,11 @@ import {
   listDecisionsForAssessee,
 } from "@/repositories/assessment.repository";
 import { checkDitCompletenessGate } from "@/services/dit";
+import { formatSchemeInstructionsText } from "@/services/drive-extract";
+import {
+  deduplicateFilesByLatestRevision,
+  pickLatestDriveFile,
+} from "@/services/drive-revisions";
 import { Ia04bBlankoPreview } from "@/components/forms/ia04b-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import {
@@ -47,18 +52,47 @@ export default async function DitAnalysisPage({
     getAssesseeDecisionOverride(user.id, assesseeId),
   ]);
   const assesseeFiles = files.filter((f) => f.assesseeId === assesseeId);
-  const file04a = assesseeFiles.find((f) => f.docType === "04a") ?? null;
-  const file04b = assesseeFiles.find((f) => f.docType === "04b") ?? null;
-  const fileCv = assesseeFiles.find((f) => f.docType === "cv") ?? null;
+  const assessee04a = deduplicateFilesByLatestRevision(
+    assesseeFiles.filter((f) => f.docType === "04a"),
+  );
+  const sharedBatch04a =
+    assessee04a.length === 0
+      ? deduplicateFilesByLatestRevision(
+          files.filter((f) => !f.assesseeId && f.docType === "04a"),
+        )
+      : [];
+  const used04aFiles = assessee04a.length > 0 ? assessee04a : sharedBatch04a;
+  const scheme04aFallback =
+    used04aFiles.length === 0 ? formatSchemeInstructionsText(common.scheme) : "";
 
-  const fr04a = file04a?.extractedText ?? null;
-  const presentation = file04b?.extractedText ?? null;
-  const cv = fileCv?.extractedText ?? null;
+  const used04bFiles = deduplicateFilesByLatestRevision(
+    assesseeFiles.filter((f) => f.docType === "04b"),
+  );
+  const usedDitFormFiles = deduplicateFilesByLatestRevision(
+    assesseeFiles.filter((f) => f.docType === "dit_form"),
+  );
+  const combinedDitFiles = [...used04bFiles, ...usedDitFormFiles];
+
+  const fileCv =
+    pickLatestDriveFile(assesseeFiles.filter((f) => f.docType === "cv")) ??
+    pickLatestDriveFile(assesseeFiles.filter((f) => f.docType === "portofolio"));
+
+  const fr04aExtracted = used04aFiles
+    .map((f) => f.extractedText?.trim())
+    .filter(Boolean)
+    .join("\n\n") || scheme04aFallback || null;
+  const ditExtracted =
+    combinedDitFiles
+      .map((f) => f.extractedText?.trim())
+      .filter(Boolean)
+      .join("\n\n") || null;
+  const cvExtracted = fileCv?.extractedText?.trim() || null;
 
   const gate = checkDitCompletenessGate({
-    frIa04aText: fr04a ?? (file04a ? "pending-drive-extraction" : null),
-    presentationTranscript: presentation ?? (file04b ? "pending-drive-extraction" : null),
-    candidateProfileSummary: cv ?? (fileCv ? "pending-drive-extraction" : null),
+    frIa04aText: fr04aExtracted ?? (used04aFiles.length > 0 ? "pending-drive-extraction" : null),
+    presentationTranscript:
+      ditExtracted ?? (combinedDitFiles.length > 0 ? "pending-drive-extraction" : null),
+    candidateProfileSummary: cvExtracted ?? (fileCv ? "pending-drive-extraction" : null),
   });
 
   const ia04bPayload = buildIa04bPayload({
@@ -131,18 +165,27 @@ export default async function DitAnalysisPage({
         inputs={{
           fr04a: {
             label: "FR.IA.04A (Instruksi DIT)",
-            fileName: file04a?.fileName ?? null,
-            hasExtractedText: Boolean(fr04a?.trim()),
+            fileName: used04aFiles[0]?.fileName ?? null,
+            fileNames: used04aFiles.map((f) => f.fileName),
+            sourceNote:
+              used04aFiles.length === 0 && scheme04aFallback
+                ? `Skema ${common.scheme?.code ?? common.schemeTitle}`
+                : assessee04a.length === 0 && sharedBatch04a.length > 0
+                  ? `Batch 04A (${sharedBatch04a[0]?.fileName ?? ""})`
+                  : null,
+            hasExtractedText: Boolean(fr04aExtracted),
           },
           fr04b: {
-            label: "Presentasi / 04B",
-            fileName: file04b?.fileName ?? null,
-            hasExtractedText: Boolean(presentation?.trim()),
+            label: "Tugas DIT (04B & Formulir)",
+            fileName: combinedDitFiles[0]?.fileName ?? null,
+            fileNames: combinedDitFiles.map((f) => f.fileName),
+            hasExtractedText: Boolean(ditExtracted),
           },
           cv: {
             label: "Profil Kandidat (CV)",
             fileName: fileCv?.fileName ?? null,
-            hasExtractedText: Boolean(cv?.trim()),
+            fileNames: fileCv ? [fileCv.fileName] : [],
+            hasExtractedText: Boolean(cvExtracted),
           },
         }}
       />

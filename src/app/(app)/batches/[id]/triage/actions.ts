@@ -5,12 +5,19 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { getUser } from "@/lib/auth/get-session";
+import { decryptSecret } from "@/lib/crypto/encryption";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { getAssesseeById } from "@/repositories/assessees.repository";
+import {
+  getAssesseeById,
+  listAssesseesByBatch,
+} from "@/repositories/assessees.repository";
 import {
   getBatchById,
+  listDriveFilesForBatch,
   updateDriveFileTriage,
 } from "@/repositories/batches.repository";
+import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
+import { reclassifyBatchFilesByContent } from "@/services/drive-extract";
 
 const triageSchema = z.object({
   batchId: z.string().uuid(),
@@ -71,6 +78,70 @@ export async function assignDriveFileAction(formData: FormData) {
           docType: docType ?? null,
           triageStatus,
         },
+      },
+      supabase,
+    );
+  } catch {
+    // non-fatal audit error
+  }
+
+  revalidatePath(`/batches/${batchId}/triage`);
+  revalidatePath(`/batches/${batchId}`);
+}
+
+const reclassifyBatchSchema = z.object({
+  batchId: z.string().uuid(),
+});
+
+export async function reclassifyBatchContentAction(formData: FormData): Promise<void> {
+  const user = await getUser();
+  if (!user) return;
+
+  const parsed = reclassifyBatchSchema.safeParse({
+    batchId: String(formData.get("batchId") ?? "").trim(),
+  });
+  if (!parsed.success) return;
+
+  const { batchId } = parsed.data;
+  const [batch, authz] = await Promise.all([
+    getBatchById(user.id, batchId),
+    resolveAuthorizedLsp(user.id, ["lsp_admin", "tuk_admin", "assessor"]),
+  ]);
+  if (!batch || !authz.allowed) return;
+
+  const [files, assessees, providerCfg] = await Promise.all([
+    listDriveFilesForBatch(user.id, batchId),
+    listAssesseesByBatch(user.id, batchId),
+    getLatestProviderConfigForAssessor(user.id),
+  ]);
+
+  let apiKey: string | undefined;
+  if (providerCfg?.googleDriveApiKeyEncrypted) {
+    try {
+      apiKey = decryptSecret(providerCfg.googleDriveApiKeyEncrypted) || undefined;
+    } catch {
+      apiKey = undefined;
+    }
+  }
+
+  const summary = await reclassifyBatchFilesByContent({
+    userId: user.id,
+    files,
+    assessees,
+    apiKey,
+    maxInspect: 12,
+  });
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        lsp_id: batch.lspId,
+        actor_id: user.id,
+        action: "triage.content.reclassify",
+        resource: "batches",
+        resource_id: batchId,
+        after_summary: summary,
       },
       supabase,
     );

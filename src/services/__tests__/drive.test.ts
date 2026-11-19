@@ -1,7 +1,10 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
+  classifyDocumentTextContent,
   classifyDriveFileName,
   crawlPublicDriveFolder,
+  extractCandidateNamesFromDocumentText,
+  inferCandidateFromDrivePath,
   inferCandidateNameFromDrivePath,
 } from "../drive";
 
@@ -103,6 +106,12 @@ describe("Drive folder crawling & BNSP path classification", () => {
         "Tugas_DIT_Andi.docx",
         "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT/Andi",
       ).docType,
+    ).toBe("04b");
+    expect(
+      classifyDriveFileName(
+        "FR.IA.04A_Instruksi_DIT.docx",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT",
+      ).docType,
     ).toBe("04a");
     expect(
       classifyDriveFileName("01. Pengantar Pelatihan K3.pdf", "").docType,
@@ -146,6 +155,12 @@ describe("Drive folder crawling & BNSP path classification", () => {
     expect(
       classifyDriveFileName(
         "IBPR_Area_Produksi.pdf",
+        "Persyaratan/1. Budi",
+      ).docType,
+    ).toBe("dit_form");
+    expect(
+      classifyDriveFileName(
+        "Paklaring_Pengalaman_Kerja_Budi.pdf",
         "Persyaratan/1. Budi",
       ).docType,
     ).toBe("portofolio");
@@ -224,5 +239,94 @@ describe("Drive folder crawling & BNSP path classification", () => {
     const files = await crawlPublicDriveFolder({ folderId: "root-with-broken" });
     expect(files).toHaveLength(1);
     expect(files[0]?.driveFileId).toBe("doc1");
+  });
+
+  it("classifies multi-part DIT forms as dit_form, supports multi-format DIT, and handles real-world filename typos (R8)", () => {
+    expect(classifyDriveFileName("1. Form IBPR.docx", "Persyaratan/1. Bagas").docType).toBe("dit_form");
+    expect(classifyDriveFileName("2. Form ERP.pdf", "Tugas DIT/Bagas").docType).toBe("dit_form");
+    expect(classifyDriveFileName("3. Form Work Permit.docx", "").docType).toBe("dit_form");
+    expect(classifyDriveFileName("4. Form Inspeksi P3K.pdf", "").docType).toBe("dit_form");
+    expect(classifyDriveFileName("5. Form Investigasi Kecelakaan.docx", "").docType).toBe("dit_form");
+
+    expect(
+      classifyDriveFileName("Tugas_Presentasi_Budi.pdf", "Pelatihan AK3/Tugas DIT/Budi").docType,
+    ).toBe("04b");
+    expect(
+      classifyDriveFileName("Kelompok Pekerjaan 1.docx", "Pelatihan AK3/Tugas DIT/Budi").docType,
+    ).toBe("04b");
+    expect(classifyDriveFileName("Naila pass poto.jpeg", "Persyaratan/Naila").docType).toBe("pas_foto");
+    expect(classifyDriveFileName("SUKET S2.jpeg", "Persyaratan/Naila").docType).toBe("ijazah");
+    expect(
+      classifyDriveFileName("SK Kenaikan Pangkat III.b Faradhila.pdf", "Persyaratan/Faradhila").docType,
+    ).toBe("surat_tugas");
+  });
+
+  it("infers underscore DIT names, cleans folder prefixes/suffixes, and distinguishes authoritative roster (R8)", () => {
+    expect(
+      inferCandidateNameFromDrivePath(
+        "Pelatihan AK3/Tugas DIT/DIT_Faradhila A.Manaf.ppt",
+        "DIT_Faradhila A.Manaf.ppt",
+      ),
+    ).toBe("Faradhila A.Manaf");
+    expect(
+      inferCandidateNameFromDrivePath(
+        "Pelatihan AK3/Tugas DIT/TUGAS SUANGI/Paparan.pptx",
+        "Paparan.pptx",
+      ),
+    ).toBe("SUANGI");
+    expect(
+      inferCandidateNameFromDrivePath(
+        "Pelatihan AK3/Tugas DIT/BAGAS K3/IBPR.pdf",
+        "IBPR.pdf",
+      ),
+    ).toBe("BAGAS");
+    expect(
+      inferCandidateNameFromDrivePath(
+        "Pelatihan AK3/AK3U LSP K3 Nasional.zip",
+        "AK3U LSP K3 Nasional.zip",
+      ),
+    ).toBeNull();
+    expect(
+      inferCandidateFromDrivePath(
+        "Persyaratan Pelatihan/1. Bagas Priambodo/KTP.jpg",
+        "KTP.jpg",
+      ).isAuthoritativeRoster,
+    ).toBe(true);
+    expect(
+      inferCandidateFromDrivePath(
+        "Tugas DIT/Bagas Priambodo/Presentasi.pptx",
+        "Presentasi.pptx",
+      ).isAuthoritativeRoster,
+    ).toBe(false);
+  });
+
+  it("classifies unlabeled files from extracted document content and extracts roster names", () => {
+    expect(
+      classifyDocumentTextContent(
+        "Formulir Identifikasi Bahaya dan Penilaian Risiko (IBPR) area boiler",
+        "Lampiran_1.pdf",
+      )?.docType,
+    ).toBe("dit_form");
+
+    expect(
+      classifyDocumentTextContent(
+        "FR.IA.06C LEMBAR JAWABAN TERTULIS ESAI peserta sertifikasi",
+        "scan_doc.docx",
+      )?.docType,
+    ).toBe("06c");
+
+    expect(
+      extractCandidateNamesFromDocumentText(
+        "apl01",
+        "FR.APL.01 Nama lengkap: Faradhila Aushafiana Manaf\nNIK: 3174000000000001",
+      ),
+    ).toEqual(["Faradhila Aushafiana Manaf"]);
+
+    expect(
+      extractCandidateNamesFromDocumentText(
+        "surat_tugas",
+        "SURAT TUGAS\nDAFTAR PESERTA\n1. Bagas Priambodo\n2. Kiki Triyana\n",
+      ),
+    ).toEqual(["Bagas Priambodo", "Kiki Triyana"]);
   });
 });

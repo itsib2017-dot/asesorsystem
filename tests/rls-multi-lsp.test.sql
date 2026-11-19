@@ -400,6 +400,17 @@ BEGIN
   END;
 END $mut$;
 
+-- T5.4: Assessor A cannot delete cross-LSP assessee in LSP-B (0 rows affected)
+WITH deleted_cross AS (
+  DELETE FROM public.assessees
+  WHERE id = 'b3000000-0000-0000-0000-000000000001'
+  RETURNING id
+)
+INSERT INTO test_results (test_id, role_tested, target_lsp, resource, expected, actual, status)
+SELECT 'RLS-36', 'assessor', 'LSP-B', 'assessees (cross-delete)', '0', count(*)::text,
+       CASE WHEN count(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM deleted_cross;
+
 -- Switch back to postgres session to query results
 RESET ROLE;
 

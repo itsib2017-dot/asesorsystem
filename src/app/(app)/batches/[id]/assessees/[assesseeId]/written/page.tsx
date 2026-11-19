@@ -4,6 +4,7 @@ import { KeyRound, ShieldAlert, CheckCircle2, Clock } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { getLatestWrittenGrading } from "@/repositories/assessment.repository";
 import { listDriveFilesForBatch } from "@/repositories/batches.repository";
+import { pickLatestDriveFile } from "@/services/drive-revisions";
 import { Ia06cBlankoPreview } from "@/components/forms/ia06c-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import { buildIa06cPayload } from "@/lib/forms/assessee-forms";
@@ -47,14 +48,16 @@ export default async function WrittenGradingPage({
     writtenGrading: grading as Record<string, unknown> | null,
   });
 
-  const masterKeyFile =
-    batchFiles.find(
+  const masterKeyFile = pickLatestDriveFile(
+    batchFiles.filter(
       (f) => f.docType.toLowerCase() === "06b" && (!f.assesseeId || f.assesseeId === assesseeId),
-    ) ?? null;
-  const studentAnswerFile =
-    batchFiles.find(
+    ),
+  );
+  const studentAnswerFile = pickLatestDriveFile(
+    batchFiles.filter(
       (f) => f.assesseeId === assesseeId && f.docType.toLowerCase() === "06c",
-    ) ?? null;
+    ),
+  );
   const itemVerdicts = Array.isArray(grading?.item_verdicts ?? grading?.itemVerdicts)
     ? ((grading?.item_verdicts ?? grading?.itemVerdicts) as Array<Record<string, unknown>>)
     : [];

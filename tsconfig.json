@@ -37,6 +37,8 @@
     ".agents",
     ".pi",
     ".openclaw-plugin",
-    "configs"
+    "configs",
+    "_backups_",
+    "_documentations_"
   ]
 }

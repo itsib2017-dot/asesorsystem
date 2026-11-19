@@ -34,6 +34,9 @@ export interface DriveFileRecord {
   extractedText: string | null;
   extractionMethod: string | null;
   ocrConfidence: number | null;
+  driveModifiedTime: string | null;
+  archiveParentId: string | null;
+  archiveEntryPath: string | null;
 }
 
 export async function listBatchesForUser(userId: string): Promise<BatchSummary[]> {
@@ -222,6 +225,9 @@ export async function listDriveFilesForBatch(
       extractedText: r.extractedText,
       extractionMethod: r.extractionMethod,
       ocrConfidence: r.ocrConfidence ? Number(r.ocrConfidence) : null,
+      driveModifiedTime: r.driveModifiedTime?.toISOString() ?? null,
+      archiveParentId: r.archiveParentId ?? null,
+      archiveEntryPath: r.archiveEntryPath ?? null,
     }));
   }
 
@@ -244,6 +250,9 @@ export async function listDriveFilesForBatch(
     extractedText: (r.extracted_text as string | null) ?? null,
     extractionMethod: (r.extraction_method as string | null) ?? null,
     ocrConfidence: r.ocr_confidence != null ? Number(r.ocr_confidence) : null,
+    driveModifiedTime: (r.drive_modified_time as string | null) ?? null,
+    archiveParentId: (r.archive_parent_id as string | null) ?? null,
+    archiveEntryPath: (r.archive_entry_path as string | null) ?? null,
   }));
 }
 
@@ -295,8 +304,13 @@ export async function upsertDriveFilesForBatch(params: {
     confidence: number;
     assesseeId?: string | null;
     triageStatus?: "unmatched" | "suggested" | "assigned" | "not_needed";
+    triageReason?: string | null;
     extractedText?: string | null;
     extractionMethod?: string | null;
+    ocrConfidence?: number | null;
+    driveModifiedTime?: string | null;
+    archiveParentId?: string | null;
+    archiveEntryPath?: string | null;
   }>;
 }): Promise<number> {
   if (params.files.length === 0) return 0;
@@ -316,6 +330,10 @@ export async function upsertDriveFilesForBatch(params: {
           const existingId = existingMap.get(f.driveFileId);
           const resolvedStatus =
             f.triageStatus ?? (f.assesseeId ? "assigned" : "unmatched");
+          const parsedModified =
+            f.driveModifiedTime && !Number.isNaN(Date.parse(f.driveModifiedTime))
+              ? new Date(f.driveModifiedTime)
+              : undefined;
           if (existingId) {
             await tx
               .update(driveFiles)
@@ -327,8 +345,15 @@ export async function upsertDriveFilesForBatch(params: {
                 classificationConfidence: f.confidence.toFixed(4),
                 ...(f.assesseeId !== undefined ? { assesseeId: f.assesseeId } : {}),
                 ...(f.assesseeId || f.triageStatus ? { triageStatus: resolvedStatus } : {}),
+                ...(f.triageReason !== undefined ? { triageReason: f.triageReason } : {}),
                 ...(f.extractedText !== undefined ? { extractedText: f.extractedText } : {}),
                 ...(f.extractionMethod !== undefined ? { extractionMethod: f.extractionMethod } : {}),
+                ...(f.ocrConfidence !== undefined && f.ocrConfidence !== null
+                  ? { ocrConfidence: f.ocrConfidence.toFixed(4) }
+                  : {}),
+                ...(parsedModified ? { driveModifiedTime: parsedModified } : {}),
+                ...(f.archiveParentId !== undefined ? { archiveParentId: f.archiveParentId } : {}),
+                ...(f.archiveEntryPath !== undefined ? { archiveEntryPath: f.archiveEntryPath } : {}),
                 updatedAt: new Date(),
               })
               .where(eq(driveFiles.id, existingId));
@@ -344,8 +369,14 @@ export async function upsertDriveFilesForBatch(params: {
               docType: f.docType,
               classificationConfidence: f.confidence.toFixed(4),
               triageStatus: resolvedStatus,
+              triageReason: f.triageReason ?? null,
               extractedText: f.extractedText ?? null,
               extractionMethod: f.extractionMethod ?? null,
+              ocrConfidence:
+                f.ocrConfidence != null ? f.ocrConfidence.toFixed(4) : null,
+              driveModifiedTime: parsedModified ?? null,
+              archiveParentId: f.archiveParentId ?? null,
+              archiveEntryPath: f.archiveEntryPath ?? null,
             });
           }
           saved++;
@@ -378,6 +409,8 @@ export async function upsertDriveFilesForBatch(params: {
   for (const f of params.files) {
     const existingId = existingMap.get(f.driveFileId);
     const resolvedStatus = f.triageStatus ?? (f.assesseeId ? "assigned" : "unmatched");
+    const hasModified =
+      Boolean(f.driveModifiedTime) && !Number.isNaN(Date.parse(String(f.driveModifiedTime)));
     if (existingId) {
       toUpdate.push({
         id: existingId,
@@ -389,8 +422,13 @@ export async function upsertDriveFilesForBatch(params: {
           classification_confidence: f.confidence,
           ...(f.assesseeId !== undefined ? { assessee_id: f.assesseeId } : {}),
           ...(f.assesseeId || f.triageStatus ? { triage_status: resolvedStatus } : {}),
+          ...(f.triageReason !== undefined ? { triage_reason: f.triageReason } : {}),
           ...(f.extractedText !== undefined ? { extracted_text: f.extractedText } : {}),
           ...(f.extractionMethod !== undefined ? { extraction_method: f.extractionMethod } : {}),
+          ...(f.ocrConfidence !== undefined ? { ocr_confidence: f.ocrConfidence } : {}),
+          ...(hasModified ? { drive_modified_time: f.driveModifiedTime } : {}),
+          ...(f.archiveParentId !== undefined ? { archive_parent_id: f.archiveParentId } : {}),
+          ...(f.archiveEntryPath !== undefined ? { archive_entry_path: f.archiveEntryPath } : {}),
           updated_at: nowIso,
         },
       });
@@ -406,8 +444,13 @@ export async function upsertDriveFilesForBatch(params: {
         doc_type: f.docType,
         classification_confidence: f.confidence,
         triage_status: resolvedStatus,
+        triage_reason: f.triageReason ?? null,
         extracted_text: f.extractedText ?? null,
         extraction_method: f.extractionMethod ?? null,
+        ocr_confidence: f.ocrConfidence ?? null,
+        drive_modified_time: hasModified ? f.driveModifiedTime : null,
+        archive_parent_id: f.archiveParentId ?? null,
+        archive_entry_path: f.archiveEntryPath ?? null,
       });
     }
   }
@@ -465,6 +508,69 @@ export async function updateDriveFileExtraction(params: {
           extracted_text: params.extractedText,
           extraction_method: params.extractionMethod,
           ocr_confidence: params.ocrConfidence ?? null,
+          updated_at: now.toISOString(),
+        })
+        .eq("id", params.fileId);
+    },
+  });
+}
+
+export async function updateDriveFileClassification(params: {
+  userId: string;
+  fileId: string;
+  docType: string;
+  confidence: number;
+  triageReason: string;
+  extractedText?: string | null;
+  extractionMethod?: string | null;
+  ocrConfidence?: number | null;
+  assesseeId?: string | null;
+  triageStatus?: "assigned" | "not_needed" | "unmatched";
+}): Promise<void> {
+  const now = new Date();
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "BatchesRepository.updateDriveFileClassification",
+    drizzle: async (tx) => {
+      await tx
+        .update(driveFiles)
+        .set({
+          docType: params.docType,
+          classificationConfidence: params.confidence.toFixed(4),
+          triageReason: params.triageReason,
+          ...(params.extractedText !== undefined ? { extractedText: params.extractedText } : {}),
+          ...(params.extractionMethod !== undefined
+            ? { extractionMethod: params.extractionMethod }
+            : {}),
+          ...(params.ocrConfidence !== undefined
+            ? {
+                ocrConfidence:
+                  params.ocrConfidence != null ? params.ocrConfidence.toFixed(4) : null,
+              }
+            : {}),
+          ...(params.assesseeId !== undefined ? { assesseeId: params.assesseeId } : {}),
+          ...(params.triageStatus !== undefined ? { triageStatus: params.triageStatus } : {}),
+          updatedAt: now,
+        })
+        .where(eq(driveFiles.id, params.fileId));
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase
+        .from("drive_files")
+        .update({
+          doc_type: params.docType,
+          classification_confidence: params.confidence,
+          triage_reason: params.triageReason,
+          ...(params.extractedText !== undefined ? { extracted_text: params.extractedText } : {}),
+          ...(params.extractionMethod !== undefined
+            ? { extraction_method: params.extractionMethod }
+            : {}),
+          ...(params.ocrConfidence !== undefined
+            ? { ocr_confidence: params.ocrConfidence }
+            : {}),
+          ...(params.assesseeId !== undefined ? { assessee_id: params.assesseeId } : {}),
+          ...(params.triageStatus !== undefined ? { triage_status: params.triageStatus } : {}),
           updated_at: now.toISOString(),
         })
         .eq("id", params.fileId);

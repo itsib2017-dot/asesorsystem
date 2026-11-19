@@ -8,6 +8,8 @@ import { CheckCircle2, Clock, FileWarning, Play } from "lucide-react";
 interface InputStatusItem {
   label: string;
   fileName: string | null;
+  fileNames?: string[];
+  sourceNote?: string | null;
   hasExtractedText: boolean;
 }
 
@@ -37,23 +39,42 @@ export function DitAnalysisTrigger({
   } | null>(null);
 
   const renderBadge = (item: InputStatusItem, hasOverride: boolean) => {
+    const names = item.fileNames?.length
+      ? item.fileNames
+      : item.fileName
+        ? [item.fileName]
+        : [];
+    const displayLabel =
+      item.sourceNote ||
+      (names.length > 1
+        ? `${names.length} berkas (${names.slice(0, 2).join(", ")}${names.length > 2 ? ", ..." : ""})`
+        : names[0] ?? null);
+
     if (item.hasExtractedText || hasOverride) {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-          <CheckCircle2 className="w-3 h-3" /> Siap
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 max-w-full truncate"
+          title={names.join(", ") || item.sourceNote || undefined}
+        >
+          <CheckCircle2 className="w-3 h-3 shrink-0" />
+          <span className="truncate">{displayLabel ? `Siap (${displayLabel})` : "Siap"}</span>
         </span>
       );
     }
-    if (item.fileName) {
+    if (displayLabel) {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-teal-50 text-teal-800 border border-teal-200">
-          <Clock className="w-3 h-3" /> Berkas Drive ({item.fileName})
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-teal-50 text-teal-800 border border-teal-200 max-w-full truncate"
+          title={names.join(", ") || undefined}
+        >
+          <Clock className="w-3 h-3 shrink-0" />
+          <span className="truncate">Drive ({displayLabel})</span>
         </span>
       );
     }
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
-        <FileWarning className="w-3 h-3" /> Belum tersedia
+        <FileWarning className="w-3 h-3 shrink-0" /> Belum tersedia
       </span>
     );
   };
