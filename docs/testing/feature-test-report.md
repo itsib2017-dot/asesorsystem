@@ -62,3 +62,20 @@
 - **ESLint:** `eslint --max-warnings 0` — 0 errors, 0 warnings
 
 All acceptance criteria from `docs/specs/roster-management.md` are implemented and verified via unit tests. E2E tests require an authenticated session against a running instance and are deferred to the next live session.
+
+---
+
+## Module: Triage Page Regression (Bagian 1 — Blocker P0)
+
+**Date:** 2026-11-20 · **Mode:** AUDIT (production trust boundary) · **Deploy:** via git push to `main`
+
+| Scenario | Result | Evidence | Patch / Follow-up |
+|---|---|---|---|
+| T-01: Reproduksi R4 gagal | PASS (gagal teramati, sesuai expect awal) | Playwright: HTTP 500, body "Halaman Tidak Dapat Dimuat", console React #441; evidence `r4-triage.json/.png` | — |
+| T-02: Penyebab pasti dari log Vercel | PASS | `vercel logs`: `Event handlers cannot be passed to Client Component props` `{className:"inline", onSubmit:...}`, requestId `xs8kd-1795129388167-87b4dff83b9b` | — |
+| T-03: Root-cause fix | PASS | `triage/assessee-actions.tsx` ("use client") menerima form Ubah/Hapus; `page.tsx` tidak lagi memuat `onSubmit` inline | — |
+| T-04: Guard field null | PASS | `safeDocType` + `(f.fileName ?? "")` + `(f.drivePath ?? "")`; tes `page-source.test.ts` | — |
+| T-05: Gates | PASS | `tsc --noEmit` 0; `eslint --max-warnings 0` 0; `vitest run` 32 files / 149/149 | — |
+| T-06: Verifikasi live R4 setelah deploy | PENDING | Menunggu deploy otomatis dari push `main` | jalankan ulang `check.mjs` |
+
+**Catatan:** `c61cf7c5` tidak dapat diverifikasi dengan akun demo (`404` — beda tenant); sesuai brief, akun pemilik diperlukan untuk batch itu. R4 adalah kriteria lolos Bagian 1.

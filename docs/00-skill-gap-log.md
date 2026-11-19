@@ -63,3 +63,15 @@
 - **Cacat 6 Kata sandi (selesai):**
   - min 12 karakter + kompleksitas (huruf besar/kecil, angka, karakter spesial) + blokir daftar kata sandi lemah secara lokal, di skema Zod dan formulir registrasi.
 - **Ditangguhkan (butuh keputusan Anda):** Cacat 6 peran (daftar kanonik belum dikonfirmasi), Cacat 2 MFA (implementasi vs. keputusan penundaan), Cacat 3 invite-only + batasi `/register`.
+
+## 4. Sesi 2026-11-20 — Bootstrap ulang & RCA triage R4
+
+- **Caveman:** active (reasoning scaffold). **Graphify:** active; cache `graphify-out/graph.json` stale (built `e7fa16c9`, HEAD `3dabf1f`) — dipakai untuk orientasi saja, bukan bukti.
+- **Ponytail:** TIDAK tersedia di environment ini (`skill` loader error). Emulasi: task list berurutan di sesi ini dan `docs/testing/feature-test-report.md`. Gap dicatat di sini sesuai §A.7.
+- **Context7 MCP:** tersedia; dipakai hanya untuk keputusan API/versi baru (belum ada API baru di ticket triage).
+- **Vercel CLI:** tidak ada di PATH; tersedia via `npx --no-install vercel` (login `itsib2017-7919`). Dipakai **khusus logs**, bukan deploy. Deploy otomatis via git push.
+- **Playwright:** `1.41.1` (global Nodist), chromium `1208` dipakai lewat `executablePath`. Kredensial demo dibaca runtime dari file lokal, tidak pernah dicetak/committed.
+- **RCA triage R4 (dari log Vercel Production, requestId `xs8kd-1795129388167-87b4dff83b9b`, 2026-11-19T23:03:11Z):**
+  `Error: Event handlers cannot be passed to Client Component props. {action: ..., className: "inline", onSubmit: function onSubmit, children: ...}`
+  Handler `onSubmit` inline ada di `triage/page.tsx` (Server Component) pada form Ubah/Hapus asesi. Render hanya terjadi bila batch punya asesi → R4 (23 asesi) gagal, `c61cf7c5` (0 asesi) tidak memicu cabang ini. Bukan null `drivePath`/`docType`.
+- **Fix:** form Ubah/Hapus dipindah ke `triage/assessee-actions.tsx` (`"use client"`). Guard null `docType`/`fileName`/`drivePath` ditambahkan. Tes regresi source-scan ditambahkan.

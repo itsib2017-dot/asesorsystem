@@ -13,12 +13,11 @@ import {
   addBatchRosterNoteAction,
   addAssesseeFormAction,
   assignDriveFileAction,
-  deleteAssesseeFormAction,
   importRosterFormAction,
   reclassifyBatchContentAction,
-  updateAssesseeFormAction,
 } from "./actions";
 import { ExtractFileTrigger } from "./extract-file-trigger";
+import { AssesseeActions } from "./assessee-actions";
 
 import { explainNameInference } from "@/services/drive";
 
@@ -99,8 +98,8 @@ export default async function TriagePage({
   const filtered = files.filter((f) => {
     if (
       qLower &&
-      !f.fileName.toLowerCase().includes(qLower) &&
-      !f.drivePath.toLowerCase().includes(qLower)
+      !(f.fileName ?? "").toLowerCase().includes(qLower) &&
+      !(f.drivePath ?? "").toLowerCase().includes(qLower)
     ) {
       return false;
     }
@@ -408,50 +407,11 @@ export default async function TriagePage({
                     </td>
                     <td className="py-2 px-4 text-right space-x-1">
                       {!a.certificateNameConfirmed && (
-                        <>
-                          <form
-                            action={updateAssesseeFormAction}
-                            className="inline space-x-1"
-                            onSubmit={(e) => {
-                              const input = e.currentTarget.elements.namedItem("displayName") as HTMLInputElement | null;
-                              if (input && !input.value.trim()) {
-                                e.preventDefault();
-                              }
-                            }}
-                          >
-                            <input type="hidden" name="batchId" value={id} />
-                            <input type="hidden" name="assesseeId" value={a.id} />
-                            <input
-                              name="displayName"
-                              defaultValue={a.displayName}
-                              className="px-2 py-1 rounded-lg border border-slate-300 text-xs bg-white w-[140px]"
-                            />
-                            <button
-                              type="submit"
-                              className="px-2 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-medium cursor-pointer"
-                            >
-                              Ubah
-                            </button>
-                          </form>
-                          <form
-                            action={deleteAssesseeFormAction}
-                            className="inline"
-                            onSubmit={(e) => {
-                              if (!window.confirm(`Hapus asesi "${a.displayName}"?`)) {
-                                e.preventDefault();
-                              }
-                            }}
-                          >
-                            <input type="hidden" name="batchId" value={id} />
-                            <input type="hidden" name="assesseeId" value={a.id} />
-                            <button
-                              type="submit"
-                              className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-medium cursor-pointer"
-                            >
-                              Hapus
-                            </button>
-                          </form>
-                        </>
+                        <AssesseeActions
+                          batchId={id}
+                          assesseeId={a.id}
+                          displayName={a.displayName}
+                        />
                       )}
                     </td>
                   </tr>
@@ -554,13 +514,14 @@ export default async function TriagePage({
             </thead>
             <tbody className="divide-y divide-slate-200">
               {pageFiles.map((f) => {
-                const hasPresetDocType = DOC_TYPE_OPTIONS.some((o) => o.value === f.docType);
+                const safeDocType = f.docType ?? "unknown";
+                const hasPresetDocType = DOC_TYPE_OPTIONS.some((o) => o.value === safeDocType);
                 return (
                   <tr key={f.id} className="align-top">
                     <td className="py-3 px-4 max-w-md">
                       <div className="font-medium text-slate-900 break-words flex flex-wrap items-center gap-1.5">
                         <span>{f.fileName}</span>
-                        {f.docType.toLowerCase() === "06b" && (
+                        {safeDocType.toLowerCase() === "06b" && (
                           <span
                             className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
                               batch.activeMasterKeyFileId === f.id &&
@@ -627,11 +588,11 @@ export default async function TriagePage({
                         <select
                           aria-label={`Jenis dokumen ${f.fileName}`}
                           name="docType"
-                          defaultValue={f.docType}
+                          defaultValue={safeDocType}
                           className="px-2 py-1.5 rounded-lg border border-slate-300 text-xs bg-white font-mono"
                         >
                           {!hasPresetDocType && (
-                            <option value={f.docType}>{f.docType}</option>
+                            <option value={safeDocType}>{safeDocType}</option>
                           )}
                           {DOC_TYPE_OPTIONS.map((opt) => (
                             <option key={opt.value} value={opt.value}>
