@@ -197,22 +197,22 @@ export default async function DashboardPage() {
                   <Link
                     key={b.id}
                     href={`/batches/${b.id}`}
-                    className="glass-card rounded-2xl p-5 hover:border-teal-500/50 transition-all block"
+                    className="glass-card rounded-2xl p-5 hover:border-teal-500/50 transition-all block min-w-0 overflow-hidden space-y-2.5"
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="font-semibold text-slate-900">{b.name}</h3>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${scanBadge.cls}`}
-                        >
-                          {scanBadge.label}
-                        </span>
-                        <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                          {b.status}
-                        </span>
-                      </div>
+                    <h3 className="font-semibold text-slate-900 leading-snug break-words">
+                      {b.name}
+                    </h3>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[11px] font-medium border max-w-full truncate ${scanBadge.cls}`}
+                      >
+                        {scanBadge.label}
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+                        {b.status}
+                      </span>
                     </div>
-                    <p className="text-xs text-slate-500 mt-2">
+                    <p className="text-xs text-slate-500 break-words">
                       TUK: {b.tukName || "Belum ditentukan"} ({b.tukType || "sewaktu"})
                     </p>
                   </Link>

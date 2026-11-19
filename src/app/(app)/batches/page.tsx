@@ -44,11 +44,13 @@ export default async function BatchesPage() {
             <Link
               key={b.id}
               href={`/batches/${b.id}`}
-              className="glass-card rounded-2xl p-5 hover:border-teal-500 transition-all block space-y-3"
+              className="glass-card rounded-2xl p-5 hover:border-teal-500 transition-all block min-w-0 overflow-hidden space-y-3"
             >
-              <div className="flex items-start justify-between gap-2">
-                <h3 className="font-semibold text-slate-900">{b.name}</h3>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <h3 className="font-semibold text-slate-900 leading-snug break-words min-w-0">
+                  {b.name}
+                </h3>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
                   {b.status}
                 </span>
               </div>
