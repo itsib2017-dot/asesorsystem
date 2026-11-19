@@ -20,6 +20,7 @@ import {
   importRosterFromSheetAction,
   updateAssesseeAction,
 } from "../roster-actions";
+import { ExtractFileTrigger } from "./extract-file-trigger";
 
 // Wrapper server actions so form `action` can use them (Next.js requires
 // form actions to return void | Promise<void>).
@@ -694,6 +695,14 @@ export default async function TriagePage({
                           Tetapkan
                         </button>
                       </form>
+                      <ExtractFileTrigger
+                        batchId={id}
+                        fileId={f.id}
+                        fileName={f.fileName}
+                        mimeType={f.mimeType}
+                        driveFileId={f.driveFileId}
+                        hasExtractedText={Boolean(f.extractedText?.trim())}
+                      />
                     </td>
                   </tr>
                 );
