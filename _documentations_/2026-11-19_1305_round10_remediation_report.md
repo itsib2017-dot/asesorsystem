@@ -30,7 +30,9 @@
 | Remote Supabase Migration | `npx supabase db push --remote --yes` & `migration list --remote` | **PASS** (`20261118000001..20261119000011` synced) |
 | Remote Multi-LSP RLS | `npx supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS** (`37/37` PASS, `0` FAIL incl. `RLS-37` unextractable) |
 | Secret Hygiene Scan | Regex scan across all modified files | **PASS** (`0` hits) |
-| Live Vercel + `agent-browser` | Pending deploy & authenticated user sign-in on `Demo Audit R4` | Queued next |
+| Live Vercel Rescan + Auto-Refresh (Cacat 1–5) | Authenticated `Demo Audit R4` (`7ff054ef-1cb8-401d-9e99-130a3dcafc65`) on `https://assessor-zeta.vercel.app` | **PASS** — `running (10%)` → `done (100%)` auto-refreshed without manual reload; `23` assessees (`TUGAS SUANGI` → `Suangi` in-place, `0` folder names); `344` files (`0` unmatched, `0` unextractable); `F.ERP_Lintang Trenggono.docx` = `dit_form`; `Cv. Suangi new.jpg` = `cv`; `TUGAS DIT WIWI` (9 files) → `Wiwi Widiawati, S.K.M`; `AK3U LSP K3 Nasional.zip` unpacked 29 MUK files (auto-activating `FR.IA.06B`); `batch.roster.reconciled` (#55) & `job.drive_scan.completed` (#56) verified in DB, `/settings/audit`, `/ingest/[jobId]`, and `/triage` |
+| Responsive UI/UX (`agent-browser` + Live) | Desktop `1440x900` (`Demo Audit R4`) & Mobile `390x844` (`/login`, `/register`) | **PASS** (`overflowX: false`, `sw: 390 / iw: 390`, `0` console/page errors) |
+| Graphify Knowledge Graph | `python -m graphify update . --force` | **PASS** (`5,201` nodes, `12,712` edges, `232` communities) |
 
 ---
 
