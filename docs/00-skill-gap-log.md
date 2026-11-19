@@ -26,7 +26,16 @@
 
 ---
 
-## 2. Environment Architecture Adaptations
+## 2. Incident record — Triage page regression (c9349ee)
+
+- **Symptom:** `…/batches/[id]/triage` fails to load for all batches (R4 demo + `c61cf7c5` owner), showing `src/app/(app)/error.tsx` ("Halaman Tidak Dapat Dimuat"). Sidebar/session intact; batch page itself loads normally → isolated to triage server render.
+- **Root cause (static):** c9349ee added a per-file render call `explainNameInference(f.drivePath)` (triage/page.tsx). A single bad `drivePath` value tripping the Next.js error boundary kills the whole page render.
+- **Note on certainty:** `drive_path` is `text NOT NULL DEFAULT ''` in the DB and coerced to `''` in both repository mappers, so `.split("/")` cannot throw on null/undefined. The exact live throw could NOT be confirmed from Vercel function logs — `vercel` CLI is logged out and no credentials were requested (Vercel logs are emulated per §1 table below).
+- **Fix:** `explainNameInference` guards non-string `drivePath` input; triage page wraps the per-row reason call in try/catch and renders a neutral `—` placeholder, so one bad row can never kill the whole page.
+- **Verification:** `tsc --noEmit` clean; `eslint --max-warnings 0` clean; `vitest` 146/146 passed. Commit `c89324f` on branch `fix/triage-loader-regression`, pushed to origin (Vercel auto-deploys on push).
+- **Still needed (P1):** Pull real Vercel function logs for the triage route to confirm the exact throw line and close out root-cause confirmation (auditor Putaran 15b).
+
+## 3. Environment Architecture Adaptations
 
 1. **Database Verification without Docker**:
    - Docker daemon is not active on this environment.
