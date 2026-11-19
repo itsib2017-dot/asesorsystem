@@ -39,3 +39,23 @@
    - Supported providers: Anthropic (Claude), OpenAI-compatible, Gemini.
    - Fields: `API Key`, `Base URL (optional gateway)`, `ANTHROPIC_AUTH_TOKEN`, `Model`, `Temperature`, `Max tokens`, `Thinking budget`, `Google Drive API key`.
    - Security Boundary: Stored encrypted server-side per assessor or submitted per request. Never hardcoded in source code or committed to repository.
+
+## 3. Part 3 — Kesenjangan P0 (Cacat 1–6), branch fix/p0-kesenjangan-cacat-1-6
+
+- **Temuan 2.1/2.2/2.3 (Roster):** sudah lengkap di `c9349ee`; verifikasi live tertunda (Putaran 15b, kredensial pemilik).
+- **Cacat 4 Trigger UI (selesai, commit ini):**
+  - `similarity_run`: tombol "Jalankan Analisis Kemiripan" di halaman similarity, enqueue job + feedback job id/status.
+  - `ocr_ktp`: tombol "Jalankan OCR KTP" di kartu asesi (halaman detail asesi), OCR lokal via Tesseract.js.
+  - `extract_file`: tombol "Ekstrak Teks" / "Ekstrak Ulang" per baris berkas di halaman triase, enqueue job extract_file.
+- **Cacat 1 OCR KTP (implementasi selesai, verifikasi live tertunda):**
+  - Dependensi `tesseract.js^7.0.0` terinstal (diminta eksplisit brief; butuh approval dependensi).
+  - Server action `runOcrKtpAction`: unduh gambar KTP dari Drive → `Tesseract.recognize(buffer, "ind")` fallback `"eng"` → simpan `ktpNameOcr`+`ocrConfidence` → jalankan name jury berbasis teks OCR → tampil di NameJuryCard.
+  - Gambar KTP **tidak pernah ke LLM** (UU PDP / privasi).
+  - `Tesseract.recognize` tersedia sebagai fungsi pada namespace module; signature `(image, langs, options)` terima Buffer.
+  - **Verifikasi live BELUM bisa dilakukan:** `vercel` CLI logged out (tidak bisa deploy ke Vercel untuk uji runtime); brief melarang menggunakan data asesi nyata / gambar KTP asli untuk uji. Memerlukan deploy ke Vercel + uji dengan gambar KTP demo.
+- **Cacat 5 Model answers + 04A export (selesai):**
+  - Jawaban model per soal sudah tampil di halaman DIT (sudah ada dari sebelumnya).
+  - Ditambahkan `generateIa04aDocx` + `buildIa04aPayload` + rute export `form=ia04a` + tombol "Ekspor FR.IA.04A (.docx)" di halaman DIT.
+- **Cacat 6 Kata sandi (selesai):**
+  - min 12 karakter + kompleksitas (huruf besar/kecil, angka, karakter spesial) + blokir daftar kata sandi lemah secara lokal, di skema Zod dan formulir registrasi.
+- **Ditangguhkan (butuh keputusan Anda):** Cacat 6 peran (daftar kanonik belum dikonfirmasi), Cacat 2 MFA (implementasi vs. keputusan penundaan), Cacat 3 invite-only + batasi `/register`.
