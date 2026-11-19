@@ -17,7 +17,7 @@ export interface InterviewQuestionItem {
 export interface InterviewUnitItem {
   unitCode: string;
   unitTitle: string;
-  recommendation: "K" | "BK";
+  recommendation: "K" | "BK" | null;
   reasoning: string;
 }
 
@@ -27,7 +27,7 @@ interface InterviewAssessmentFormProps {
   sourceFileId: string | null;
   initialQuestions: InterviewQuestionItem[];
   initialUnits: InterviewUnitItem[];
-  initialOverall: "K" | "BK";
+  initialOverall: "K" | "BK" | null;
   initialNotes: string;
 }
 
@@ -43,7 +43,7 @@ export function InterviewAssessmentForm({
   const router = useRouter();
   const [questions, setQuestions] = useState<InterviewQuestionItem[]>(initialQuestions);
   const [units, setUnits] = useState<InterviewUnitItem[]>(initialUnits);
-  const [overall, setOverall] = useState<"K" | "BK">(initialOverall);
+  const [overall, setOverall] = useState<"K" | "BK" | null>(initialOverall);
   const [notes, setNotes] = useState(initialNotes);
   const [applyToDecisions, setApplyToDecisions] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -93,6 +93,15 @@ export function InterviewAssessmentForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (saving) return;
+
+    const undecidedUnits = units.filter((u) => u.recommendation !== "K" && u.recommendation !== "BK");
+    if (!overall || undecidedUnits.length > 0) {
+      setStatus({
+        type: "error",
+        text: "Pilih rekomendasi keseluruhan (K atau BK) dan keputusan setiap unit terlebih dahulu sebelum menyimpan.",
+      });
+      return;
+    }
 
     setSaving(true);
     setStatus(null);

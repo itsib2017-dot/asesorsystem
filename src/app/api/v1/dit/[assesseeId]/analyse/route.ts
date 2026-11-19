@@ -119,6 +119,7 @@ export async function POST(
 
   const jobRes = await enqueueJob({
     userId: user.id,
+    lspId: assessee.lspId,
     type: "dit_analysis",
     payload: {
       assesseeId,

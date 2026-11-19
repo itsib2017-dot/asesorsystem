@@ -36,6 +36,9 @@
 | `interview_assessments`| `ia09_select` | SELECT | authenticated | `lsp_admin`/`tuk_admin` of LSP OR assigned assessor (`auth_on_batch`) |
 | `interview_assessments`| `ia09_insert` | INSERT | authenticated | `lsp_admin` OR assigned assessor (`auth_on_batch`) |
 | `interview_assessments`| `ia09_update` | UPDATE | authenticated | `lsp_admin` OR assigned assessor (`auth_on_batch`) |
+| `assessee_decision_overrides`| `ado_select` | SELECT | authenticated | `lsp_admin`/`tuk_admin` of LSP OR assigned assessor (`auth_on_batch`) |
+| `assessee_decision_overrides`| `ado_insert` | INSERT | authenticated | `lsp_admin` OR assigned `assessor` on batch (`tuk_admin` blocked) |
+| `assessee_decision_overrides`| `ado_update` | UPDATE | authenticated | `lsp_admin` OR assigned `assessor` on batch (`tuk_admin` blocked) |
 
 ---
 

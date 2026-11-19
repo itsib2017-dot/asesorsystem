@@ -343,3 +343,17 @@ export const interviewAssessments = pgTable("interview_assessments", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const assesseeDecisionOverrides = pgTable("assessee_decision_overrides", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  lspId: uuid("lsp_id").notNull(),
+  batchId: uuid("batch_id").notNull(),
+  assesseeId: uuid("assessee_id").notNull(),
+  overrideDecision: text("override_decision"),
+  overrideReason: text("override_reason").notNull().default(""),
+  overriddenBy: uuid("overridden_by"),
+  overriddenAt: timestamp("overridden_at", { withTimezone: true }),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

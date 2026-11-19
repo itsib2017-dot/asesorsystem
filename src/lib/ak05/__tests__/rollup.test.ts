@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
-import { computeAk05RowForAssessee } from "../rollup";
+import { computeAk05RowForAssessee, resolveAssesseeOverallDecision } from "../rollup";
 import { generateAk05Docx, generateAk05Pdf } from "@/services/export";
 
 describe("AK.05 Decision Roll-up (T4 / Cacat 2)", () => {
@@ -96,5 +96,82 @@ describe("AK.05 Decision Roll-up (T4 / Cacat 2)", () => {
 
     const pdfBuf = await generateAk05Pdf(payload);
     expect(pdfBuf.subarray(0, 5).toString("utf8")).toBe("%PDF-");
+  });
+
+  it("keeps partial K decisions undecided until all scheme units are decided, unless BK occurs", () => {
+    const partialK = computeAk05RowForAssessee({
+      no: 4,
+      assessee: { id: "a4", displayName: "Citra", certificateNameConfirmed: "Citra" },
+      totalSchemeUnits: 13,
+      unitDecisions: [
+        { unitCode: "M.71KKK01.001.1", unitTitle: "Identifikasi Risiko", decision: "K" },
+        { unitCode: "M.71KKK01.002.1", unitTitle: "Tanggap Darurat", decision: null },
+      ],
+    });
+    expect(partialK.recommendation).toBe("-");
+    expect(partialK.undecided).toBe(true);
+    expect(partialK.keterangan).toContain("Belum diputuskan (1/13 unit K)");
+
+    // Even ONE BK unit out of 13 immediately resolves AK.05 to BK!
+    const singleBkAmongPartial = computeAk05RowForAssessee({
+      no: 5,
+      assessee: { id: "a5", displayName: "Dani", certificateNameConfirmed: "Dani" },
+      totalSchemeUnits: 13,
+      unitDecisions: [
+        { unitCode: "M.71KKK01.001.1", unitTitle: "Identifikasi Risiko", decision: "K" },
+        { unitCode: "M.71KKK01.002.1", unitTitle: "Tanggap Darurat", decision: "BK" },
+      ],
+    });
+    expect(singleBkAmongPartial.recommendation).toBe("BK");
+    expect(singleBkAmongPartial.undecided).toBe(false);
+    expect(singleBkAmongPartial.keterangan).toContain("M.71KKK01.002.1");
+  });
+
+  it("allows authorized manual assessor override as final call (K over BK, or BK over K, or clear)", () => {
+    const unitDecisions = [
+      { unitCode: "M.71KKK01.001.1", unitTitle: "Identifikasi Risiko", decision: "K" },
+      { unitCode: "M.71KKK01.002.1", unitTitle: "Tanggap Darurat", decision: "BK" },
+    ];
+
+    const manualK = resolveAssesseeOverallDecision({
+      unitDecisions,
+      totalSchemeUnits: 13,
+      manualOverride: {
+        overrideDecision: "K",
+        overrideReason: "Asesor memverifikasi bukti susulan memenuhi seluruh KUK",
+      },
+    });
+    expect(manualK.autoRecommendation).toBe("BK");
+    expect(manualK.recommendation).toBe("K");
+    expect(manualK.isOverridden).toBe(true);
+    expect(manualK.source).toBe("manual_override");
+    expect(manualK.keterangan).toContain("Keputusan Manual Asesor");
+
+    const row = computeAk05RowForAssessee({
+      no: 6,
+      assessee: { id: "a6", displayName: "Eko", certificateNameConfirmed: "Eko" },
+      unitDecisions,
+      totalSchemeUnits: 13,
+      manualOverride: {
+        overrideDecision: "K",
+        overrideReason: "Verifikasi final asesor menyatakan kompeten",
+      },
+    });
+    expect(row.recommendation).toBe("K");
+    expect(row.decisionSource).toBe("manual_override");
+    expect(row.autoRecommendation).toBe("BK");
+
+    // Clearing override reverts immediately back to automatic BK rule
+    const reverted = resolveAssesseeOverallDecision({
+      unitDecisions,
+      totalSchemeUnits: 13,
+      manualOverride: {
+        overrideDecision: null,
+        overrideReason: "Dikembalikan ke roll-up otomatis",
+      },
+    });
+    expect(reverted.recommendation).toBe("BK");
+    expect(reverted.isOverridden).toBe(false);
+    expect(reverted.source).toBe("auto_rollup");
   });
 });

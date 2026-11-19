@@ -6,14 +6,14 @@ const {
   mockListPairs,
   mockListAssessees,
   mockListSchemes,
-  mockGetConfig,
+  mockGetConfigWithSource,
   mockListWrittenGradings,
 } = vi.hoisted(() => ({
   mockGetBatchById: vi.fn(),
   mockListPairs: vi.fn(),
   mockListAssessees: vi.fn(),
   mockListSchemes: vi.fn(),
-  mockGetConfig: vi.fn(),
+  mockGetConfigWithSource: vi.fn(),
   mockListWrittenGradings: vi.fn(),
 }));
 
@@ -31,7 +31,7 @@ vi.mock("@/repositories/schemes.repository", () => ({
   listSchemes: mockListSchemes,
 }));
 vi.mock("@/lib/config/get-config", () => ({
-  getConfig: mockGetConfig,
+  getConfigWithSource: mockGetConfigWithSource,
 }));
 
 describe("loadBatchSimilarityReportData (T9)", () => {
@@ -72,17 +72,24 @@ describe("loadBatchSimilarityReportData (T9)", () => {
   });
 
   it("marks thresholds as uncalibrated when unconfirmed is not false and populates written summaries", async () => {
-    mockGetConfig.mockResolvedValue({
-      exact: 0.85,
-      near: 0.65,
-      partial: 0.45,
-      unconfirmed: true,
+    mockGetConfigWithSource.mockResolvedValue({
+      value: {
+        exact: 0.85,
+        near: 0.65,
+        partial: 0.45,
+        unconfirmed: true,
+      },
+      source: "global",
+      sourceLabel: "Konfigurasi Global (app_config)",
     });
 
     const data = await loadBatchSimilarityReportData("u1", "batch-1");
     expect(data).not.toBeNull();
     expect(data!.thresholdsUncalibrated).toBe(true);
+    expect(data!.thresholdSource).toBe("global");
+    expect(data!.thresholdSourceLabel).toBe("Konfigurasi Global (app_config)");
     expect(data!.combinedMd).toContain("Sementara / Belum Dikalibrasi");
+    expect(data!.combinedMd).toContain("Sumber: Konfigurasi Global (app_config)");
 
     const s1 = data!.assesseeSummaries.find((s) => s.assesseeId === "a1");
     const s2 = data!.assesseeSummaries.find((s) => s.assesseeId === "a2");
@@ -95,15 +102,21 @@ describe("loadBatchSimilarityReportData (T9)", () => {
   });
 
   it("marks thresholds as calibrated when unconfirmed is explicitly false", async () => {
-    mockGetConfig.mockResolvedValue({
-      exact: 0.9,
-      near: 0.75,
-      partial: 0.5,
-      unconfirmed: false,
+    mockGetConfigWithSource.mockResolvedValue({
+      value: {
+        exact: 0.9,
+        near: 0.75,
+        partial: 0.5,
+        unconfirmed: false,
+      },
+      source: "lsp",
+      sourceLabel: "Konfigurasi Tenant (app_config)",
     });
 
     const data = await loadBatchSimilarityReportData("u1", "batch-1");
     expect(data!.thresholdsUncalibrated).toBe(false);
+    expect(data!.thresholdSource).toBe("lsp");
     expect(data!.combinedMd).not.toContain("Sementara / Belum Dikalibrasi");
+    expect(data!.combinedMd).toContain("Sumber: Konfigurasi Tenant (app_config)");
   });
 });

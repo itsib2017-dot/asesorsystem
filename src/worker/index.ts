@@ -586,6 +586,7 @@ async function handleSimilarityRunJob(job: WorkerJobInput): Promise<WorkerJobRes
 
   const thresholds = (await getConfig("similarity.flag_thresholds", {
     lspId: batch.lspId,
+    schemeId: batch.schemeId ?? undefined,
   })) ?? { ...DEFAULT_SIMILARITY_THRESHOLDS };
 
   const files = await listDriveFilesForBatch(userId, batchId);
@@ -700,8 +701,15 @@ async function handleAk05ExportJob(job: WorkerJobInput): Promise<WorkerJobResult
     );
   }
 
-  const profile = await getAssessorProfile(userId);
-  const rows = await resolveAk05BatchRows(userId, batchId, assessees);
+  const [profile, schemes] = await Promise.all([
+    getAssessorProfile(userId),
+    listSchemes(userId, batch.lspId),
+  ]);
+  const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
+  const totalSchemeUnits = resolveUnitsForScheme(scheme).length;
+  const rows = await resolveAk05BatchRows(userId, batchId, assessees, {
+    totalSchemeUnits,
+  });
 
   await saveAk05ReportForBatch({
     userId,

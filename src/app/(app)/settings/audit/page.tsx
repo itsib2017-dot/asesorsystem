@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
-import { isUuid } from "@/db";
+import { resolveAuditResourceHref } from "@/lib/audit/job-audit";
 import { getUser } from "@/lib/auth/get-session";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { listAuditLogsForUser } from "@/repositories/audit.repository";
+
+export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Log Audit Aktivitas — AsesorKompetensi",
@@ -11,7 +13,19 @@ export const metadata = {
 
 function formatAuditSummary(summary: Record<string, unknown> | null): string {
   if (!summary) return "-";
-  const preferredKeys = ["name", "code", "provider", "model", "mimeType", "scannedFiles", "status"];
+  const preferredKeys = [
+    "name",
+    "code",
+    "type",
+    "status",
+    "scannedFiles",
+    "attempts",
+    "batchId",
+    "provider",
+    "model",
+    "mimeType",
+    "error",
+  ];
   const parts: string[] = [];
   for (const key of preferredKeys) {
     if (summary[key] !== undefined && summary[key] !== null && summary[key] !== "") {
@@ -78,7 +92,7 @@ export default async function AuditLogPage() {
             </thead>
             <tbody className="divide-y divide-slate-200">
               {logs.map((row) => {
-                const isBatchLink = row.resource === "batches" && isUuid(row.resourceId);
+                const resourceHref = resolveAuditResourceHref(row);
                 return (
                   <tr key={row.id} className="hover:bg-slate-50/60 align-top">
                     <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600 break-words">
@@ -99,9 +113,9 @@ export default async function AuditLogPage() {
                       {row.resource}
                     </td>
                     <td className="py-2.5 px-3 font-mono text-[11px] text-slate-500 break-all">
-                      {isBatchLink && row.resourceId ? (
+                      {resourceHref && row.resourceId ? (
                         <Link
-                          href={`/batches/${row.resourceId}`}
+                          href={resourceHref}
                           className="text-teal-700 hover:underline font-medium"
                         >
                           {row.resourceId}

@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   saveNameJuryVerdictAndOcr: vi.fn(),
   getLatestProviderConfigForAssessor: vi.fn(),
   getConfig: vi.fn(),
+  getSupabaseServerClient: vi.fn(),
+  writeAuditLog: vi.fn(),
+  listUserMemberships: vi.fn(),
 }));
 
 vi.mock("@/repositories/jobs.repository", () => ({
@@ -56,14 +59,29 @@ vi.mock("@/lib/config/get-config", () => ({
   getConfig: mocks.getConfig,
 }));
 
+vi.mock("@/lib/supabase/server", () => ({
+  getSupabaseServerClient: mocks.getSupabaseServerClient,
+}));
+
+vi.mock("@/lib/audit/write-audit-log", () => ({
+  writeAuditLog: mocks.writeAuditLog,
+}));
+
+vi.mock("@/repositories/auth.repository", () => ({
+  listUserMemberships: mocks.listUserMemberships,
+}));
+
 import { runWorkerJob } from "../index";
-import { enqueueJob } from "../queue";
+import { enqueueJob, executeJob } from "../queue";
 
 describe("Worker dispatcher and queue runner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getLatestProviderConfigForAssessor.mockResolvedValue(null);
     mocks.getConfig.mockResolvedValue(null);
+    mocks.getSupabaseServerClient.mockResolvedValue({});
+    mocks.writeAuditLog.mockResolvedValue("corr-1");
+    mocks.listUserMemberships.mockResolvedValue([]);
   });
 
   it("fails loudly instead of faking success on unknown job types", async () => {
@@ -191,5 +209,75 @@ describe("Worker dispatcher and queue runner", () => {
     expect(mocks.updateJobStatusRecord).toHaveBeenCalledWith(
       expect.objectContaining({ status: "done", progress: 100, jobId: "job-inline-1" }),
     );
+  });
+
+  it("records created, rescan, started, completed, retried, and failed job audit events with batch lsp_id", async () => {
+    const batchId = "f98e5671-fbcb-42cb-a724-9f69d24f780b";
+    const jobId = "b629abf7-84a2-4ece-b755-0ffe24ef841b";
+    const lspId = "b03afb00-9266-467d-823e-44a7830a4077";
+
+    const pendingJob = {
+      id: jobId,
+      createdBy: "user-1",
+      type: "extract_file",
+      status: "pending" as const,
+      payload: { batchId, fileId: "file-1", text: "Isi teks uji audit" },
+      progress: 0,
+      error: null,
+      attempts: 0,
+      createdAt: "2026-11-19T00:00:00Z",
+      updatedAt: "2026-11-19T00:00:00Z",
+    };
+    const doneJob = { ...pendingJob, status: "done" as const, progress: 100, attempts: 1 };
+
+    mocks.getBatchById.mockResolvedValue({ id: batchId, lspId, schemeId: "s-1", name: "Demo" });
+    mocks.enqueueJobRecord.mockResolvedValue({ ok: true, job: pendingJob });
+    mocks.getJobRecordById
+      .mockResolvedValueOnce(pendingJob)
+      .mockResolvedValueOnce(doneJob)
+      .mockResolvedValueOnce(doneJob)
+      .mockResolvedValueOnce({ ...doneJob, status: "failed", progress: 0, error: "boom", attempts: 2 });
+    mocks.updateJobStatusRecord.mockResolvedValue(undefined);
+    mocks.updateDriveFileExtraction.mockResolvedValue(undefined);
+
+    await enqueueJob({
+      userId: "user-1",
+      type: "extract_file",
+      triggerAction: "rescan",
+      payload: { batchId, fileId: "file-1", text: "Isi teks uji audit", driveFolderUrl: "https://drive.google.com/drive/folders/abc" },
+    });
+
+    const recordedActions = mocks.writeAuditLog.mock.calls.map((c) => c[0]?.action);
+    expect(recordedActions).toEqual([
+      "job.extract_file.created",
+      "job.extract_file.rescan",
+      "job.extract_file.started",
+      "job.extract_file.completed",
+    ]);
+    for (const call of mocks.writeAuditLog.mock.calls) {
+      expect(call[0]).toMatchObject({
+        lsp_id: lspId,
+        resource: "jobs",
+        resource_id: jobId,
+        after_summary: expect.objectContaining({ batchId, type: "extract_file" }),
+      });
+    }
+
+    mocks.writeAuditLog.mockClear();
+    mocks.updateDriveFileExtraction.mockRejectedValueOnce(new Error("db write boom"));
+
+    await executeJob("user-1", jobId, { triggerAction: "retry" });
+    const retryActions = mocks.writeAuditLog.mock.calls.map((c) => c[0]?.action);
+    expect(retryActions).toEqual([
+      "job.extract_file.retried",
+      "job.extract_file.started",
+      "job.extract_file.failed",
+    ]);
+    expect(mocks.writeAuditLog.mock.calls[2]?.[0]).toMatchObject({
+      lsp_id: lspId,
+      resource: "jobs",
+      resource_id: jobId,
+      after_summary: expect.objectContaining({ status: "failed", error: "db write boom" }),
+    });
   });
 });

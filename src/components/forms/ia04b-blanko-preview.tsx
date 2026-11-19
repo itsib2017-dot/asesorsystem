@@ -29,6 +29,7 @@ export function Ia04bBlankoPreview(props: {
   const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
   const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
   const isK = payload.overallRecommendation === "K";
+  const isBk = payload.overallRecommendation === "BK";
 
   return (
     <div className="space-y-4">
@@ -160,7 +161,7 @@ export function Ia04bBlankoPreview(props: {
               </thead>
               <tbody>
                 {kp.aspects.map((asp, aspIdx) => {
-                  const achieved = payload.itemAchievedFlags[kpOffset + aspIdx] ?? false;
+                  const achieved = payload.itemAchievedFlags[kpOffset + aspIdx] ?? null;
                   return (
                     <tr key={`${kp.kpIndex}-${asp.no}`}>
                       <td className="border border-black p-1 text-center align-top">{asp.no}.</td>
@@ -171,10 +172,10 @@ export function Ia04bBlankoPreview(props: {
                       </td>
                       <td className="border border-black p-1.5 align-top">{asp.kukRef}</td>
                       <td className="border border-black p-1 text-center text-sm align-middle">
-                        {achieved ? "☑" : "☐"}
+                        {achieved === true ? "☑" : "☐"}
                       </td>
                       <td className="border border-black p-1 text-center text-sm align-middle">
-                        {!achieved ? "☑" : "☐"}
+                        {achieved === false ? "☑" : "☐"}
                       </td>
                     </tr>
                   );
@@ -201,13 +202,16 @@ export function Ia04bBlankoPreview(props: {
               <td className="border border-black p-1.5 text-center align-top">:</td>
               <td className="border border-black p-1.5 align-top leading-snug">
                 Asesi telah{" "}
-                <span className={isK ? "font-semibold" : "line-through"}>memenuhi</span>/{" "}
-                <span className={!isK ? "font-semibold" : "line-through"}>
+                <span className={isK ? "font-semibold" : isBk ? "line-through" : ""}>
+                  memenuhi
+                </span>
+                /{" "}
+                <span className={isBk ? "font-semibold" : isK ? "line-through" : ""}>
                   belum memenuhi
                 </span>{" "}
                 pencapaian seluruh kriteria unjuk kerja, direkomendasikan:{" "}
                 <span className="ml-1 font-semibold">{isK ? "☑" : "☐"} Kompeten</span>{" "}
-                <span className="ml-2 font-semibold">{!isK ? "☑" : "☐"} Belum Kompeten</span>
+                <span className="ml-2 font-semibold">{isBk ? "☑" : "☐"} Belum Kompeten</span>
               </td>
             </tr>
           }

@@ -116,6 +116,7 @@ export function renderCombinedWrittenReportMarkdown(params: {
   schemeName: string;
   thresholds?: { exact: number; near: number; partial: number };
   thresholdsUncalibrated?: boolean;
+  thresholdSourceLabel?: string;
   assessees: Array<{
     assesseeId: string;
     realName: string;
@@ -139,7 +140,10 @@ export function renderCombinedWrittenReportMarkdown(params: {
   const calibrationNote = params.thresholdsUncalibrated
     ? " [Sementara / Belum Dikalibrasi — D19 / OQ-08]"
     : "";
-  const thresholdLabel = `Exact >= ${th.exact.toFixed(2)} (${Math.round(th.exact * 100)}%) | Near (Hampir Sama) >= ${th.near.toFixed(2)} (${Math.round(th.near * 100)}%) | Parsial >= ${th.partial.toFixed(2)} (${Math.round(th.partial * 100)}%)${calibrationNote}`;
+  const sourceSuffix = params.thresholdSourceLabel
+    ? ` · Sumber: ${params.thresholdSourceLabel}`
+    : "";
+  const thresholdLabel = `Exact >= ${th.exact.toFixed(2)} (${Math.round(th.exact * 100)}%) | Near (Hampir Sama) >= ${th.near.toFixed(2)} (${Math.round(th.near * 100)}%) | Parsial >= ${th.partial.toFixed(2)} (${Math.round(th.partial * 100)}%)${calibrationNote}${sourceSuffix}`;
 
   const lines: string[] = [
     `# Laporan Gabungan Penilaian Tertulis & Kemiripan`,

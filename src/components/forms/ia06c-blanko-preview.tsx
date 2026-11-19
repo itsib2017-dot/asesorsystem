@@ -110,11 +110,27 @@ export function Ia06cBlankoPreview(props: {
               <td className="border border-black p-1.5 w-[3%] text-center">:</td>
               <td className="border border-black p-1.5 leading-snug">
                 Aspek pengetahuan seluruh unit pada kelompok pekerjaan yang diujikan (
-                <span className={payload.overallAchieved ? "font-semibold" : "line-through"}>
+                <span
+                  className={
+                    payload.overallAchieved === true
+                      ? "font-semibold"
+                      : payload.overallAchieved === false
+                        ? "line-through"
+                        : ""
+                  }
+                >
                   tercapai
                 </span>
                 /
-                <span className={!payload.overallAchieved ? "font-semibold" : "line-through"}>
+                <span
+                  className={
+                    payload.overallAchieved === false
+                      ? "font-semibold"
+                      : payload.overallAchieved === true
+                        ? "line-through"
+                        : ""
+                  }
+                >
                   belum tercapai
                 </span>
                 )*

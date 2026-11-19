@@ -101,7 +101,9 @@ export interface Ak02ExportPayload {
     unitTitle: string;
     evidenceTypes: Ak02EvidenceType[];
   }>;
-  overallRecommendation: "K" | "BK";
+  overallRecommendation: "K" | "BK" | null;
+  decisionSource?: "auto_rollup" | "manual_override" | "undecided";
+  overrideReason?: string | null;
   followUpNote?: string;
   assessorComment?: string;
   signaturePngBytes?: Buffer;
@@ -116,8 +118,8 @@ export interface Ia04bExportPayload {
   assessorRegNo: string;
   assesseeName: string;
   assessmentDate: string;
-  itemAchievedFlags: boolean[];
-  overallRecommendation: "K" | "BK";
+  itemAchievedFlags: Array<boolean | null>;
+  overallRecommendation: "K" | "BK" | null;
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
 }
@@ -136,7 +138,7 @@ export interface Ia06cExportPayload {
     answerText: string;
     achieved: boolean | null;
   }>;
-  overallAchieved: boolean;
+  overallAchieved: boolean | null;
   feedbackDetail?: string;
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
@@ -772,7 +774,8 @@ export async function generateAk02Docx(payload: Ak02ExportPayload): Promise<Buff
       }
       if (rIdx === 14) {
         const isK = payload.overallRecommendation === "K";
-        return mutateSdtCheckboxes(rowXml, [isK, !isK]);
+        const isBk = payload.overallRecommendation === "BK";
+        return mutateSdtCheckboxes(rowXml, [isK, isBk]);
       }
       if (rIdx === 15) {
         return mutateRowCells(rowXml, (cXml, cIdx) =>
@@ -786,10 +789,7 @@ export async function generateAk02Docx(payload: Ak02ExportPayload): Promise<Buff
           cIdx === 1
             ? replaceCellRuns(
                 cXml,
-                makeTextRun(
-                  payload.assessorComment ||
-                    "Asesmen dilaksanakan sesuai prosedur dan bukti portofolio serta uji terstruktur.",
-                ),
+                makeTextRun(payload.assessorComment || "-"),
               )
             : cXml,
         );
@@ -874,10 +874,17 @@ export async function generateIa04bDocx(payload: Ia04bExportPayload): Promise<Bu
     const updatedAspectTbl = mutateTableRows(docXml.slice(span.start, span.end), (rows) =>
       rows.map((rowXml, rIdx) => {
         if (rIdx < 2) return rowXml;
+        const rawFlag = payload.itemAchievedFlags[itemCursor];
         const achieved =
-          payload.itemAchievedFlags[itemCursor] ?? payload.overallRecommendation === "K";
+          rawFlag === undefined
+            ? payload.overallRecommendation === "K"
+              ? true
+              : payload.overallRecommendation === "BK"
+                ? false
+                : null
+            : rawFlag;
         itemCursor += 1;
-        return mutateSdtCheckboxes(rowXml, [achieved, !achieved]);
+        return mutateSdtCheckboxes(rowXml, [achieved === true, achieved === false]);
       }),
     );
     replacements.push({ span, xml: updatedAspectTbl });
@@ -886,18 +893,19 @@ export async function generateIa04bDocx(payload: Ia04bExportPayload): Promise<Bu
   // Table 11: Recommendation + Asesi/Asesor signature block (offset = 1 below r0)
   const t11Span = tableSpans[11]!;
   const isK = payload.overallRecommendation === "K";
+  const isBk = payload.overallRecommendation === "BK";
   const updatedT11 = mutateTableRows(docXml.slice(t11Span.start, t11Span.end), (rows) => {
     const withRec = rows.map((rowXml, rIdx) => {
       if (rIdx !== 0) return rowXml;
       const recRuns = [
         makeTextRun("Asesi telah "),
-        makeTextRun("memenuhi", { strike: !isK }),
+        makeTextRun("memenuhi", { strike: isBk }),
         makeTextRun("/ "),
         makeTextRun("belum memenuhi", { strike: isK }),
         makeTextRun(" pencapaian seluruh kriteria unjuk kerja, direkomendasikan: "),
         makeTextRun(isK ? "☑ " : "☐ "),
         makeTextRun("Kompeten  "),
-        makeTextRun(!isK ? "☑ " : "☐ "),
+        makeTextRun(isBk ? "☑ " : "☐ "),
         makeTextRun("Belum Kompeten"),
       ].join("");
       return mutateRowCells(rowXml, (cXml, cIdx) =>
@@ -1011,11 +1019,13 @@ export async function generateIa06cDocx(payload: Ia06cExportPayload): Promise<Bu
   const updatedT3 = mutateTableRows(docXml.slice(t3Span.start, t3Span.end), (rows) =>
     rows.map((rowXml, rIdx) => {
       if (rIdx !== 0) return rowXml;
+      const strikeTercapai = payload.overallAchieved === false;
+      const strikeBelum = payload.overallAchieved === true;
       const runs = [
         makeTextRun("Aspek pengetahuan seluruh unit pada kelompok pekerjaan yang diujikan ("),
-        makeTextRun("tercapai", { strike: !payload.overallAchieved }),
+        makeTextRun("tercapai", { strike: strikeTercapai }),
         makeTextRun("/"),
-        makeTextRun("belum tercapai", { strike: payload.overallAchieved }),
+        makeTextRun("belum tercapai", { strike: strikeBelum }),
         makeTextRun(")*"),
         ...(payload.feedbackDetail
           ? [makeTextRun(` Catatan unit/KUK: ${payload.feedbackDetail}`)]
@@ -1619,6 +1629,7 @@ export async function generateSimilarityReportDocx(params: {
   schemeName: string;
   thresholds: { exact: number; near: number; partial: number };
   thresholdsUncalibrated?: boolean;
+  thresholdSourceLabel?: string;
   assessees: Array<{
     assesseeId: string;
     realName: string;
@@ -1637,7 +1648,8 @@ export async function generateSimilarityReportDocx(params: {
 }): Promise<Buffer> {
   const thresholdSummary =
     `Exact >= ${params.thresholds.exact.toFixed(2)} | Near >= ${params.thresholds.near.toFixed(2)} | Parsial >= ${params.thresholds.partial.toFixed(2)}` +
-    (params.thresholdsUncalibrated ? " (Sementara / Belum Dikalibrasi — D19 / OQ-08)" : "");
+    (params.thresholdsUncalibrated ? " (Sementara / Belum Dikalibrasi — D19 / OQ-08)" : "") +
+    (params.thresholdSourceLabel ? ` · Sumber: ${params.thresholdSourceLabel}` : "");
 
   const assesseeTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },

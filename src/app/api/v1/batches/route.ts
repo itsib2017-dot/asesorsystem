@@ -113,6 +113,7 @@ export async function POST(req: Request) {
 
   const scanJob = await enqueueJob({
     userId: user.id,
+    lspId: authz.lspId,
     type: "drive_scan",
     payload: {
       batchId: result.batchId,

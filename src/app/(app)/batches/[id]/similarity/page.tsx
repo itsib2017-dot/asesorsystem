@@ -20,7 +20,15 @@ export default async function SimilarityReportPage({
   const data = await loadBatchSimilarityReportData(user.id, batchId);
   if (!data) return notFound();
 
-  const { batch, schemeName, thresholds, thresholdsUncalibrated, flaggedPairs, combinedMd } = data;
+  const {
+    batch,
+    schemeName,
+    thresholds,
+    thresholdsUncalibrated,
+    thresholdSourceLabel,
+    flaggedPairs,
+    combinedMd,
+  } = data;
 
   return (
     <div className="space-y-6">
@@ -61,6 +69,9 @@ export default async function SimilarityReportPage({
               Near &ge; {thresholds.near.toFixed(2)} ({Math.round(thresholds.near * 100)}%) ·
               Parsial &ge; {thresholds.partial.toFixed(2)} ({Math.round(thresholds.partial * 100)}%)
             </div>
+            <span className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] font-medium text-slate-700">
+              Sumber: {thresholdSourceLabel}
+            </span>
             {thresholdsUncalibrated && (
               <span
                 className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] font-medium text-amber-800"

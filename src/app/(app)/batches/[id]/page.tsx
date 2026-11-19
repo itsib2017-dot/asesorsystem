@@ -12,9 +12,7 @@ import {
   Users,
 } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
-import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getConfig } from "@/lib/config/get-config";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { getLatestJobForBatch } from "@/repositories/jobs.repository";
@@ -63,36 +61,19 @@ export default async function BatchDetailPage({
     if (!driveFolderUrl) return;
     const scan = await enqueueJob({
       userId,
+      lspId: batchLspId,
+      triggerAction: "rescan",
       type: "drive_scan",
       payload: { batchId, driveFolderUrl },
     });
-    try {
-      const supabase = await getSupabaseServerClient();
-      await writeAuditLog(
-        {
-          lsp_id: batchLspId,
-          actor_id: userId,
-          action: "job.drive_scan.rescan",
-          resource: "batches",
-          resource_id: batchId,
-          after_summary: {
-            driveFolderUrl,
-            ingestJobId: scan.ok ? scan.job.id : null,
-            status: scan.ok ? scan.job.status : "enqueue_failed",
-          },
-        },
-        supabase,
-      );
-    } catch (err) {
-      console.warn(
-        "[RescanBatchDrive] audit log failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
     revalidatePath(`/batches/${batchId}`);
+    if (scan.ok) {
+      revalidatePath(`/batches/${batchId}/ingest/${scan.job.id}`);
+    }
     revalidatePath(`/batches/${batchId}/triage`);
     revalidatePath("/batches");
     revalidatePath("/dashboard");
+    revalidatePath("/settings/audit");
   }
 
   const rows: CompletenessRow[] = assessees.map((a) => {

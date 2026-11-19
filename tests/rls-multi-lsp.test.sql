@@ -124,6 +124,10 @@ BEGIN
     (v_lsp_a, v_batch_a1, v_assessee_a1, 'K', v_assessor_a),
     (v_lsp_b, v_batch_b1, v_assessee_b1, 'K', v_assessor_b);
 
+  INSERT INTO public.assessee_decision_overrides (lsp_id, batch_id, assessee_id, override_decision, override_reason, overridden_by, overridden_at) VALUES
+    (v_lsp_a, v_batch_a1, v_assessee_a1, 'K', 'Final assessor judgement confirmed in test seed', v_assessor_a, now()),
+    (v_lsp_b, v_batch_b1, v_assessee_b1, 'BK', 'Final assessor judgement confirmed in test seed', v_assessor_b, now());
+
   INSERT INTO public.assessor_llm_config (assessor_id, provider, model, encrypted_api_key) VALUES
     (v_assessor_a, 'anthropic', 'claude-3-7-sonnet-20250219', 'iv:tag:cipher_a'),
     (v_assessor_b, 'anthropic', 'claude-3-7-sonnet-20250219', 'iv:tag:cipher_b');
@@ -364,6 +368,37 @@ INSERT INTO test_results (test_id, role_tested, target_lsp, resource, expected, 
 SELECT 'RLS-32', 'assessor', 'LSP-B', 'interview_assessments', '0', count(*)::text,
        CASE WHEN count(*) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM public.interview_assessments WHERE lsp_id = 'b0000000-0000-0000-0000-000000000002';
+
+INSERT INTO test_results (test_id, role_tested, target_lsp, resource, expected, actual, status)
+SELECT 'RLS-33', 'assessor', 'LSP-B', 'assessee_decision_overrides', '0', count(*)::text,
+       CASE WHEN count(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM public.assessee_decision_overrides WHERE lsp_id = 'b0000000-0000-0000-0000-000000000002';
+
+-- T5.2: TUK Admin A cannot insert/update assessee_decision_overrides -> MUST FAIL
+DO $mut$
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"sub":"10000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
+  BEGIN
+    INSERT INTO public.assessee_decision_overrides (lsp_id, batch_id, assessee_id, override_decision, override_reason, overridden_by)
+    VALUES ('a0000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000002', 'a3000000-0000-0000-0000-000000000002', 'K', 'TUK unauthorized override attempt', '10000000-0000-0000-0000-000000000003');
+    INSERT INTO test_results VALUES ('RLS-34', 'tuk_admin', 'LSP-A', 'assessee_decision_overrides (insert)', 'REJECT', 'ALLOWED', 'FAIL');
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO test_results VALUES ('RLS-34', 'tuk_admin', 'LSP-A', 'assessee_decision_overrides (insert)', 'REJECT', 'REJECTED', 'PASS');
+  END;
+END $mut$;
+
+-- T5.3: Assessor A cannot insert override on unassigned Batch A2 -> MUST FAIL
+DO $mut$
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"sub":"10000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+  BEGIN
+    INSERT INTO public.assessee_decision_overrides (lsp_id, batch_id, assessee_id, override_decision, override_reason, overridden_by)
+    VALUES ('a0000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000002', 'a3000000-0000-0000-0000-000000000002', 'K', 'Unassigned batch override attempt', '10000000-0000-0000-0000-000000000001');
+    INSERT INTO test_results VALUES ('RLS-35', 'assessor', 'LSP-A', 'assessee_decision_overrides (unassigned batch)', 'REJECT', 'ALLOWED', 'FAIL');
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO test_results VALUES ('RLS-35', 'assessor', 'LSP-A', 'assessee_decision_overrides (unassigned batch)', 'REJECT', 'REJECTED', 'PASS');
+  END;
+END $mut$;
 
 -- Switch back to postgres session to query results
 RESET ROLE;

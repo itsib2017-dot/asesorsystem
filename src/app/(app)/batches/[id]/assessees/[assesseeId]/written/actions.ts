@@ -108,8 +108,10 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
 
   const jobRes = await enqueueJob({
     userId: user.id,
+    lspId: batch.lspId,
     type: "written_grading",
     payload: {
+      batchId,
       assesseeId,
       ...(resolvedMasterKeyText ? { masterKeyText: resolvedMasterKeyText } : {}),
       ...(inputStudentAnswerText ? { studentAnswerText: inputStudentAnswerText } : {}),

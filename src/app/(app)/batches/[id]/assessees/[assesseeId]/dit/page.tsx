@@ -4,6 +4,7 @@ import { AlertCircle, CheckCircle2, Lock } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { listDriveFilesForBatch } from "@/repositories/batches.repository";
 import {
+  getAssesseeDecisionOverride,
   getLatestDitAnalysis,
   listDecisionsForAssessee,
 } from "@/repositories/assessment.repository";
@@ -39,10 +40,11 @@ export default async function DitAnalysisPage({
   if (!common) return notFound();
   const { assessee } = common;
 
-  const [files, analysis, decisions] = await Promise.all([
+  const [files, analysis, decisions, decisionOverride] = await Promise.all([
     listDriveFilesForBatch(user.id, batchId),
     getLatestDitAnalysis(user.id, assesseeId),
     listDecisionsForAssessee(user.id, assesseeId),
+    getAssesseeDecisionOverride(user.id, assesseeId),
   ]);
   const assesseeFiles = files.filter((f) => f.assesseeId === assesseeId);
   const file04a = assesseeFiles.find((f) => f.docType === "04a") ?? null;
@@ -70,6 +72,7 @@ export default async function DitAnalysisPage({
     assessmentDate: common.assessmentDate,
     ditAnalysis: analysis as Record<string, unknown> | null,
     decisions: decisions as unknown as RawDecisionRow[],
+    manualOverride: decisionOverride,
   });
   const coverageMatrix = Array.isArray(analysis?.coverage_matrix ?? analysis?.coverageMatrix)
     ? ((analysis?.coverage_matrix ?? analysis?.coverageMatrix) as Array<Record<string, unknown>>)

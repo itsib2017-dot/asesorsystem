@@ -1,6 +1,9 @@
+import { isUuid } from "@/db";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { logEvent } from "@/lib/logger";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { listUserMemberships } from "@/repositories/auth.repository";
+import { getBatchById } from "@/repositories/batches.repository";
 import {
   enqueueJobRecord,
   getJobRecordById,
@@ -18,12 +21,95 @@ export type JobType =
   | "similarity_run"
   | "ak05_export";
 
+async function resolveJobLspId(
+  userId: string,
+  payload: Record<string, unknown>,
+  explicitLspId?: string | null,
+): Promise<string | null> {
+  if (explicitLspId && isUuid(explicitLspId)) {
+    return explicitLspId;
+  }
+  const batchId = typeof payload.batchId === "string" ? payload.batchId.trim() : "";
+  if (batchId && isUuid(batchId)) {
+    try {
+      const batch = await getBatchById(userId, batchId);
+      if (batch?.lspId) return batch.lspId;
+    } catch {
+      // Fall through to membership fallback
+    }
+  }
+  try {
+    const memberships = await listUserMemberships(userId);
+    return memberships[0]?.lspId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function recordJobAuditEvent(params: {
+  userId: string;
+  lspId: string | null;
+  job: Pick<JobRecord, "id" | "type" | "payload">;
+  action: string;
+  status: string;
+  extra?: Record<string, unknown>;
+}): Promise<void> {
+  const batchId =
+    typeof params.job.payload?.batchId === "string" ? params.job.payload.batchId : null;
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        lsp_id: params.lspId,
+        actor_id: params.userId,
+        action: params.action,
+        resource: "jobs",
+        resource_id: params.job.id,
+        after_summary: {
+          type: params.job.type,
+          batchId,
+          status: params.status,
+          ...(params.extra ?? {}),
+        },
+        correlation_id: params.job.id,
+      },
+      supabase,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Unit tests call queue helpers outside Next.js cookies() request store
+    if (!msg.includes("outside a request scope") && !msg.includes("cookies")) {
+      logEvent("warn", {
+        correlation_id: params.job.id,
+        action: params.action,
+        resource: "jobs",
+        outcome: "failure",
+        meta: { error: msg },
+      });
+    }
+  }
+}
+
 export async function executeJob(
   userId: string,
   jobId: string,
+  options?: { lspId?: string | null; triggerAction?: "retry" },
 ): Promise<JobRecord | null> {
   const job = await getJobRecordById(userId, jobId);
   if (!job) return null;
+
+  const lspId = await resolveJobLspId(userId, job.payload, options?.lspId);
+
+  if (options?.triggerAction === "retry") {
+    await recordJobAuditEvent({
+      userId,
+      lspId,
+      job,
+      action: `job.${job.type}.retried`,
+      status: job.status,
+      extra: { attempts: job.attempts, trigger: "manual_retry" },
+    });
+  }
 
   const nextAttempts = job.attempts + 1;
   await updateJobStatusRecord({
@@ -33,6 +119,15 @@ export async function executeJob(
     progress: 10,
     error: null,
     attempts: nextAttempts,
+  });
+
+  await recordJobAuditEvent({
+    userId,
+    lspId,
+    job,
+    action: `job.${job.type}.started`,
+    status: "running",
+    extra: { attempts: nextAttempts, progress: 10 },
   });
 
   let outcomeStatus: "done" | "failed" = "done";
@@ -78,31 +173,21 @@ export async function executeJob(
     });
   }
 
-  try {
-    const supabase = await getSupabaseServerClient();
-    await writeAuditLog(
-      {
-        actor_id: userId,
-        action:
-          outcomeStatus === "done"
-            ? `job.${job.type}.completed`
-            : `job.${job.type}.failed`,
-        resource: "jobs",
-        resource_id: job.id,
-        after_summary: {
-          type: job.type,
-          batchId: job.payload?.batchId ?? null,
-          status: outcomeStatus,
-          ...(resultMeta ?? {}),
-          ...(errorMessage ? { error: errorMessage } : {}),
-        },
-        correlation_id: job.id,
-      },
-      supabase,
-    );
-  } catch {
-    // Do not break worker execution or unit tests outside Next request scope
-  }
+  await recordJobAuditEvent({
+    userId,
+    lspId,
+    job,
+    action:
+      outcomeStatus === "done"
+        ? `job.${job.type}.completed`
+        : `job.${job.type}.failed`,
+    status: outcomeStatus,
+    extra: {
+      attempts: nextAttempts,
+      ...(resultMeta ?? {}),
+      ...(errorMessage ? { error: errorMessage } : {}),
+    },
+  });
 
   return getJobRecordById(userId, job.id);
 }
@@ -112,6 +197,8 @@ export async function enqueueJob(params: {
   type: JobType;
   payload: Record<string, unknown>;
   runImmediately?: boolean;
+  lspId?: string | null;
+  triggerAction?: "rescan";
 }) {
   const enqueued = await enqueueJobRecord({
     createdBy: params.userId,
@@ -123,8 +210,35 @@ export async function enqueueJob(params: {
     return enqueued;
   }
 
+  const lspId = await resolveJobLspId(params.userId, params.payload, params.lspId);
+
+  await recordJobAuditEvent({
+    userId: params.userId,
+    lspId,
+    job: enqueued.job,
+    action: `job.${params.type}.created`,
+    status: enqueued.job.status,
+    extra: params.triggerAction ? { trigger: params.triggerAction } : undefined,
+  });
+
+  if (params.triggerAction === "rescan") {
+    await recordJobAuditEvent({
+      userId: params.userId,
+      lspId,
+      job: enqueued.job,
+      action: `job.${params.type}.rescan`,
+      status: enqueued.job.status,
+      extra: {
+        driveFolderUrl:
+          typeof params.payload.driveFolderUrl === "string"
+            ? params.payload.driveFolderUrl
+            : null,
+      },
+    });
+  }
+
   if (params.runImmediately !== false) {
-    const executed = await executeJob(params.userId, enqueued.job.id);
+    const executed = await executeJob(params.userId, enqueued.job.id, { lspId });
     if (executed) {
       return { ok: true as const, job: executed };
     }

@@ -162,4 +162,122 @@ describe("Official AK3U DOCX Template Exports (AK.02, IA.04B, IA.06C)", () => {
     expect(ctXml).toContain('Extension="png"');
     expect(zip.file("word/media/signature.png")).toBeTruthy();
   });
+
+  it("keeps AK.02, IA.04B, and IA.06C completely neutral (no checked K/BK or strikethrough) when unassessed", async () => {
+    const ak02 = buildAk02Payload({
+      schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
+      schemeNumber: "SKM/2037/00013/2/2021/1",
+      tukType: "sewaktu",
+      assessorName: "Daniel Stefanus",
+      assessorRegNo: "MET. 000.003610 2023",
+      assesseeName: "Calon Belum Dinilai",
+      assessmentDate: "2026-11-18",
+      decisions: [{ unitCode: "M.71KKK01.001.1", unitTitle: AK3U_OFFICIAL_UNITS[0], decision: null }],
+      hasDit: false,
+      hasWritten: false,
+      hasInterview: false,
+      signaturePngBytes: SAMPLE_PNG,
+      signatureMimeType: "image/png",
+    });
+    expect(ak02.overallRecommendation).toBeNull();
+    expect(ak02.unitDecisions.every((u) => u.evidenceTypes.length === 0)).toBe(true);
+
+    const ak02Zip = await JSZip.loadAsync(await generateAk02Docx(ak02));
+    const ak02Xml = await ak02Zip.file("word/document.xml")!.async("string");
+    expect(ak02Xml).not.toContain("Asesmen dilaksanakan sesuai prosedur");
+    // In Table 2 row 14, both K and BK checkboxes stay unchecked (w14:val="0")
+    expect(ak02Xml).not.toMatch(/Rekomendasi hasil asesmen[\s\S]*?<w14:checked w14:val="1"\/>/);
+
+    const ia04b = buildIa04bPayload({
+      schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
+      schemeNumber: "SKM/2037/00013/2/2021/1",
+      tukType: "sewaktu",
+      assessorName: "Daniel Stefanus",
+      assessorRegNo: "MET. 000.003610 2023",
+      assesseeName: "Calon Belum Dinilai",
+      assessmentDate: "2026-11-18",
+      ditAnalysis: null,
+      decisions: [],
+      signaturePngBytes: SAMPLE_PNG,
+      signatureMimeType: "image/png",
+    });
+    expect(ia04b.overallRecommendation).toBeNull();
+    expect(ia04b.itemAchievedFlags.every((v) => v === null)).toBe(true);
+
+    const ia04bZip = await JSZip.loadAsync(await generateIa04bDocx(ia04b));
+    const ia04bXml = await ia04bZip.file("word/document.xml")!.async("string");
+    const ia04bRecSlice = ia04bXml.slice(ia04bXml.indexOf("Rekomendasi Asesor"));
+    expect(ia04bRecSlice).not.toContain("<w:strike");
+    expect(ia04bRecSlice).not.toContain("☑");
+
+    const ia06c = buildIa06cPayload({
+      schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
+      schemeNumber: "SKM/2037/00013/2/2021/1",
+      tukType: "sewaktu",
+      assessorName: "Daniel Stefanus",
+      assessorRegNo: "MET. 000.003610 2023",
+      assesseeName: "Calon Belum Dinilai",
+      assessmentDate: "2026-11-18",
+      writtenGrading: null,
+      signaturePngBytes: SAMPLE_PNG,
+      signatureMimeType: "image/png",
+    });
+    expect(ia06c.overallAchieved).toBeNull();
+
+    const ia06cZip = await JSZip.loadAsync(await generateIa06cDocx(ia06c));
+    const ia06cXml = await ia06cZip.file("word/document.xml")!.async("string");
+    const ia06cFeedbackIdx = ia06cXml.indexOf("Aspek pengetahuan seluruh unit");
+    const ia06cFeedbackSlice = ia06cXml.slice(ia06cFeedbackIdx, ia06cFeedbackIdx + 1800);
+    expect(ia06cFeedbackSlice).not.toContain("<w:strike");
+  });
+
+  it("auto-resolves AK.02 to BK on even 1 BK unit, and respects manual assessor override as final call", async () => {
+    const partialWithOneBk = [
+      { unitCode: "M.71KKK01.001.1", unitTitle: AK3U_OFFICIAL_UNITS[0], decision: "K" },
+      { unitCode: "M.71KKK01.002.1", unitTitle: AK3U_OFFICIAL_UNITS[1], decision: "BK", assessorNote: "Bukti tanggap darurat belum lengkap" },
+    ];
+
+    const autoBk = buildAk02Payload({
+      schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
+      schemeNumber: "SKM/2037/00013/2/2021/1",
+      tukType: "sewaktu",
+      assessorName: "Daniel Stefanus",
+      assessorRegNo: "MET. 000.003610 2023",
+      assesseeName: "Dewi Lestari",
+      assessmentDate: "2026-11-18",
+      decisions: partialWithOneBk,
+      hasDit: true,
+      hasWritten: false,
+      signaturePngBytes: SAMPLE_PNG,
+      signatureMimeType: "image/png",
+    });
+    expect(autoBk.overallRecommendation).toBe("BK");
+    expect(autoBk.followUpNote).toContain("M.71KKK01.002.1");
+
+    const manualK = buildAk02Payload({
+      schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
+      schemeNumber: "SKM/2037/00013/2/2021/1",
+      tukType: "sewaktu",
+      assessorName: "Daniel Stefanus",
+      assessorRegNo: "MET. 000.003610 2023",
+      assesseeName: "Dewi Lestari",
+      assessmentDate: "2026-11-18",
+      decisions: partialWithOneBk,
+      manualOverride: {
+        overrideDecision: "K",
+        overrideReason: "Asesi melampirkan bukti revisi sah saat wawancara klarifikasi",
+      },
+      hasDit: true,
+      hasWritten: false,
+      signaturePngBytes: SAMPLE_PNG,
+      signatureMimeType: "image/png",
+    });
+    expect(manualK.overallRecommendation).toBe("K");
+    expect(manualK.decisionSource).toBe("manual_override");
+    expect(manualK.assessorComment).toContain("secara manual oleh asesor (Kompeten)");
+
+    const overrideZip = await JSZip.loadAsync(await generateAk02Docx(manualK));
+    const overrideXml = await overrideZip.file("word/document.xml")!.async("string");
+    expect(overrideXml).toContain("Asesi melampirkan bukti revisi sah");
+  });
 });

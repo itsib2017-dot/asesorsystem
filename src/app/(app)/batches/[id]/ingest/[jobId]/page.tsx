@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { AlertCircle, CheckCircle2, Clock, RefreshCw, XCircle } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
+import { listAuditLogsForResource } from "@/repositories/audit.repository";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { getLatestJobForBatch } from "@/repositories/jobs.repository";
 import { executeJob, getJobStatus } from "@/worker/queue";
@@ -71,15 +72,20 @@ export default async function BatchIngestJobPage({
     );
   }
 
-  const files = await listDriveFilesForBatch(user.id, batchId);
+  const [files, jobLogs] = await Promise.all([
+    listDriveFilesForBatch(user.id, batchId),
+    listAuditLogsForResource(user.id, batch.lspId, "jobs", job.id, 30),
+  ]);
   const userId = user.id;
+  const batchLspId = batch.lspId;
 
   async function retryJobAction() {
     "use server";
-    await executeJob(userId, jobId);
+    await executeJob(userId, jobId, { lspId: batchLspId, triggerAction: "retry" });
     revalidatePath(`/batches/${batchId}/ingest/${jobId}`);
     revalidatePath(`/batches/${batchId}/triage`);
     revalidatePath(`/batches/${batchId}`);
+    revalidatePath("/settings/audit");
   }
 
   return (
@@ -178,6 +184,41 @@ export default async function BatchIngestJobPage({
             </Link>
           </div>
         </div>
+      </div>
+
+      <div className="glass-card rounded-2xl p-6 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Log Eksekusi Job
+          </h2>
+          <span className="text-xs font-mono text-slate-500">
+            {jobLogs.length} entri
+          </span>
+        </div>
+        {jobLogs.length === 0 ? (
+          <p className="text-xs text-slate-500">
+            Belum ada log untuk job ini.
+          </p>
+        ) : (
+          <ul className="divide-y divide-slate-200 text-xs">
+            {jobLogs.map((entry) => (
+              <li key={entry.id} className="py-2.5 flex flex-wrap items-start justify-between gap-2">
+                <div className="space-y-0.5">
+                  <div className="font-semibold text-slate-900">
+                    {entry.action}
+                  </div>
+                  <div className="text-slate-600">
+                    Aktor: {entry.actorName || "Sistem"} · corr:{" "}
+                    <span className="font-mono text-[11px]">{entry.correlationId}</span>
+                  </div>
+                </div>
+                <span className="font-mono text-[11px] text-slate-500">
+                  {entry.createdAt}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );

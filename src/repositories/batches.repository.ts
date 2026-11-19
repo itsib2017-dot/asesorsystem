@@ -371,14 +371,17 @@ export async function upsertDriveFilesForBatch(params: {
     (existingRows ?? []).map((r) => [String(r.drive_file_id), String(r.id)]),
   );
 
-  let saved = 0;
+  const toInsert: Array<Record<string, unknown>> = [];
+  const toUpdate: Array<{ id: string; payload: Record<string, unknown> }> = [];
+  const nowIso = new Date().toISOString();
+
   for (const f of params.files) {
     const existingId = existingMap.get(f.driveFileId);
     const resolvedStatus = f.triageStatus ?? (f.assesseeId ? "assigned" : "unmatched");
     if (existingId) {
-      await supabase
-        .from("drive_files")
-        .update({
+      toUpdate.push({
+        id: existingId,
+        payload: {
           file_name: f.fileName,
           mime_type: f.mimeType,
           drive_path: f.drivePath,
@@ -388,11 +391,11 @@ export async function upsertDriveFilesForBatch(params: {
           ...(f.assesseeId || f.triageStatus ? { triage_status: resolvedStatus } : {}),
           ...(f.extractedText !== undefined ? { extracted_text: f.extractedText } : {}),
           ...(f.extractionMethod !== undefined ? { extraction_method: f.extractionMethod } : {}),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existingId);
+          updated_at: nowIso,
+        },
+      });
     } else {
-      await supabase.from("drive_files").insert({
+      toInsert.push({
         lsp_id: params.lspId,
         batch_id: params.batchId,
         assessee_id: f.assesseeId ?? null,
@@ -407,7 +410,25 @@ export async function upsertDriveFilesForBatch(params: {
         extraction_method: f.extractionMethod ?? null,
       });
     }
-    saved++;
+  }
+
+  let saved = 0;
+  const INSERT_CHUNK = 100;
+  for (let i = 0; i < toInsert.length; i += INSERT_CHUNK) {
+    const chunk = toInsert.slice(i, i + INSERT_CHUNK);
+    const { error } = await supabase.from("drive_files").insert(chunk);
+    if (!error) saved += chunk.length;
+  }
+
+  const UPDATE_CONCURRENCY = 20;
+  for (let i = 0; i < toUpdate.length; i += UPDATE_CONCURRENCY) {
+    const chunk = toUpdate.slice(i, i + UPDATE_CONCURRENCY);
+    const results = await Promise.all(
+      chunk.map((item) =>
+        supabase.from("drive_files").update(item.payload).eq("id", item.id),
+      ),
+    );
+    saved += results.filter((r) => !r.error).length;
   }
 
   return saved;

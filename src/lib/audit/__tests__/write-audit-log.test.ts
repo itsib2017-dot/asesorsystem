@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { resolveAuditResourceHref } from "../job-audit";
 import { writeAuditLog } from "../write-audit-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -74,5 +75,46 @@ describe("writeAuditLog", () => {
         mockClient,
       ),
     ).resolves.not.toThrow();
+  });
+});
+
+describe("resolveAuditResourceHref", () => {
+  it("links batches and jobs with valid UUIDs to their detail/ingest views", () => {
+    const batchId = "f98e5671-fbcb-42cb-a724-9f69d24f780b";
+    const jobId = "b629abf7-84a2-4ece-b755-0ffe24ef841b";
+
+    expect(
+      resolveAuditResourceHref({
+        resource: "batches",
+        resourceId: batchId,
+        afterSummary: null,
+      }),
+    ).toBe(`/batches/${batchId}`);
+
+    expect(
+      resolveAuditResourceHref({
+        resource: "jobs",
+        resourceId: jobId,
+        afterSummary: { batchId, type: "drive_scan", status: "done" },
+      }),
+    ).toBe(`/batches/${batchId}/ingest/${jobId}`);
+  });
+
+  it("returns null for jobs missing a valid batchId or invalid UUIDs", () => {
+    expect(
+      resolveAuditResourceHref({
+        resource: "jobs",
+        resourceId: "b629abf7-84a2-4ece-b755-0ffe24ef841b",
+        afterSummary: { type: "ocr_ktp" },
+      }),
+    ).toBeNull();
+
+    expect(
+      resolveAuditResourceHref({
+        resource: "jobs",
+        resourceId: "not-a-uuid",
+        afterSummary: { batchId: "f98e5671-fbcb-42cb-a724-9f69d24f780b" },
+      }),
+    ).toBeNull();
   });
 });

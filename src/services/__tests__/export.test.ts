@@ -138,7 +138,9 @@ describe("Export Format Rule D8 & Document Generators", () => {
     const buf = await generateSimilarityReportDocx({
       batchName: "Demo Audit R4",
       schemeName: "AK3U — Okupasi Ahli Keselamatan dan Kesehatan Kerja Umum (SKM/2037/00013/2/2021/1)",
-      thresholds: { exact: 0.9, near: 0.75, partial: 0.5 },
+      thresholds: { exact: 0.85, near: 0.65, partial: 0.45 },
+      thresholdsUncalibrated: true,
+      thresholdSourceLabel: "Konfigurasi Global (app_config)",
       assessees: [
         {
           assesseeId: "a1",
@@ -154,8 +156,9 @@ describe("Export Format Rule D8 & Document Generators", () => {
     const zip = await JSZip.loadAsync(buf);
     const docXml = await zip.file("word/document.xml")!.async("string");
     expect(docXml).toContain("AK3U");
-    expect(docXml).toContain("0.90");
-    expect(docXml).toContain("0.75");
-    expect(docXml).toContain("0.50");
+    expect(docXml).toContain("0.85");
+    expect(docXml).toContain("0.65");
+    expect(docXml).toContain("0.45");
+    expect(docXml).toContain("Konfigurasi Global (app_config)");
   });
 });

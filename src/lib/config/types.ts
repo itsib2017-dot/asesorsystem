@@ -53,3 +53,12 @@ export interface GetConfigOptions {
   lspId?: string;
   schemeId?: string;
 }
+
+export type ConfigResolutionSource = "scheme" | "lsp" | "global" | "default";
+
+export const CONFIG_SOURCE_LABELS: Record<ConfigResolutionSource, string> = {
+  scheme: "Konfigurasi Skema (app_config)",
+  lsp: "Konfigurasi Tenant (app_config)",
+  global: "Konfigurasi Global (app_config)",
+  default: "Default Aplikasi",
+};

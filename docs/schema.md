@@ -23,6 +23,7 @@
 | `public.jobs` | `id uuid` | via `created_by` | Background worker queue jobs | YES |
 | `public.assessor_llm_config` | `id uuid` | via `assessor_id` | Encrypted BYOK AI credentials per assessor | YES |
 | `public.interview_assessments` | `id uuid` | `lsp_id` | FR.IA.09 structured interview evaluations & VATM rollup | YES |
+| `public.assessee_decision_overrides` | `id uuid` | `lsp_id` | Manual final-call override for AK.02 & AK.05 recommendations | YES |
 
 ---
 
@@ -36,3 +37,4 @@
 6. `20261118000006_jobs_update_policy.sql`: Added UPDATE RLS policy on `jobs`.
 7. `20261118000007_audit_null_lsp_actor_scope.sql`: Scoped historical null-`lsp_id` logs to LSP admins.
 8. `20261118000008_interview_assessments.sql`: Added `interview_assessments` table with multi-LSP RLS (`ia09_*`).
+9. `20261119000009_assessee_decision_overrides.sql`: Added `assessee_decision_overrides` table (`ado_*`) storing assessor/admin final-call overrides (`K`/`BK`) with mandatory audit reason (`>= 5` chars when active).

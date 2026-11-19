@@ -131,6 +131,24 @@ describe("Drive folder crawling & BNSP path classification", () => {
         "Persyaratan Pelatihan AK3 umum BNSP/12. Luat",
       ).docType,
     ).toBe("surat_tugas");
+    expect(
+      classifyDriveFileName(
+        "DIT kelompok _1 IBPR.pptx",
+        "Tugas DIT/WIWI",
+      ).docType,
+    ).toBe("04b");
+    expect(
+      classifyDriveFileName(
+        "DIT_Kelompok_2_HIRADC_ERP.pptx",
+        "Tugas DIT/Kelompok 2",
+      ).docType,
+    ).toBe("04b");
+    expect(
+      classifyDriveFileName(
+        "IBPR_Area_Produksi.pdf",
+        "Persyaratan/1. Budi",
+      ).docType,
+    ).toBe("portofolio");
   });
 
   it("falls back to keyless embeddedfolderview when API key returns 403", async () => {

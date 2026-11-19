@@ -121,7 +121,7 @@ export default async function InterviewPage({
       : schemeUnits.map((u) => ({
           unitCode: u.code,
           unitTitle: u.title,
-          recommendation: "K",
+          recommendation: null,
           reasoning: "",
         }));
 
@@ -232,7 +232,7 @@ export default async function InterviewPage({
         sourceFileId={primary09?.id ?? null}
         initialQuestions={initialQuestions}
         initialUnits={initialUnits}
-        initialOverall={savedOverall ?? "K"}
+        initialOverall={savedOverall ?? null}
         initialNotes={savedNotes}
       />
     </div>

@@ -9,6 +9,10 @@ import type {
   SchemeKelompokSpec,
   SchemeRecord,
 } from "@/repositories/schemes.repository";
+import {
+  resolveAssesseeOverallDecision,
+  type OverallDecisionOverrideLike,
+} from "@/lib/ak05/decision-rules";
 
 export const AK3U_OFFICIAL_UNITS = [
   "Merancang Strategi Pengendalian Risiko K3 di Tempat Kerja",
@@ -349,6 +353,7 @@ export function buildAk02Payload(params: {
   assesseeName: string;
   assessmentDate: string;
   decisions: RawDecisionRow[];
+  manualOverride?: OverallDecisionOverrideLike | null;
   hasDit: boolean;
   hasWritten: boolean;
   hasInterview?: boolean;
@@ -361,6 +366,9 @@ export function buildAk02Payload(params: {
     decision: d.decision ?? null,
     note: normalizeStr(d.assessorNote ?? d.assessor_note),
   }));
+  const decidedList = decisionList.filter(
+    (d) => d.decision === "K" || d.decision === "BK",
+  );
 
   const targetUnits = params.scheme
     ? resolveSchemeUnitsList(params.scheme)
@@ -368,14 +376,15 @@ export function buildAk02Payload(params: {
 
   const unitDecisions = targetUnits.map((unitRef) => {
     const lowerOfficial = unitRef.title.toLowerCase();
-    const matched = decisionList.find(
+    const matched = decidedList.find(
       (d) =>
         (unitRef.code && d.unitCode.toLowerCase() === unitRef.code.toLowerCase()) ||
         d.unitTitle.toLowerCase() === lowerOfficial ||
         d.unitTitle.toLowerCase().includes(lowerOfficial.slice(0, 20)),
     );
 
-    const evidenceTypes: Ak02EvidenceType[] = ["portofolio"];
+    const evidenceTypes: Ak02EvidenceType[] = [];
+    if (matched) evidenceTypes.push("portofolio");
     if (params.hasWritten) evidenceTypes.push("tertulis");
     if (params.hasDit) evidenceTypes.push("proyek");
     if (params.hasInterview) evidenceTypes.push("pihak_ketiga");
@@ -383,25 +392,42 @@ export function buildAk02Payload(params: {
     return {
       unitCode: matched?.unitCode || unitRef.code,
       unitTitle: unitRef.title,
-      evidenceTypes:
-        matched || params.hasDit || params.hasWritten || params.hasInterview
-          ? evidenceTypes
-          : [],
+      evidenceTypes,
     };
   });
 
-  const bkDecisions = decisionList.filter((d) => d.decision === "BK");
-  const overallRecommendation: "K" | "BK" = bkDecisions.length > 0 ? "BK" : "K";
-  const followUpNote =
-    bkDecisions.length > 0
-      ? bkDecisions
-          .map((d) => `${d.unitCode || d.unitTitle}${d.note ? `: ${d.note}` : ""}`)
-          .join("; ")
-      : "-";
-  const assessorComment =
-    bkDecisions.length > 0
-      ? `Terdapat ${bkDecisions.length} unit kompetensi yang memerlukan tindak lanjut asesmen ulang.`
-      : "Asesi memenuhi seluruh persyaratan bukti kompetensi sesuai skema sertifikasi.";
+  const resolved = resolveAssesseeOverallDecision({
+    unitDecisions: decisionList,
+    totalSchemeUnits: targetUnits.length,
+    manualOverride: params.manualOverride,
+  });
+  const bkDecisions = decidedList.filter((d) => d.decision === "BK");
+  const bkFollowUp = bkDecisions
+    .map((d) => `${d.unitCode || d.unitTitle}${d.note ? `: ${d.note}` : ""}`)
+    .join("; ");
+
+  const followUpNote = resolved.isOverridden
+    ? resolved.overrideReason
+      ? `Override Manual Asesor: ${resolved.overrideReason}${bkFollowUp ? ` (Unit BK: ${bkFollowUp})` : ""}`
+      : bkFollowUp || "Override Manual Asesor"
+    : bkFollowUp || "-";
+
+  let assessorComment: string;
+  if (resolved.isOverridden) {
+    const verdictWord = resolved.recommendation === "K" ? "Kompeten" : "Belum Kompeten";
+    assessorComment = resolved.overrideReason
+      ? `Keputusan akhir ditetapkan secara manual oleh asesor (${verdictWord}): ${resolved.overrideReason}`
+      : `Keputusan akhir ditetapkan secara manual oleh asesor (${verdictWord}).`;
+  } else if (resolved.recommendation === "BK") {
+    assessorComment = `Terdapat ${bkDecisions.length} unit kompetensi yang memerlukan tindak lanjut asesmen ulang.`;
+  } else if (resolved.recommendation === "K") {
+    assessorComment =
+      "Asesi memenuhi seluruh persyaratan bukti kompetensi sesuai skema sertifikasi.";
+  } else if (resolved.decidedCount > 0) {
+    assessorComment = `Baru ${resolved.decidedCount} dari ${targetUnits.length} unit kompetensi yang diputuskan — menunggu keputusan unit lainnya.`;
+  } else {
+    assessorComment = "Belum ada keputusan unit kompetensi yang ditetapkan oleh asesor.";
+  }
 
   return {
     schemeTitle: params.schemeTitle,
@@ -413,7 +439,9 @@ export function buildAk02Payload(params: {
     assessmentDate: params.assessmentDate,
     endDate: params.assessmentDate,
     unitDecisions,
-    overallRecommendation,
+    overallRecommendation: resolved.recommendation,
+    decisionSource: resolved.source,
+    overrideReason: resolved.overrideReason,
     followUpNote,
     assessorComment,
     signaturePngBytes: params.signaturePngBytes,
@@ -432,10 +460,14 @@ export function buildIa04bPayload(params: {
   assessmentDate: string;
   ditAnalysis?: Record<string, unknown> | null;
   decisions: RawDecisionRow[];
+  manualOverride?: OverallDecisionOverrideLike | null;
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
 }): Ia04bExportPayload {
   const flatAspects = resolveSchemeKelompokPekerjaan(params.scheme).flatMap((kp) => kp.aspects);
+  const targetUnits = params.scheme
+    ? resolveSchemeUnitsList(params.scheme)
+    : AK3U_OFFICIAL_UNITS.map((title) => ({ code: undefined, title }));
   const matrixRaw = params.ditAnalysis
     ? getField<Array<{ focusPoint?: string; status?: string }>>(
         params.ditAnalysis,
@@ -449,11 +481,12 @@ export function buildIa04bPayload(params: {
 
   const decisionMap = new Map<string, string>();
   for (const d of params.decisions) {
+    if (d.decision !== "K" && d.decision !== "BK") continue;
     const title = normalizeStr(d.unitTitle ?? d.unit_title).toLowerCase();
-    if (title && d.decision) decisionMap.set(title, d.decision);
+    if (title) decisionMap.set(title, d.decision);
   }
 
-  const itemAchievedFlags = flatAspects.map((aspect, idx) => {
+  const itemAchievedFlags: Array<boolean | null> = flatAspects.map((aspect, idx) => {
     const rowMatch = Array.isArray(matrixRaw) ? matrixRaw[idx] : undefined;
     if (rowMatch?.status === "Terpenuhi") return true;
     if (rowMatch?.status === "Belum Dibahas") return false;
@@ -461,23 +494,52 @@ export function buildIa04bPayload(params: {
     if (dec === "K") return true;
     if (dec === "BK") return false;
     if (rowMatch?.status === "Sebagian") return false;
-    return false;
+    return null;
   });
 
-  const anyBk = params.decisions.some((d) => d.decision === "BK");
-  const allUnset =
-    itemAchievedFlags.every((v) => !v) &&
+  const resolvedOverall = resolveAssesseeOverallDecision({
+    unitDecisions: params.decisions,
+    totalSchemeUnits: targetUnits.length,
+    manualOverride: params.manualOverride,
+  });
+
+  const hasMatrix = Array.isArray(matrixRaw) && matrixRaw.length > 0;
+  const allUnsetWithCompetentDit =
+    hasMatrix &&
+    itemAchievedFlags.every((v) => v === null) &&
     readinessRaw?.recommendation === "Kompeten" &&
-    !anyBk;
-  const resolvedFlags = allUnset ? itemAchievedFlags.map(() => true) : itemAchievedFlags;
-  const overallRecommendation: "K" | "BK" =
-    anyBk || (readinessRaw?.recommendation === "Belum Kompeten" && resolvedFlags.some((f) => !f))
-      ? "BK"
-      : resolvedFlags.every(Boolean)
-        ? "K"
-        : params.decisions.length > 0 && !anyBk
-          ? "K"
-          : "BK";
+    resolvedOverall.bkCount === 0;
+  const resolvedFlags = allUnsetWithCompetentDit
+    ? itemAchievedFlags.map(() => true)
+    : itemAchievedFlags;
+
+  let overallRecommendation: "K" | "BK" | null;
+  if (resolvedOverall.isOverridden) {
+    overallRecommendation = resolvedOverall.recommendation;
+  } else if (resolvedOverall.recommendation === "BK") {
+    overallRecommendation = "BK";
+  } else if (resolvedOverall.recommendation === "K") {
+    overallRecommendation = "K";
+  } else if (hasMatrix) {
+    if (
+      readinessRaw?.recommendation === "Belum Kompeten" &&
+      resolvedFlags.some((f) => f === false)
+    ) {
+      overallRecommendation = "BK";
+    } else if (resolvedFlags.length > 0 && resolvedFlags.every((f) => f === true)) {
+      overallRecommendation = "K";
+    } else if (
+      readinessRaw?.recommendation === "Kompeten" &&
+      resolvedOverall.decidedCount > 0 &&
+      resolvedOverall.bkCount === 0
+    ) {
+      overallRecommendation = "K";
+    } else {
+      overallRecommendation = null;
+    }
+  } else {
+    overallRecommendation = null;
+  }
 
   return {
     schemeTitle: params.schemeTitle,
@@ -550,10 +612,10 @@ export function buildIa06cPayload(params: {
   });
 
   const bkUnits = vatmRecs.filter((u) => u.recommendation === "BK");
-  const overallAchieved =
-    sorted.length > 0 &&
-    bkUnits.length === 0 &&
-    !sorted.some((v) => v.verdict === "Salah");
+  const overallAchieved: boolean | null =
+    sorted.length === 0
+      ? null
+      : bkUnits.length === 0 && !sorted.some((v) => v.verdict === "Salah");
 
   return {
     schemeTitle: params.schemeTitle,

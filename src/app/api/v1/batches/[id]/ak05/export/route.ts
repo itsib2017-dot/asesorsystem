@@ -13,7 +13,10 @@ import { getAssessorProfile } from "@/repositories/auth.repository";
 import { getAk05ReportForBatch } from "@/repositories/assessment.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import { resolveAk05BatchRows } from "@/lib/ak05/rollup";
-import { extractSchemeMeta } from "@/lib/forms/assessee-forms";
+import {
+  extractSchemeMeta,
+  resolveSchemeUnitsList,
+} from "@/lib/forms/assessee-forms";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function GET(
@@ -87,8 +90,11 @@ export async function GET(
 
   const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
   const { schemeTitle, schemeNumber } = extractSchemeMeta(scheme);
+  const schemeUnits = resolveSchemeUnitsList(scheme);
 
-  const rollupRows = await resolveAk05BatchRows(user.id, batchId, assessees);
+  const rollupRows = await resolveAk05BatchRows(user.id, batchId, assessees, {
+    totalSchemeUnits: schemeUnits.length,
+  });
 
   const payload = {
     schemeCode: scheme?.code ?? "SKEMA",

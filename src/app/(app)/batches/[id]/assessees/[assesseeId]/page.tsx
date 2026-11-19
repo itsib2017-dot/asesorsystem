@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FileSearch, FileSpreadsheet, MessageSquare } from "lucide-react";
+import { getLspRole } from "@/lib/auth/get-role";
 import { getUser } from "@/lib/auth/get-session";
 import { getLatestNameJuryVerdict } from "@/repositories/assessees.repository";
 import {
+  getAssesseeDecisionOverride,
   getLatestDitAnalysis,
   getLatestInterviewAssessment,
   getLatestWrittenGrading,
@@ -14,13 +16,23 @@ import { DecisionToggle } from "@/components/ak05/decision-toggle";
 import { Ak02BlankoPreview } from "@/components/forms/ak02-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import {
+  resolveAssesseeOverallDecision,
+  type UnitDecisionLike,
+} from "@/lib/ak05/decision-rules";
+import {
   buildAk02Payload,
   resolveSchemeBranding,
+  resolveSchemeUnitsList,
   type RawDecisionRow,
 } from "@/lib/forms/assessee-forms";
 import { resolveUnitsForScheme } from "@/lib/forms/sync-vatm-decisions";
 import { computeVatmUnitRollup } from "@/services/vatm-rollup";
-import { confirmCertificateNameAction, saveUnitDecisionAction } from "./actions";
+import { OverallDecisionOverrideCard } from "./_components/overall-decision-override";
+import {
+  confirmCertificateNameAction,
+  saveOverallDecisionOverrideAction,
+  saveUnitDecisionAction,
+} from "./actions";
 
 export const metadata = {
   title: "Detail Asesi — AsesorKompetensi",
@@ -44,13 +56,31 @@ export default async function AssesseeDetailPage({
   if (!common) return notFound();
   const { assessee } = common;
 
-  const [jury, decisions, ditAnalysis, writtenGrading, interviewAssessment] = await Promise.all([
+  const [
+    jury,
+    decisions,
+    decisionOverride,
+    ditAnalysis,
+    writtenGrading,
+    interviewAssessment,
+    role,
+  ] = await Promise.all([
     getLatestNameJuryVerdict(user.id, assesseeId),
     listDecisionsForAssessee(user.id, assesseeId),
+    getAssesseeDecisionOverride(user.id, assesseeId),
     getLatestDitAnalysis(user.id, assesseeId),
     getLatestWrittenGrading(user.id, assesseeId),
     getLatestInterviewAssessment(user.id, assesseeId),
+    getLspRole(common.batch.lspId, user.id),
   ]);
+
+  const schemeUnitsList = resolveSchemeUnitsList(common.scheme);
+  const resolvedOverall = resolveAssesseeOverallDecision({
+    unitDecisions: decisions as unknown as UnitDecisionLike[],
+    totalSchemeUnits: schemeUnitsList.length,
+    manualOverride: decisionOverride,
+  });
+  const canOverride = role === "lsp_admin" || role === "assessor";
 
   const rollupUnits = computeVatmUnitRollup({
     units: resolveUnitsForScheme(common.scheme),
@@ -93,6 +123,7 @@ export default async function AssesseeDetailPage({
     assesseeName: common.officialAssesseeName,
     assessmentDate: common.assessmentDate,
     decisions: decisions as unknown as RawDecisionRow[],
+    manualOverride: decisionOverride,
     hasDit: Boolean(ditAnalysis),
     hasWritten: Boolean(writtenGrading),
     hasInterview: Boolean(interviewAssessment),
@@ -196,6 +227,24 @@ export default async function AssesseeDetailPage({
           ))}
         </div>
       </div>
+
+      {/* Automatic BK Roll-Up & Authorized Manual Final-Call Override */}
+      <OverallDecisionOverrideCard
+        batchId={batchId}
+        assesseeId={assessee.id}
+        autoRecommendation={resolvedOverall.autoRecommendation}
+        finalRecommendation={resolvedOverall.recommendation}
+        isOverridden={resolvedOverall.isOverridden}
+        overrideReason={resolvedOverall.overrideReason}
+        overriddenAt={resolvedOverall.overriddenAt}
+        decidedCount={resolvedOverall.decidedCount}
+        kCount={resolvedOverall.kCount}
+        bkCount={resolvedOverall.bkCount}
+        totalSchemeUnits={schemeUnitsList.length}
+        bkUnitLabels={resolvedOverall.bkUnitLabels}
+        canOverride={canOverride}
+        onSaveOverrideAction={saveOverallDecisionOverrideAction}
+      />
 
       {/* Official Unaltered FR.AK.02 Blanko Preview & DOCX Export */}
       <div className="glass-card rounded-2xl p-6 space-y-4">

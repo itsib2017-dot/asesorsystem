@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { hasDatabaseUrl, runRepositoryDualPath, withRlsTransaction } from "@/db";
 import {
   ditAnalyses,
@@ -7,6 +7,7 @@ import {
   decisions,
   ak05Reports,
   interviewAssessments,
+  assesseeDecisionOverrides,
 } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -596,6 +597,202 @@ export async function upsertAiUnitRecommendations(params: {
         })),
         { onConflict: "assessee_id,unit_code" },
       );
+    },
+  });
+}
+
+export interface AssesseeDecisionOverrideRecord {
+  id: string;
+  lspId: string;
+  batchId: string;
+  assesseeId: string;
+  overrideDecision: "K" | "BK" | null;
+  overrideReason: string;
+  overriddenBy: string | null;
+  overriddenAt: string | null;
+  version: number;
+}
+
+function isMissingOverrideTableError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /42P01|PGRST205|does not exist|Could not find the table/i.test(msg);
+}
+
+function normalizeDecisionOverrideRow(
+  row: Record<string, unknown>,
+): AssesseeDecisionOverrideRecord {
+  const rawDecision = row.overrideDecision ?? row.override_decision;
+  const overrideDecision =
+    rawDecision === "K" || rawDecision === "BK" ? rawDecision : null;
+  const rawAt = row.overriddenAt ?? row.overridden_at;
+  const overriddenAt =
+    rawAt instanceof Date
+      ? rawAt.toISOString()
+      : typeof rawAt === "string"
+        ? rawAt
+        : null;
+  const rawBy = row.overriddenBy ?? row.overridden_by;
+  return {
+    id: String(row.id ?? ""),
+    lspId: String(row.lspId ?? row.lsp_id ?? ""),
+    batchId: String(row.batchId ?? row.batch_id ?? ""),
+    assesseeId: String(row.assesseeId ?? row.assessee_id ?? ""),
+    overrideDecision,
+    overrideReason: String(row.overrideReason ?? row.override_reason ?? ""),
+    overriddenBy: typeof rawBy === "string" && rawBy.length > 0 ? rawBy : null,
+    overriddenAt,
+    version: Number(row.version ?? 1),
+  };
+}
+
+export async function getAssesseeDecisionOverride(
+  userId: string,
+  assesseeId: string,
+): Promise<AssesseeDecisionOverrideRecord | null> {
+  try {
+    return await runRepositoryDualPath({
+      userId,
+      label: "AssessmentRepository.getAssesseeDecisionOverride",
+      drizzle: async (tx) => {
+        const rows = await tx
+          .select()
+          .from(assesseeDecisionOverrides)
+          .where(eq(assesseeDecisionOverrides.assesseeId, assesseeId))
+          .limit(1);
+        return rows[0]
+          ? normalizeDecisionOverrideRow(rows[0] as unknown as Record<string, unknown>)
+          : null;
+      },
+      supabase: async () => {
+        const supabase = await getSupabaseServerClient();
+        const { data, error } = await supabase
+          .from("assessee_decision_overrides")
+          .select("*")
+          .eq("assessee_id", assesseeId)
+          .maybeSingle();
+        if (error) {
+          if (isMissingOverrideTableError(error.message)) return null;
+          throw new Error(error.message);
+        }
+        return data
+          ? normalizeDecisionOverrideRow(data as Record<string, unknown>)
+          : null;
+      },
+    });
+  } catch (err) {
+    if (isMissingOverrideTableError(err)) return null;
+    throw err;
+  }
+}
+
+export async function listBatchDecisionOverrides(
+  userId: string,
+  batchId: string,
+): Promise<AssesseeDecisionOverrideRecord[]> {
+  try {
+    return await runRepositoryDualPath({
+      userId,
+      label: "AssessmentRepository.listBatchDecisionOverrides",
+      drizzle: async (tx) => {
+        const rows = await tx
+          .select()
+          .from(assesseeDecisionOverrides)
+          .where(eq(assesseeDecisionOverrides.batchId, batchId));
+        return rows.map((row) =>
+          normalizeDecisionOverrideRow(row as unknown as Record<string, unknown>),
+        );
+      },
+      supabase: async () => {
+        const supabase = await getSupabaseServerClient();
+        const { data, error } = await supabase
+          .from("assessee_decision_overrides")
+          .select("*")
+          .eq("batch_id", batchId);
+        if (error) {
+          if (isMissingOverrideTableError(error.message)) return [];
+          throw new Error(error.message);
+        }
+        return (data ?? []).map((row) =>
+          normalizeDecisionOverrideRow(row as Record<string, unknown>),
+        );
+      },
+    });
+  } catch (err) {
+    if (isMissingOverrideTableError(err)) return [];
+    throw err;
+  }
+}
+
+export async function upsertAssesseeDecisionOverride(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  assesseeId: string;
+  overrideDecision: "K" | "BK" | null;
+  overrideReason: string;
+}): Promise<AssesseeDecisionOverrideRecord> {
+  const now = new Date();
+  const cleanReason = params.overrideReason.trim();
+
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssessmentRepository.upsertAssesseeDecisionOverride",
+    fallbackOnError: false,
+    drizzle: async (tx) => {
+      const [row] = await tx
+        .insert(assesseeDecisionOverrides)
+        .values({
+          lspId: params.lspId,
+          batchId: params.batchId,
+          assesseeId: params.assesseeId,
+          overrideDecision: params.overrideDecision,
+          overrideReason: cleanReason,
+          overriddenBy: params.userId,
+          overriddenAt: now,
+          version: 1,
+        })
+        .onConflictDoUpdate({
+          target: [assesseeDecisionOverrides.assesseeId],
+          set: {
+            overrideDecision: params.overrideDecision,
+            overrideReason: cleanReason,
+            overriddenBy: params.userId,
+            overriddenAt: now,
+            version: sql`${assesseeDecisionOverrides.version} + 1`,
+          },
+        })
+        .returning();
+      return normalizeDecisionOverrideRow(row as unknown as Record<string, unknown>);
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data: existing } = await supabase
+        .from("assessee_decision_overrides")
+        .select("version")
+        .eq("assessee_id", params.assesseeId)
+        .maybeSingle();
+      const nextVersion = Number(existing?.version ?? 0) + 1;
+      const { data, error } = await supabase
+        .from("assessee_decision_overrides")
+        .upsert(
+          {
+            lsp_id: params.lspId,
+            batch_id: params.batchId,
+            assessee_id: params.assesseeId,
+            override_decision: params.overrideDecision,
+            override_reason: cleanReason,
+            overridden_by: params.userId,
+            overridden_at: now.toISOString(),
+            version: nextVersion,
+          },
+          { onConflict: "assessee_id" },
+        )
+        .select("*")
+        .single();
+      if (error) {
+        throw new Error(`[AssesseeDecisionOverride Error]: ${error.message}`);
+      }
+      return normalizeDecisionOverrideRow(data as Record<string, unknown>);
     },
   });
 }

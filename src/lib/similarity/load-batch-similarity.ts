@@ -1,4 +1,4 @@
-import { getConfig } from "@/lib/config/get-config";
+import { getConfigWithSource } from "@/lib/config/get-config";
 import { getBatchById } from "@/repositories/batches.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import {
@@ -21,15 +21,18 @@ export async function loadBatchSimilarityReportData(userId: string, batchId: str
   const batch = await getBatchById(userId, batchId);
   if (!batch) return null;
 
-  const [pairs, assessees, schemes, configuredThresholds, gradings] = await Promise.all([
+  const [pairs, assessees, schemes, thresholdConfig, gradings] = await Promise.all([
     listSimilarityPairsByBatch(userId, batchId),
     listAssesseesByBatch(userId, batchId),
     listSchemes(userId, batch.lspId),
-    getConfig("similarity.flag_thresholds", { lspId: batch.lspId }),
+    getConfigWithSource("similarity.flag_thresholds", {
+      lspId: batch.lspId,
+      schemeId: batch.schemeId ?? undefined,
+    }),
     listWrittenGradingsForBatch(userId, batchId),
   ]);
 
-  const rawTh = configuredThresholds as
+  const rawTh = thresholdConfig.value as
     | { exact?: number; near?: number; partial?: number; unconfirmed?: boolean }
     | null;
   const thresholds = {
@@ -38,6 +41,8 @@ export async function loadBatchSimilarityReportData(userId: string, batchId: str
     partial: Number(rawTh?.partial ?? DEFAULT_SIMILARITY_THRESHOLDS.partial),
   };
   const thresholdsUncalibrated = rawTh ? rawTh.unconfirmed !== false : true;
+  const thresholdSource = thresholdConfig.source;
+  const thresholdSourceLabel = thresholdConfig.sourceLabel;
 
   const scheme = schemes.find((s) => s.id === batch.schemeId);
   const schemeName = scheme
@@ -137,6 +142,7 @@ export async function loadBatchSimilarityReportData(userId: string, batchId: str
     schemeName,
     thresholds,
     thresholdsUncalibrated,
+    thresholdSourceLabel,
     assessees: assesseeSummaries,
     flaggedPairs,
   });
@@ -146,6 +152,8 @@ export async function loadBatchSimilarityReportData(userId: string, batchId: str
     schemeName,
     thresholds,
     thresholdsUncalibrated,
+    thresholdSource,
+    thresholdSourceLabel,
     pairs,
     flaggedPairs,
     assesseeSummaries,

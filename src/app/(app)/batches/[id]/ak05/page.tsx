@@ -8,7 +8,11 @@ import { getAssessorProfile } from "@/repositories/auth.repository";
 import { getAk05ReportForBatch } from "@/repositories/assessment.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import { resolveAk05BatchRows } from "@/lib/ak05/rollup";
-import { extractSchemeMeta, resolveSchemeBranding } from "@/lib/forms/assessee-forms";
+import {
+  extractSchemeMeta,
+  resolveSchemeBranding,
+  resolveSchemeUnitsList,
+} from "@/lib/forms/assessee-forms";
 import { Ak05Preview } from "@/components/ak05/ak05-preview";
 
 export const metadata = {
@@ -37,11 +41,14 @@ export default async function Ak05Page({
 
   const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
   const { schemeTitle, schemeNumber } = extractSchemeMeta(scheme);
+  const schemeUnits = resolveSchemeUnitsList(scheme);
 
   const unconfirmedCount = assessees.filter(
     (a) => !a.certificateNameConfirmed,
   ).length;
-  const rows = await resolveAk05BatchRows(user.id, batchId, assessees);
+  const rows = await resolveAk05BatchRows(user.id, batchId, assessees, {
+    totalSchemeUnits: schemeUnits.length,
+  });
   const undecidedCount = rows.filter((r) => r.undecided).length;
 
   return (

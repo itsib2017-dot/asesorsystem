@@ -92,6 +92,15 @@ export function classifyDriveFileName(
   if (/\bfr[\s._-]*ia[\s._-]*09\b|\bia[\s._-]*09\b|wawancara/i.test(fnBase)) {
     return { docType: "09", confidence: 0.88 };
   }
+
+  // DIT presentation slides (.ppt/.pptx in Tugas DIT folder or with DIT token) take precedence over topic keywords like IBPR/HIRADC/ERP
+  if (
+    /\.pptx?$/i.test(fnLower) &&
+    (/tugas\s*dit/i.test(ppNorm) || /\bdit\b/i.test(fnBase))
+  ) {
+    return { docType: "04b", confidence: 0.88 };
+  }
+
   if (
     /ijaz?ah|ijasah|ijajah|transkrip\s*nilai|sertifikat\s*kelulusan|surat\s*keterangan\s*ll?ulus|\bsket\s*lulus|\bs\s*1\b/i.test(
       fnBase,

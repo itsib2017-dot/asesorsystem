@@ -34,6 +34,7 @@ export async function GET(
     schemeName: data.schemeName,
     thresholds: data.thresholds,
     thresholdsUncalibrated: data.thresholdsUncalibrated,
+    thresholdSourceLabel: data.thresholdSourceLabel,
     assessees: data.assesseeSummaries,
     flaggedPairs: data.flaggedPairs,
   });

@@ -1,10 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { getUser } from "@/lib/auth/get-session";
+import { requireLspRole } from "@/lib/auth/get-role";
 import { confirmCertificateName, getAssesseeById } from "@/repositories/assessees.repository";
 import { getBatchById } from "@/repositories/batches.repository";
-import { upsertUnitDecision } from "@/repositories/assessment.repository";
+import {
+  upsertAssesseeDecisionOverride,
+  upsertUnitDecision,
+} from "@/repositories/assessment.repository";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -81,6 +86,14 @@ export async function saveUnitDecisionAction(formData: FormData) {
     return { ok: false, error: "Asesi atau batch tidak ditemukan." };
   }
 
+  const roleCheck = await requireLspRole(batch.lspId, user.id, ["lsp_admin", "assessor"]);
+  if (!roleCheck.allowed) {
+    return {
+      ok: false,
+      error: "Forbidden: Hanya Asesor atau LSP Admin yang berwenang menetapkan keputusan unit.",
+    };
+  }
+
   await upsertUnitDecision({
     userId: user.id,
     lspId: batch.lspId,
@@ -113,5 +126,115 @@ export async function saveUnitDecisionAction(formData: FormData) {
 
   revalidatePath(`/batches/${batchId}/assessees/${assesseeId}`);
   revalidatePath(`/batches/${batchId}/ak05`);
+  revalidatePath(`/settings/audit`);
   return { ok: true };
+}
+
+const overallOverrideSchema = z.object({
+  batchId: z.string().uuid(),
+  assesseeId: z.string().uuid(),
+  overrideDecision: z.enum(["K", "BK", "AUTO"]),
+  overrideReason: z.string().max(1000).default(""),
+});
+
+export async function saveOverallDecisionOverrideAction(formData: FormData): Promise<{
+  ok: boolean;
+  message?: string;
+  error?: string;
+}> {
+  const user = await getUser();
+  if (!user) {
+    return { ok: false, error: "Unauthorized: Silakan masuk terlebih dahulu." };
+  }
+
+  const parsed = overallOverrideSchema.safeParse({
+    batchId: String(formData.get("batchId") ?? "").trim(),
+    assesseeId: String(formData.get("assesseeId") ?? "").trim(),
+    overrideDecision: String(formData.get("overrideDecision") ?? "").trim(),
+    overrideReason: String(formData.get("overrideReason") ?? "").trim(),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Parameter override keputusan tidak valid.",
+    };
+  }
+
+  const { batchId, assesseeId, overrideDecision, overrideReason } = parsed.data;
+  if ((overrideDecision === "K" || overrideDecision === "BK") && overrideReason.trim().length < 5) {
+    return {
+      ok: false,
+      error: "Alasan override manual (minimal 5 karakter) wajib diisi sebagai dasar audit.",
+    };
+  }
+
+  const [batch, assessee] = await Promise.all([
+    getBatchById(user.id, batchId),
+    getAssesseeById(user.id, assesseeId),
+  ]);
+  if (!batch || !assessee || assessee.batchId !== batch.id) {
+    return { ok: false, error: "Asesi atau batch tidak ditemukan atau akses ditolak." };
+  }
+
+  const roleCheck = await requireLspRole(batch.lspId, user.id, ["lsp_admin", "assessor"]);
+  if (!roleCheck.allowed) {
+    return {
+      ok: false,
+      error: "Forbidden: Hanya Asesor atau LSP Admin yang berwenang menetapkan override keputusan akhir.",
+    };
+  }
+
+  const normalizedDecision = overrideDecision === "AUTO" ? null : overrideDecision;
+  const saved = await upsertAssesseeDecisionOverride({
+    userId: user.id,
+    lspId: batch.lspId,
+    batchId,
+    assesseeId,
+    overrideDecision: normalizedDecision,
+    overrideReason:
+      normalizedDecision === null
+        ? overrideReason.trim() || "Dikembalikan ke roll-up otomatis"
+        : overrideReason.trim(),
+  });
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        lsp_id: batch.lspId,
+        actor_id: user.id,
+        action:
+          normalizedDecision === null
+            ? "assessee.decision_override.cleared"
+            : "assessee.decision_override.saved",
+        resource: "assessees",
+        resource_id: assesseeId,
+        after_summary: {
+          batchId,
+          overrideDecision: normalizedDecision ?? "AUTO",
+          overrideReason: saved.overrideReason,
+          version: saved.version,
+        },
+      },
+      supabase,
+    );
+  } catch (err) {
+    console.warn(
+      "[OverallDecisionOverride Audit Warning]:",
+      err instanceof Error ? err.message : "unknown",
+    );
+  }
+
+  revalidatePath(`/batches/${batchId}/assessees/${assesseeId}`);
+  revalidatePath(`/batches/${batchId}/assessees/${assesseeId}/dit`);
+  revalidatePath(`/batches/${batchId}/ak05`);
+  revalidatePath(`/settings/audit`);
+
+  return {
+    ok: true,
+    message:
+      normalizedDecision === null
+        ? "Override manual dihapus — keputusan akhir AK.02 & AK.05 mengikuti roll-up otomatis."
+        : `Keputusan akhir manual (${normalizedDecision}) berhasil ditetapkan untuk FR.AK.02 & FR.AK.05.`,
+  };
 }
