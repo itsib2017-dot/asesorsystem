@@ -193,4 +193,18 @@ describe("D21 / R7 Scheme Manifest Portability", () => {
     });
     expect(ia06c.answers).toHaveLength(5);
   });
+
+  it("falls back to 13 AK3U units when the seeded manifest has no units (R3.3)", () => {
+    const ak3uSeed = {
+      id: "scheme-ak3u",
+      lspId: "lsp-1",
+      code: "AK3U",
+      name: "Ahli Keselamatan dan Kesehatan Kerja Umum",
+      version: 1,
+      forms: [],
+      manifest: { ...customScheme.manifest, units: [] },
+    } as SchemeRecord;
+
+    expect(resolveSchemeUnitsList(ak3uSeed)).toHaveLength(13);
+  });
 });

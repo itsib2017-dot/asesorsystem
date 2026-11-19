@@ -14,6 +14,7 @@ import {
 import { getUser } from "@/lib/auth/get-session";
 import { getConfig } from "@/lib/config/get-config";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
+import { getLspNameForUser } from "@/repositories/auth.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { getLatestJobForBatch } from "@/repositories/jobs.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
@@ -42,12 +43,13 @@ export default async function BatchDetailPage({
   const batch = await getBatchById(user.id, id);
   if (!batch) return notFound();
 
-  const [assessees, files, latestJob, schemes, configuredMinOcr] = await Promise.all([
+  const [assessees, files, latestJob, schemes, configuredMinOcr, lspName] = await Promise.all([
     listAssesseesByBatch(user.id, id),
     listDriveFilesForBatch(user.id, id),
     getLatestJobForBatch(user.id, id),
     listSchemes(user.id, batch.lspId),
     getConfig("identity.ktp_ocr_min_confidence", { lspId: batch.lspId }),
+    getLspNameForUser(user.id, batch.lspId),
   ]);
   const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
   const docColumns = resolveSchemeDocColumns(scheme);
@@ -121,7 +123,7 @@ export default async function BatchDetailPage({
           <div className="text-xs font-mono text-slate-500">BATCH ID: {batch.id.slice(0, 8)}</div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">{batch.name}</h1>
           <p className="text-sm text-slate-500 mt-1">
-            TUK: {batch.tukName || "-"} ({batch.tukType || "sewaktu"}) · Skema:{" "}
+            LSP: {lspName || "-"} · TUK: {batch.tukName || "-"} ({batch.tukType || "sewaktu"}) · Skema:{" "}
             {scheme ? `${scheme.code} — ${scheme.name}` : "-"} · Status:{" "}
             <strong className="text-slate-700">{batch.status}</strong>
           </p>

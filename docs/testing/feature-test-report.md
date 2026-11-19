@@ -76,6 +76,33 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 | T-03: Root-cause fix | PASS | `triage/assessee-actions.tsx` ("use client") menerima form Ubah/Hapus; `page.tsx` tidak lagi memuat `onSubmit` inline | — |
 | T-04: Guard field null | PASS | `safeDocType` + `(f.fileName ?? "")` + `(f.drivePath ?? "")`; tes `page-source.test.ts` | — |
 | T-05: Gates | PASS | `tsc --noEmit` 0; `eslint --max-warnings 0` 0; `vitest run` 32 files / 149/149 | — |
-| T-06: Verifikasi live R4 setelah deploy | PENDING | Menunggu deploy otomatis dari push `main` | jalankan ulang `check.mjs` |
+| T-06: Verifikasi live R4 setelah deploy | PASS | Playwright pasca-deploy `5681401`: HTTP 200, "Antrean Triage Berkas (Demo Audit R4)", Total 344 berkas, 0 error konsol; `r4-triage-after2.json/.png` | — |
 
 **Catatan:** `c61cf7c5` tidak dapat diverifikasi dengan akun demo (`404` — beda tenant); sesuai brief, akun pemilik diperlukan untuk batch itu. R4 adalah kriteria lolos Bagian 1.
+
+---
+
+## Module: Roster Live Verification (Bagian 2)
+
+| Scenario | Result | Evidence |
+|---|---|---|
+| R-L1: Buat batch uji dari UI + Sheet + Drive | PASS | Batch `2a3f5107-61fe-48ac-9281-b42ad3c051b0`, job `ca6c133b`, scan done 100%, 34 berkas, 2 asesi terdeteksi |
+| R-L2: Tambah asesi manual dari UI | PASS | "Uji Satu 20Nov", "Nama Baru ABC", "Nama Baru ABC2" muncul di tabel roster (render Server Action delay ~1 request) |
+| R-L3: Impor Sheet Kelompok Asesi | PASS | Entri "Update Per 19 November 2026 10.29" masuk roster; tombol Impor di triase |
+| R-L4: Audit `batch.roster.*` | PASS | `/settings/audit` 42 entri; `batch.roster.add` pada resource `2a3f5107...` dengan corr id |
+| R-L5: Deteksi nama folder ber-akhiran status | PASS | "Pak Aryanto - Kurang Sertifikat Pelatihan dan SK kerja" terdeteksi sebagai asesi tanpa ubah nama folder |
+| R-L6: Kolom "Alasan Tanpa Kandidat" | PASS (kontrak) | Semua baris menampilkan "—" = kandidat ditemukan di jalur; sesuai kontrak fungsi `explainNameInference` |
+| R-L7: DIT 1 asesi | BLOCKED | Menurut Bagian 5 brief, DIT/similarity tidak dijalankan pada batch demo sebelum kunci 06B kerja aktif + persetujuan pengiriman data ke LLM |
+
+---
+
+## Module: Registry E2E + Unit Count (Bagian 3)
+
+| Scenario | Result | Evidence |
+|---|---|---|
+| G-01: Skema baru sepenuhnya dari UI | PASS | "Salin ke Skema Baru" ICT-PM → `PK3MGB-UJI`, 12 formulir, simpan via tombol "Simpan Skema, Registry Formulir & Blanko" |
+| G-02: Unggah blanko `.docx` per formulir | PASS | `blanko-file-input-04a` diisi dari `blank_forms/00.../FR.IA.04A...docx`; kartu menampilkan "12 formulir · 1 blanko .docx", `04a · v1` |
+| G-03: Batch skema itu klasifikasi dengan polanya sendiri | PASS | Batch `5d183359-...`, 34 berkas Drive, 0 perlu triase; skema PK3MGB-UJI tampil di header batch |
+| G-04: AK3U tidak berubah | PASS | Batch R4 tetap 344 berkas dan triase termuat |
+| G-05: Nama LSP di header batch | PASS (kode) | `getLspNameForUser` + header "LSP: …"; terverifikasi setelah deploy |
+| G-06: "Unit: 0" | PASS (kode) | Kartu AK3U memakai `resolveSchemeUnitsList(s).length` → 13 fallback; tes `scheme-manifest-portability.test.ts` |

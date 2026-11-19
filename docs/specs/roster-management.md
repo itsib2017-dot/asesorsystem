@@ -1,3 +1,5 @@
+> **Verifikasi live 2026-11-20:** batch uji `2a3f5107-61fe-48ac-9281-b42ad3c051b0` — tambah asesi manual, impor Sheet, deteksi folder ber-akhiran status, dan audit `batch.roster.add` terverifikasi di Production. DIT 1 asesi masih BLOCKED sesuai larangan Bagian 5 brief (butuh kunci 06B kerja + persetujuan pengiriman data ke LLM).
+
 # F2/F5 — Roster Management (Manual Asesmen Roster from UI)
 
 **Feature:** Manajemen Roster Asesi dari UI (halaman Batch & Triage)

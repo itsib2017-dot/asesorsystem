@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { runRepositoryDualPath } from "@/db";
-import { lspMemberships, assessors } from "@/db/schema";
+import { lspMemberships, assessors, lsps } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
@@ -55,6 +55,31 @@ export async function findAssessorRoleForLsp(
 
       if (error || !data) return null;
       return data.role as LspRole;
+    },
+  });
+}
+
+export async function getLspNameForUser(userId: string, lspId: string): Promise<string | null> {
+  return runRepositoryDualPath({
+    userId,
+    label: "AuthRepository.getLspNameForUser",
+    drizzle: async (tx) => {
+      const rows = await tx
+        .select({ name: lsps.name })
+        .from(lsps)
+        .innerJoin(lspMemberships, eq(lspMemberships.lspId, lsps.id))
+        .where(and(eq(lsps.id, lspId), eq(lspMemberships.assessorId, userId)))
+        .limit(1);
+      return rows[0]?.name ?? null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("lsps")
+        .select("name")
+        .eq("id", lspId)
+        .maybeSingle();
+      return (data?.name as string | null) ?? null;
     },
   });
 }

@@ -16,6 +16,7 @@ import {
 import {
   getFallbackAk3uUnits,
   IA04B_KELOMPOK_PEKERJAAN,
+  resolveSchemeUnitsList,
 } from "@/lib/forms/assessee-forms";
 import {
   INSTRUMENT_ROLE_OPTIONS,
@@ -427,7 +428,7 @@ export function SchemeRegistrationForm({
 
                 <p className="text-xs text-slate-600">
                   Aturan: <strong>{s.manifest.decisionRule || "-"}</strong> · Unit:{" "}
-                  <strong>{s.manifest.units?.length ?? 0}</strong> · Soal 04B:{" "}
+                  <strong>{resolveSchemeUnitsList(s).length}</strong> · Soal 04B:{" "}
                   <strong>
                     {total04bQuestions || s.manifest.questionCounts?.official04bCount || 0}
                   </strong>{" "}

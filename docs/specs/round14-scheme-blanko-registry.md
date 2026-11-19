@@ -1,3 +1,5 @@
+> **Verifikasi live 2026-11-20 (Putaran 15b lanjutan):** skema `PK3MGB-UJI` dibuat seluruhnya dari UI (clone ICT-PM → ubah kode/nama → simpan → unggah blanko `.docx` 04A), lalu batch `5d183359-...` dipindai dengan 34 berkas dan 0 perlu triase. AK3U tetap normal. Kartu AK3U kini memakai `resolveSchemeUnitsList` sehingga menampilkan 13 unit, bukan 0.
+
 # F2/F5 — Per-Scheme Form Registry, Versioned Blanko Upload & Zero-Hardcoding Multi-Scheme Execution
 
 - **Date:** 2026-11-19
