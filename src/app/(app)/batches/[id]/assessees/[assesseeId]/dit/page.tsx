@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertCircle, CheckCircle2, Lock } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileText, Lock } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { listDriveFilesForBatch } from "@/repositories/batches.repository";
 import {
@@ -101,19 +101,26 @@ export default async function DitAnalysisPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link
-          href={`/batches/${batchId}/assessees/${assesseeId}`}
-          className="text-xs text-teal-700 hover:underline"
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <Link href={`/batches/${batchId}/assessees/${assesseeId}`} className="text-xs text-teal-700 hover:underline">
+            &larr; Kembali ke Detail Asesi
+          </Link>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
+            Analisis DIT — Daftar Instruksi Terstruktur ({assessee.displayName})
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Formulir Resmi FR.IA.04B dan Bank Soal Asesor dipisahkan sesuai standar D14.
+          </p>
+        </div>
+
+        <a
+          href={`/api/v1/batches/${batchId}/assessees/${assesseeId}/export?form=ia04a&format=docx`}
+          className="px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-xs font-medium text-white shadow-sm inline-flex items-center gap-2 shrink-0"
         >
-          &larr; Kembali ke Detail Asesi
-        </Link>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
-          Analisis DIT — Daftar Instruksi Terstruktur ({assessee.displayName})
-        </h1>
-        <p className="text-xs text-slate-500 mt-1">
-          Formulir Resmi FR.IA.04B dan Bank Soal Asesor dipisahkan sesuai standar D14.
-        </p>
+          <FileText className="w-4 h-4" />
+          Ekspor FR.IA.04A (.docx)
+        </a>
       </div>
 
       {/* Rule 26: Completeness Gate */}
