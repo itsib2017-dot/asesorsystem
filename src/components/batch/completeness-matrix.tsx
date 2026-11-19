@@ -15,6 +15,7 @@ interface CompletenessMatrixProps {
   docColumns: string[];
   rows: CompletenessRow[];
   scanDone?: boolean;
+  fileCount?: number;
 }
 
 export function CompletenessMatrix({
@@ -22,6 +23,7 @@ export function CompletenessMatrix({
   docColumns,
   rows,
   scanDone = false,
+  fileCount = 0,
 }: CompletenessMatrixProps) {
   // Decision-first ordering: incomplete / unconfirmed first
   const sorted = [...rows].sort((a, b) => {
@@ -32,13 +34,20 @@ export function CompletenessMatrix({
   });
 
   if (sorted.length === 0) {
+    let message: string;
+    if (fileCount === 0) {
+      message =
+        "Belum ada berkas yang dipindai pada batch ini. Mulai pindai folder Google Drive untuk memuat daftar berkas.";
+    } else if (scanDone) {
+      message =
+        "Pindai selesai, namun 0 asesi terdeteksi pada batch ini. Tambah asesi manual dari halaman Triage atau impor dari Sheet Kelompok Asesi.";
+    } else {
+      message =
+        "Berkas ditemukan namun pemindaian belum selesai. Tunggu pemindaian Drive selesai, lalu tambah asesi manual dari halaman Triage atau impor dari Sheet Kelompok Asesi.";
+    }
     return (
       <div className="glass-card rounded-2xl p-8 text-center">
-        <p className="text-sm text-slate-600">
-          {scanDone
-            ? "Pindai selesai, namun 0 asesi terdeteksi pada batch ini. Tambah asesi manual dari halaman Triage atau impor dari Sheet Kelompok Asesi."
-            : "Belum ada data asesi pada batch ini. Mulai pindai folder Google Drive untuk memuat daftar berkas."}
-        </p>
+        <p className="text-sm text-slate-600">{message}</p>
       </div>
     );
   }

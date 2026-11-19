@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { runRepositoryDualPath } from "@/db";
-import { lspMemberships, assessors } from "@/db/schema";
+import { lspMemberships, assessors, lsps } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
@@ -55,6 +55,34 @@ export async function findAssessorRoleForLsp(
 
       if (error || !data) return null;
       return data.role as LspRole;
+    },
+  });
+}
+
+export async function getLspById(
+  lspId: string,
+  assessorId: string,
+): Promise<{ id: string; code: string; name: string } | null> {
+  return runRepositoryDualPath({
+    userId: assessorId,
+    label: "AuthRepository.getLspById",
+    drizzle: async (tx) => {
+      const rows = await tx
+        .select({ id: lsps.id, code: lsps.code, name: lsps.name })
+        .from(lsps)
+        .where(eq(lsps.id, lspId))
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data, error } = await supabase
+        .from("lsps")
+        .select("id, code, name")
+        .eq("id", lspId)
+        .maybeSingle();
+      if (error || !data) return null;
+      return { id: data.id as string, code: data.code as string, name: data.name as string };
     },
   });
 }

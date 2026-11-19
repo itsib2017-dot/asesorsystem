@@ -26,7 +26,18 @@
 
 ---
 
-## 2. Environment Architecture Adaptations
+## 2. Part 2 — Roster Asesi (Bagian 2 brief, 2026-11-19)
+
+- **Temuan 2.1 (tambah/ubah/hapus/impor asesi dari UI):** kode sudah lengkap di `c9349ee` (`roster-actions.ts` + triage page forms + assessee dropdown terisi dari `assessees`). Gate 146/146 lolos. Sisa: verifikasi live oleh auditor (Putaran 15b), memerlukan kredensial pemilik.
+- **Temuan 2.2 (deteksi nama asesi folder ber-akhiran status):** perbaikan sudah ada di `c9349ee` (`STATUS_SUFFIX_RE`/`cleanStatusSuffixes`, `isNonCandidateFolder` hanya menolak nama sepenuhnya struktural, `explainNameInference` per berkas). Sisa: verifikasi live + pindai ulang folder pemilik (hanya dengan persetujuan pemilik; mengubah data batch).
+- **Temuan 2.3 (impor Sheet Kelompok Asesi):** worker sudah membaca `kelompokSheetUrl`, parse `parseKelompokAsesiCsv`, upsert via `upsertAssesseesForBatch`; tombol impor ada di triase. Kode lengkap. Sisa: verifikasi live dengan Sheet sungguhan.
+- **Observasi kecil (dikerjakan, commit ini):**
+  - Label hitungan: sudah pisah "berkas Drive + unggahan" di semua keadaan batch (tidak perlu perubahan kode).
+  - Pesan matriks kelengkapan (`completeness-matrix.tsx`): kini membedakan (a) belum ada berkas, (b) pindai selesai tapi 0 asesi, (c) berkas ditemukan tapi pemindaian belum selesai — dengan aksi yang relevan.
+  - Nama skema + LSP di header batch (`page.tsx` + `getLspById` di `auth.repository.ts`): menampilkan nama LSP; skema menampilkan "Belum ditetapkan" bila tidak ditemukan (penjelasan, bukan "-" samar). Pereta data (tetapkan skema AK3U ke batch `c61cf7c5` / backfill scheme_id) membutuhkan persetujuan pemilik — tidak dilakukan di sini.
+- **Verifikasi:** `tsc --noEmit` clean; `eslint --max-warnings 0` clean; `vitest` 146/146 passed.
+
+## 3. Environment Architecture Adaptations
 
 1. **Database Verification without Docker**:
    - Docker daemon is not active on this environment.
