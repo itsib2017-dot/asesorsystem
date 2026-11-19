@@ -202,7 +202,11 @@ describe("D21 / R7 Scheme Manifest Portability", () => {
       name: "Ahli Keselamatan dan Kesehatan Kerja Umum",
       version: 1,
       forms: [],
-      manifest: { ...customScheme.manifest, units: [] },
+      manifest: {
+        ...customScheme.manifest,
+        units: [],
+        kelompokPekerjaan: [{ kpIndex: 1, title: "KP1", aspects: [], units: [] }],
+      } as SchemeRecord["manifest"],
     } as SchemeRecord;
 
     expect(resolveSchemeUnitsList(ak3uSeed)).toHaveLength(13);

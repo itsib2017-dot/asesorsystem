@@ -255,7 +255,10 @@ export function resolveSchemeUnitsList(
   }
   const kps = scheme?.manifest?.kelompokPekerjaan;
   if (Array.isArray(kps) && kps.length > 0) {
-    return kps.flatMap((kp) => kp.units.map((u) => ({ code: u.code, title: u.title })));
+    const kpUnits = kps.flatMap((kp) =>
+      (kp.units ?? []).map((u) => ({ code: u.code, title: u.title })),
+    );
+    if (kpUnits.length > 0) return kpUnits;
   }
   if (!scheme || isAk3uScheme(scheme)) {
     return getFallbackAk3uUnits();

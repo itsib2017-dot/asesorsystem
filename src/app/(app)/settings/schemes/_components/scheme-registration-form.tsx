@@ -406,6 +406,13 @@ export function SchemeRegistrationForm({
               (acc, kp) => acc + kp.aspects.length,
               0,
             );
+            const resolvedUnits = resolveSchemeUnitsList(s);
+            const unitCount =
+              resolvedUnits.length > 0
+                ? resolvedUnits.length
+                : s.code.trim().toUpperCase() === "AK3U"
+                  ? getFallbackAk3uUnits().length
+                  : 0;
             return (
               <div
                 key={s.id}
@@ -428,7 +435,7 @@ export function SchemeRegistrationForm({
 
                 <p className="text-xs text-slate-600">
                   Aturan: <strong>{s.manifest.decisionRule || "-"}</strong> · Unit:{" "}
-                  <strong>{resolveSchemeUnitsList(s).length}</strong> · Soal 04B:{" "}
+                  <strong>{unitCount}</strong> · Soal 04B:{" "}
                   <strong>
                     {total04bQuestions || s.manifest.questionCounts?.official04bCount || 0}
                   </strong>{" "}
