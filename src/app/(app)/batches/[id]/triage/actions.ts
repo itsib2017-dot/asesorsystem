@@ -12,6 +12,12 @@ import {
   listAssesseesByBatch,
 } from "@/repositories/assessees.repository";
 import {
+  addAssesseeAction as rosterAddAssessee,
+  deleteAssesseeAction as rosterDeleteAssessee,
+  importRosterFromSheetAction as rosterImportRoster,
+  updateAssesseeAction as rosterUpdateAssessee,
+} from "../roster-actions";
+import {
   getBatchById,
   insertBatchRosterNote,
   listDriveFilesForBatch,
@@ -220,4 +226,23 @@ export async function addBatchRosterNoteAction(formData: FormData): Promise<void
   });
 
   revalidatePath(`/batches/${batchId}/triage`);
+}
+
+/**
+ * Thin void-returning wrappers around roster server actions so they can be
+ * used directly as Next.js form `action` in a Server Component. Wrapping in a
+ * "use server" file makes them recognizable as Server Actions by the
+ * Next.js client boundary (production-enforced).
+ */
+export async function addAssesseeFormAction(formData: FormData): Promise<void> {
+  await rosterAddAssessee(formData);
+}
+export async function updateAssesseeFormAction(formData: FormData): Promise<void> {
+  await rosterUpdateAssessee(formData);
+}
+export async function deleteAssesseeFormAction(formData: FormData): Promise<void> {
+  await rosterDeleteAssessee(formData);
+}
+export async function importRosterFormAction(formData: FormData): Promise<void> {
+  await rosterImportRoster(formData);
 }

@@ -43,6 +43,10 @@
 ## 3. Part 3 — Kesenjangan P0 (Cacat 1–6), branch fix/p0-kesenjangan-cacat-1-6
 
 - **Temuan 2.1/2.2/2.3 (Roster):** sudah lengkap di `c9349ee`; verifikasi live tertunda (Putaran 15b, kredensial pemilik).
+- **Triage page regression (Bagian 1, Blocker P0) — DIPERBAIKI:**
+  - Root cause (dari log Vercel production): Next.js 16 client-boundary enforces Server Action recognition. `page.tsx` defined local async wrapper functions (`handleAddAssessee`, `handleUpdateAssessee`, `handleDeleteAssessee`, `handleImportRoster`) passed as `form action` — not recognized as Server Actions because they were local, non-exported, in a non-`"use server"` file. Production error: "Functions cannot be passed directly to Client Components unless you explicitly expose it by marking it with 'use server'." and "Event handlers cannot be passed to Client Component props."
+  - Fix: removed local wrappers; added void-returning wrapper form actions (`addAssesseeFormAction`, `updateAssesseeFormAction`, `deleteAssesseeFormAction`, `importRosterFormAction`) in `triage/actions.ts` (already `"use server"`); imported and used them in `page.tsx`.
+  - Defensive hardening: `explainNameInference` now guards `drivePath` against null/undefined; `mapDrizzleDriveFileRow` coerces null `drivePath` to `""`; triage page guards `f.drivePath` before calling `explainNameInference`.
 - **Cacat 4 Trigger UI (selesai, commit ini):**
   - `similarity_run`: tombol "Jalankan Analisis Kemiripan" di halaman similarity, enqueue job + feedback job id/status.
   - `ocr_ktp`: tombol "Jalankan OCR KTP" di kartu asesi (halaman detail asesi), OCR lokal via Tesseract.js.

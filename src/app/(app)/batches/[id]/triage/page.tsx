@@ -11,31 +11,15 @@ import {
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import {
   addBatchRosterNoteAction,
+  addAssesseeFormAction,
   assignDriveFileAction,
+  deleteAssesseeFormAction,
+  importRosterFormAction,
   reclassifyBatchContentAction,
+  updateAssesseeFormAction,
 } from "./actions";
-import {
-  addAssesseeAction,
-  deleteAssesseeAction,
-  importRosterFromSheetAction,
-  updateAssesseeAction,
-} from "../roster-actions";
 import { ExtractFileTrigger } from "./extract-file-trigger";
 
-// Wrapper server actions so form `action` can use them (Next.js requires
-// form actions to return void | Promise<void>).
-async function handleAddAssessee(formData: FormData) {
-  await addAssesseeAction(formData);
-}
-async function handleUpdateAssessee(formData: FormData) {
-  await updateAssesseeAction(formData);
-}
-async function handleDeleteAssessee(formData: FormData) {
-  await deleteAssesseeAction(formData);
-}
-async function handleImportRoster(formData: FormData) {
-  await importRosterFromSheetAction(formData);
-}
 import { explainNameInference } from "@/services/drive";
 
 export const metadata = {
@@ -343,7 +327,7 @@ export default async function TriagePage({
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {/* Tambah Asesi Manual */}
-          <form action={handleAddAssessee} className="space-y-2 p-3 rounded-xl bg-white border border-slate-300">
+          <form action={addAssesseeFormAction} className="space-y-2 p-3 rounded-xl bg-white border border-slate-300">
             <input type="hidden" name="batchId" value={id} />
             <label className="text-[10px] font-semibold text-slate-700 uppercase tracking-wider">
               Tambah Asesi Manual
@@ -365,7 +349,7 @@ export default async function TriagePage({
           </form>
 
           {/* Impor dari Sheet */}
-          <form action={handleImportRoster} className="space-y-2 p-3 rounded-xl bg-white border border-slate-300">
+          <form action={importRosterFormAction} className="space-y-2 p-3 rounded-xl bg-white border border-slate-300">
             <input type="hidden" name="batchId" value={id} />
             <label className="text-[10px] font-semibold text-slate-700 uppercase tracking-wider">
               Impor dari Sheet Kelompok Asesi
@@ -426,7 +410,7 @@ export default async function TriagePage({
                       {!a.certificateNameConfirmed && (
                         <>
                           <form
-                            action={handleUpdateAssessee}
+                            action={updateAssesseeFormAction}
                             className="inline space-x-1"
                             onSubmit={(e) => {
                               const input = e.currentTarget.elements.namedItem("displayName") as HTMLInputElement | null;
@@ -450,7 +434,7 @@ export default async function TriagePage({
                             </button>
                           </form>
                           <form
-                            action={handleDeleteAssessee}
+                            action={deleteAssesseeFormAction}
                             className="inline"
                             onSubmit={(e) => {
                               if (!window.confirm(`Hapus asesi "${a.displayName}"?`)) {
@@ -623,7 +607,7 @@ export default async function TriagePage({
                     </td>
                     <td className="py-3 px-4 max-w-xs">
                       {(() => {
-                        const reason = explainNameInference(f.drivePath);
+                        const reason = f.drivePath ? explainNameInference(f.drivePath) : null;
                         if (!reason) return <span className="text-[10px] text-slate-400">—</span>;
                         return (
                           <span

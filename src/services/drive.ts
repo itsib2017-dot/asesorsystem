@@ -780,7 +780,8 @@ function cleanStatusSuffixes(raw: string): string {
  * Explains why no assessee candidate name could be inferred from a Drive path,
  * so triage can show a transparent reason per file instead of a blank roster.
  */
-export function explainNameInference(drivePath: string): string | null {
+export function explainNameInference(drivePath: string | null | undefined): string | null {
+  if (!drivePath) return null;
   const segments = drivePath.split("/").map((s) => s.trim()).filter(Boolean);
   if (segments.length <= 1) {
     return "Jalur Drive tidak memuat folder induk — tidak ada konteks nama yang dapat diinferensi.";
