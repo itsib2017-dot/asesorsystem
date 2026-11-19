@@ -17,7 +17,15 @@ const contentSecurityPolicy = [
 const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/v1/**/*": ["./src/templates/**/*"],
+    // OCR KTP (Cacat 1): Tesseract spawns a Node worker thread whose entry
+    // script and WASM core are loaded dynamically, so the default Next.js
+    // file trace omits them on Vercel (MODULE_NOT_FOUND at runtime).
+    "/batches/*/assessees/*": [
+      "./node_modules/tesseract.js/src/worker-script/node/**/*",
+      "./node_modules/tesseract.js-core/**/*",
+    ],
   },
+  serverExternalPackages: ["tesseract.js"],
   turbopack: {
     rules: {
       "*.css": {
