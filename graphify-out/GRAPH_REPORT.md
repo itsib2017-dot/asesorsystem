@@ -1,17 +1,17 @@
 # Graph Report - webapps_asesor  (2026-11-19)
 
 ## Corpus Check
-- 728 files · ~1,400,417 words
+- 728 files · ~1,402,820 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 30 file(s) not represented in the graph (top: (none) 19, .example 2, .jsonl 2)
 
 ## Summary
-- 5237 nodes · 12894 edges · 227 communities (190 shown, 37 thin omitted)
+- 5237 nodes · 12895 edges · 228 communities (191 shown, 37 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 106 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `2bba88a4`
+- Built from commit: `e7fa16c9`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -54,7 +54,7 @@
 - workflow-compiler.mjs
 - name-jury.ts
 - isolated-env.ts
-- triage/actions.ts
+- [id]/page.tsx
 - getSupabaseServerClient
 - session-db.bundle.mjs
 - state.mjs
@@ -232,6 +232,7 @@
 - session-hooks-smoke.test.ts
 - seed-parity-coverage.test.ts
 - bulkInsertEvents
+- load-batch-similarity.ts
 - eslint.config.mjs
 - scripts
 - FakeDB
@@ -263,7 +264,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (227 total, 37 thin omitted)
+## Communities (228 total, 37 thin omitted)
 
 ### Community 0 - "render-dataflow.mjs"
 Cohesion: 0.11
@@ -307,11 +308,11 @@ Nodes (55): validateArchitecture(), validateDataflow(), validateLifecycle(), val
 
 ### Community 10 - "assessee-forms.ts"
 Cohesion: 0.08
-Nodes (62): AssesseeFormType, FORM_FILENAMES, GET(), OverallDecisionOverrideCard(), OverallDecisionOverrideProps, DitAnalysisTrigger(), DitAnalysisPage(), metadata (+54 more)
+Nodes (61): AssesseeFormType, FORM_FILENAMES, GET(), OverallDecisionOverrideCard(), OverallDecisionOverrideProps, DitAnalysisTrigger(), DitAnalysisPage(), metadata (+53 more)
 
 ### Community 11 - "batches.repository.ts"
-Cohesion: 0.09
-Nodes (45): ActivateBatchKeySchema, activateBatchMasterKey06bAction(), BatchIdSchema, deactivateBatchMasterKey06bAction(), uploadBatchMasterKey06bAction(), saveUnitDecisionAction(), runWrittenGradingWithKeyAction(), WrittenGradingInputSchema (+37 more)
+Cohesion: 0.07
+Nodes (64): ActivateBatchKeySchema, activateBatchMasterKey06bAction(), BatchIdSchema, deactivateBatchMasterKey06bAction(), uploadBatchMasterKey06bAction(), saveUnitDecisionAction(), runWrittenGradingWithKeyAction(), WrittenGradingInputSchema (+56 more)
 
 ### Community 12 - "codex-companion.mjs"
 Cohesion: 0.09
@@ -367,15 +368,15 @@ Nodes (17): createBrokerEndpoint(), parseBrokerEndpoint(), sanitizePipeName(), c
 
 ### Community 25 - "getUser"
 Cohesion: 0.09
-Nodes (50): GET(), GET(), GET(), createBatchSchema, GET(), POST(), analyseSchema, POST() (+42 more)
+Nodes (49): GET(), GET(), GET(), createBatchSchema, GET(), POST(), analyseSchema, POST() (+41 more)
 
 ### Community 26 - "server.test.ts"
 Cohesion: 0.04
 Nodes (25): RFC-6874, Captured, CaseAString, __dirname, DoctorJsonRpcResponse, FakeReturn, ForbiddenRule, gfmPath (+17 more)
 
 ### Community 27 - "ref_next"
-Cohesion: 0.04
-Nodes (40): contentSecurityPolicy, nextConfig, DitAnalysisTriggerProps, InputStatusItem, mocks, metadata, GET(), forgotPasswordAction() (+32 more)
+Cohesion: 0.06
+Nodes (33): contentSecurityPolicy, nextConfig, mocks, GET(), forgotPasswordAction(), ForgotPasswordState, forgotSchema, ForgotPasswordForm() (+25 more)
 
 ### Community 28 - "properties"
 Cohesion: 0.04
@@ -417,13 +418,13 @@ Nodes (16): buildNameJuryPrompt(), collapseRepeatChars(), computeNameSimilarity(
 Cohesion: 0.08
 Nodes (23): cleanups, _hashCanonical(), isolatedHomeEnv(), runStatusline(), seedRealAdapter(), STATUSLINE, isolatedHomeEnv(), runStatusline() (+15 more)
 
-### Community 38 - "triage/actions.ts"
-Cohesion: 0.09
-Nodes (27): @supabase/supabase-js, addBatchRosterNoteAction(), addRosterNoteSchema, reclassifyBatchSchema, triageSchema, buildTriageUrl(), DOC_TYPE_OPTIONS, metadata (+19 more)
+### Community 38 - "[id]/page.tsx"
+Cohesion: 0.07
+Nodes (26): CreateBatchPanel(), CreateBatchPanelProps, DitAnalysisTriggerProps, InputStatusItem, RescanDriveButton(), BatchDetailPage(), rescanBatchDriveAction(), metadata (+18 more)
 
 ### Community 39 - "getSupabaseServerClient"
-Cohesion: 0.05
-Nodes (81): drizzle-orm, CreateBatchPanel(), CreateBatchPanelProps, confirmCertificateNameAction(), overallOverrideSchema, saveOverallDecisionOverrideAction(), questionSchema, saveInterviewAssessmentAction() (+73 more)
+Cohesion: 0.06
+Nodes (58): drizzle-orm, confirmCertificateNameAction(), overallOverrideSchema, saveOverallDecisionOverrideAction(), questionSchema, saveInterviewAssessmentAction(), saveInterviewSchema, unitRecSchema (+50 more)
 
 ### Community 40 - "session-db.bundle.mjs"
 Cohesion: 0.10
@@ -794,8 +795,8 @@ Cohesion: 0.25
 Nodes (7): conversation, lifetime, multiAdapter, realBytesConversation, realBytesLifetime, report, text
 
 ### Community 138 - "onboarding/actions.ts"
-Cohesion: 0.13
-Nodes (20): AppShellLayout(), signOutAction(), completeOnboardingAction(), onboardingSchema, OnboardingState, signOutFromOnboardingAction(), OnboardingForm(), OnboardingFormProps (+12 more)
+Cohesion: 0.07
+Nodes (36): @supabase/supabase-js, AppShellLayout(), signOutAction(), AuditLogPage(), dynamic, metadata, parsePositiveInt(), completeOnboardingAction() (+28 more)
 
 ### Community 140 - "drive-revisions.ts"
 Cohesion: 0.18
@@ -978,8 +979,8 @@ Cohesion: 0.11
 Nodes (33): InterviewAssessmentForm(), InterviewAssessmentFormProps, InterviewQuestionItem, InterviewUnitItem, InterviewPage(), metadata, parseQuestionsFromText(), getProviderConfigAction() (+25 more)
 
 ### Community 210 - "getBatchById"
-Cohesion: 0.12
-Nodes (33): GET(), Ak05Page(), metadata, metadata, SimilarityReportPage(), reclassifyBatchContentAction(), uploadSignatureAction(), metadata (+25 more)
+Cohesion: 0.17
+Nodes (23): GET(), Ak05Page(), metadata, uploadSignatureAction(), metadata, ProfileSettingsPage(), SignatureItem, SignatureUpload() (+15 more)
 
 ### Community 211 - "codex/stop.mjs"
 Cohesion: 0.13
@@ -1021,29 +1022,40 @@ Nodes (5): CapturedPost, platformConfigFile(), SEED_INSERT_COLUMNS, VARIANT_COLU
 Cohesion: 0.60
 Nodes (5): bulkInsertEvents(), _e(), _getSessionProjectDir(), insertEvent(), withRetry()
 
+### Community 224 - "load-batch-similarity.ts"
+Cohesion: 0.29
+Nodes (8): metadata, SimilarityReportPage(), loadBatchSimilarityReportData(), RawItemVerdict, {
+  mockGetBatchById,
+  mockListPairs,
+  mockListAssessees,
+  mockListSchemes,
+  mockGetConfigWithSource,
+  mockListWrittenGradings,
+}, listSimilarityPairsByBatch(), listWrittenGradingsForBatch(), renderCombinedWrittenReportMarkdown()
+
 ### Community 227 - "scripts"
 Cohesion: 0.29
 Nodes (7): scripts, build, dev, lint, start, test, typecheck
 
 ## Knowledge Gaps
-- **36 isolated node(s):** `ADR-0001`, `CLAUDE_PLUGIN_ROOT`, `NODE_PATH`, `ADR-0003`, `../build/runtime.js` (+31 more)
+- **36 isolated node(s):** `CLAUDE_PLUGIN_ROOT`, `NODE_PATH`, `ADR-0003`, `../build/runtime.js`, `CONTEXT_MODE_PLATFORM` (+31 more)
   These have ≤1 connection - possible missing edges. (Counts symbols only; 2154 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **37 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `@prisma/client` connect `source-example.ts` to `dependencies`?**
+- **Why does `compileWorkflowInternal()` connect `compileWorkflowInternal` to `render-dataflow.mjs`, `workflow-compiler.mjs`, `render-lifecycle.mjs`, `workflow-compiler.mjs`, `diagnostics.mjs`, `workflow-v2.mjs`, `render-architecture.mjs`?**
   _High betweenness centrality (0.021) - this node is a cross-community bridge._
-- **What connects `ADR-0001`, `CLAUDE_PLUGIN_ROOT`, `NODE_PATH` to the rest of the system?**
+- **What connects `CLAUDE_PLUGIN_ROOT`, `NODE_PATH`, `ADR-0003` to the rest of the system?**
   _36 weakly-connected nodes found - possible missing edges._
 - **Should `render-dataflow.mjs` be split into smaller, more focused modules?**
   _Cohesion score 0.11174242424242424 - nodes in this community are weakly interconnected._
-- **Why does `compileWorkflowInternal()` connect `compileWorkflowInternal` to `render-dataflow.mjs`, `workflow-compiler.mjs`, `render-lifecycle.mjs`, `workflow-compiler.mjs`, `diagnostics.mjs`, `workflow-v2.mjs`, `render-architecture.mjs`?**
-  _High betweenness centrality (0.017) - this node is a cross-community bridge._
+- **Why does `@prisma/client` connect `source-example.ts` to `dependencies`?**
+  _High betweenness centrality (0.013) - this node is a cross-community bridge._
 - **Should `session-helpers.mjs` be split into smaller, more focused modules?**
   _Cohesion score 0.05276907001044932 - nodes in this community are weakly interconnected._
-- **Why does `ne()` connect `security.bundle.mjs` to `session-extract.bundle.mjs`?**
-  _High betweenness centrality (0.017) - this node is a cross-community bridge._
 - **Should `check-update.mjs` be split into smaller, more focused modules?**
   _Cohesion score 0.059883236030025024 - nodes in this community are weakly interconnected._
+- **Should `compileWorkflowInternal` be split into smaller, more focused modules?**
+  _Cohesion score 0.05736409608091024 - nodes in this community are weakly interconnected._

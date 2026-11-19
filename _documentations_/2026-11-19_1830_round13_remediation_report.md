@@ -85,14 +85,14 @@ Tidak ada batch bernama `R1` atau `R2` di database; kedua kartu pada dashboard `
 |---|---|---|
 | TypeScript Strict | `npx tsc --noEmit` | **PASS** (exit 0, 0 error) |
 | ESLint Zero Warnings | `npx eslint . --max-warnings 0` | **PASS** (exit 0, 0 error, 0 warning) |
-| Vitest Suite | `npm test` | **PASS** (`28/28` file, `118/118` test, durasi 26.16s) |
-| Production Build | `npm run build` | **PASS** (`Compiled successfully in 29.8s`, TypeScript 9.1s, 36 routes + Proxy) |
+| Vitest Suite | `npm test` | **PASS** (`28/28` file, `120/120` test, durasi 33.79s) |
+| Production Build | `npm run build` | **PASS** (`Compiled successfully in 62s`, TypeScript 16.8s, 36 routes + Proxy) |
 | Remote Multi-LSP RLS | `npx supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS** (`40/40 PASS`, `0 FAIL`) |
-| Playwright Headless UI & Viewport | `verify_ui_playwright.py` (`next start -p 3199`) | **PASS** (`15/15` cek di `1440x900` & `390x844`: `/api/health` 200, 0 overflow horizontal, 0 console/page/5xx error, fail-closed auth redirect `/dashboard`, `/batches/...`, `/settings/audit`) |
+| Playwright Headless Local & Live | `verify_ui_playwright.py` (`next start -p 3199`) & `verify_live_playwright.py` (`https://assessor-zeta.vercel.app`) | **PASS** (`15/15` lokal + `15/15` live di `1440x900` & `390x844`: `/api/health` 200, 0 overflow horizontal, 0 console/page/5xx error, fail-closed auth redirect `/dashboard`, `/batches/...`, `/settings/audit`) |
 
 ---
 
 ## 5. Ukuran Codebase (`src/**/*.{ts,tsx}`)
 
-- **Total `src/` (`*.ts`, `*.tsx` termasuk tes):** `166` berkas / **`31.258` baris** (sebelumnya `164` berkas / `30.565` baris di Round 11).
+- **Total `src/` (`*.ts`, `*.tsx` termasuk tes):** `166` berkas / **`31.429` baris** (sebelumnya `164` berkas / `30.565` baris di Round 11).
 - **Non-test `src/` (`*.ts`, `*.tsx` tanpa `__tests__`, `*.test.*`, `*.spec.*`):** `138` berkas / **`26.613` baris** (sebelumnya `138` berkas / `26.404` baris di Round 11).

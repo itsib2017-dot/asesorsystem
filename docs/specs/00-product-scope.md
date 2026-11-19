@@ -30,6 +30,7 @@ AsesorKompetensi is a specialized web application for assessors at Lembaga Serti
 | :--- | :--- | :--- |
 | **Assessee PII (KTP, NIK)** | Data breach / LLM leak | Local Tesseract OCR only. KTP images/NIK never sent to LLMs. NIK masked in logs. |
 | **BYOK API Keys** | Key exposure / credential theft | Encrypted with AES-256-GCM using platform master secret (`BYOK_ENCRYPTION_SECRET`). Never returned in logs or client bundles. |
-| **Multi-Tenant Data** | Cross-tenant data leakage | Enforced at DB level with Row-Level Security (RLS) on all tables; verified with 25 automated tests. |
+| **Multi-Tenant Data** | Cross-tenant data leakage | Enforced at DB level with Row-Level Security (RLS) on all tables; verified with 40 automated SQL scenarios (`tests/rls-multi-lsp.test.sql`). |
+| **06B Answer Key Integrity** | Blanko or encrypted MUK templates activating as master key | Server-side `validateMasterKey06bContent` + `activateBatchMasterKey06bAction` reject blankos/06A/encrypted files and emit `batch.key_06b.activate.rejected` audit events. |
 | **Audit Logs** | Tampering / log deletion | Implemented with append-only database triggers (`audit_immutable()`); UPDATE and DELETE statements are rejected. |
 | **LLM Output Injection** | Prompt injection via candidate answers | Candidate text treated as untrusted data boundaries with strict Zod validation on model outputs. |

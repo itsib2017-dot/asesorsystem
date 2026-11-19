@@ -21,3 +21,10 @@
 - Decision: KTP images/text are processed **locally in the worker with Tesseract only**. KTP-derived data (name, NIK, address, OCR text, images) is **never sent to any LLM or third party**.
 - Consequence for D10 "name jury": the match / mismatch_resolved / needs_human verdict is **deterministic** (normalisation + edit-distance/token comparison of OCR text vs APL.01 / surat tugas / ijazah fields), not LLM. Assessor confirms/overrides; KTP spelling stays authority (D6). LLM may receive only non-KTP content (e.g. DIT answers) with PII redacted. NIK masked in logs/UI by default.
 - Open: OCR-confidence floor and comparison thresholds = config, calibrate on real samples.
+
+## ADR-0006 SQL-Scoped Audit Log Cursor Pagination & 06B Rejection Audit Contract (2026-11-19)
+- Context: In Round 13, (a) `listAuditLogsForUser` fetched `LIMIT N` rows before filtering cross-tenant `lsp_id IS NULL` entries in JavaScript and lacked a deterministic tie-breaker on `id`, and (b) non-activatable 06B blanko cards had no UI control to trigger and verify `batch.key_06b.activate.rejected` live.
+- Decision:
+  1. Push `(lsp_id = $lspId OR (lsp_id IS NULL AND actor_id IN (...tenantMembers)))` into the SQL query in both Drizzle and Supabase paths of `src/repositories/audit.repository.ts`, sort deterministically by `(created_at DESC, id DESC)`, add `beforeId` cursor pagination, and deduplicate by `id`.
+  2. Never delete, rewrite, or backfill existing `public.audit_log` rows; expose `"Coba Aktifkan / Uji Validasi"` per non-active 06B card in `BatchKeyUploadPanel` and ensure `activateBatchMasterKey06bAction` writes `batch.key_06b.activate.rejected` on both failed text extraction (`encrypted_unreadable`) and failed content validation (`empty_or_blanko`).
+- Consequences: Audit log pagination is deterministic without cross-tenant limit starvation, and blanko 06B rejection auditing is directly verifiable from the UI without uploading new files.
