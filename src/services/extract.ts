@@ -78,6 +78,18 @@ export async function repairBrokenZipCrcBuffer(buffer: Buffer): Promise<Buffer> 
 }
 
 /**
+ * Detects standard PKZIP general-purpose bit-0 encryption flag on the first local file header.
+ */
+export function isEncryptedZipBuffer(buffer: Buffer): boolean {
+  if (buffer.length < 10) return false;
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04) {
+    const generalPurposeFlags = buffer.readUInt16LE(6);
+    return (generalPurposeFlags & 0x0001) !== 0;
+  }
+  return false;
+}
+
+/**
  * Safely unpacks uploaded `.zip` archives in memory with path-traversal sanitization,
  * entry-count limits, and uncompressed bomb guards while preserving entry `date` (`mtime`).
  */
@@ -97,7 +109,26 @@ export async function unpackSafeZipEntries(
     throw new Error(`ZIP_TOO_LARGE: Ukuran arsip melebihi batas ${(maxArchive / (1024 * 1024)).toFixed(0)} MB.`);
   }
 
-  const zip = await loadZipLenient(buffer);
+  if (isEncryptedZipBuffer(buffer)) {
+    throw new Error(
+      "ZIP_ENCRYPTED: Arsip ZIP dilindungi kata sandi / terenkripsi dan tidak dapat diekstrak otomatis.",
+    );
+  }
+
+  let zip: JSZip;
+  try {
+    zip = await loadZipLenient(buffer);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    if (/encrypt/i.test(msg)) {
+      throw new Error(
+        "ZIP_ENCRYPTED: Arsip ZIP dilindungi kata sandi / terenkripsi dan tidak dapat diekstrak otomatis.",
+      );
+    }
+    throw new Error(
+      "ZIP_UNSUPPORTED_ARCHIVE: Format arsip tidak dapat dibuka (kemungkinan multi-volume, rusak, atau bukan ZIP standar).",
+    );
+  }
   const results: SafeZipEntry[] = [];
   let totalBytes = 0;
 

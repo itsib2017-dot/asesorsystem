@@ -74,6 +74,15 @@ const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> 
       ),
     nameReason: "Materi atau silabus pelatihan",
   },
+  template_muk: {
+    docType: "template_muk",
+    confidence: DRIVE_DOC_TYPES.template_muk.defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /\bfr[\s.]*(?:mapa[\s.]*0?[12]|va|ak[\s.]*0?[1-7]|ia[\s.]*(?:0?7|0?8|10))\b|\bdaftar\s*periksa\s*muk\b|\bpeta\s*kelompok\s*pekerjaan\b|\bskkni\b|\bskema\s*sertifikasi\b|\bberita\s*acara\b|\bdaftar\s*hadir\b/i.test(
+        fnBase,
+      ),
+    nameReason: "Template / dokumen administrasi MUK LSP",
+  },
   ktp: {
     docType: "ktp",
     confidence: DRIVE_DOC_TYPES.ktp.defaultConfidence,
@@ -189,7 +198,7 @@ const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> 
     docType: "cv",
     confidence: DRIVE_DOC_TYPES.cv.defaultConfidence,
     matchesName: ({ fnBase }) =>
-      /(?:^|\s)cv(?:$|\s)|curr?iculum\s*vitae|daftar\s*riwayat\s*hidup/i.test(fnBase),
+      /\bcv\b|curr?iculum\s*vitae|daftar\s*riwayat\s*hidup/i.test(fnBase),
     nameReason: "Daftar riwayat hidup (CV)",
     contentPattern:
       /daftar\s*riwayat\s*hidup|curriculum\s*vitae|riwayat\s*pendidikan|pengalaman\s*kerja/i,
@@ -242,6 +251,7 @@ const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> 
 
 const NAME_RULE_ORDER = [
   "materi_pelatihan",
+  "template_muk",
   "ktp",
   "apl01",
   "apl02",
@@ -589,14 +599,31 @@ export async function crawlPublicDriveFolder(params: {
 }
 
 const EXTRA_NON_CANDIDATE_FOLDER_RE =
-  /^(?:materi|pelatihan|persyaratan|tugas\s*dit|skema|muk|kelengkapan|dokumen\s*uji|kelompok(?:\s*pekerjaan)?|form(?:ulir)?|ibpr|hiradc|erp|work\s*permit|inspeksi|investigasi|arsip|template|online|onsite)\b|^(?:ba|docs|_docs_|asesmen|metode|lsp)$/i;
+  /^(?:materi|pelatihan|persyaratan|tugas\s*dit|skema|muk|kelengkapan|dokumen(?:\s*uji)?|kelompok(?:\s*pekerjaan)?|form(?:ulir)?|ibpr|hiradc|erp|work\s*permit|inspeksi|investigasi|arsip|template|online|onsite|sertifikasi|bnsp|batch|ujian|soal|kunci|jawaban|lampiran|berkas|folder|ahli\s*k3)\b|^(?:ba|docs|_docs_|asesmen|metode|lsp|umum)$/i;
+
+const STRUCTURAL_FOLDER_CONTAINS_RE =
+  /\b(?:pelatihan|sertifikasi|bnsp|materi|skema|dokumen\s*uji|kelengkapan|persyaratan|kelompok\s*pekerjaan)\b/i;
+
+const TASK_OR_FOLDER_NAME_PREFIX_RE =
+  /^(?:tugas\s*presentasi\s*dit|tugas\s*dit|tugas\s*\d+|tugas|dit|presentasi|kelompok(?:\s*pekerjaan)?\s*\d*|form(?:ulir)?)\b/i;
 
 const SHARED_NON_CANDIDATE_TOKEN_SET = new Set<string>(NON_CANDIDATE_SHARED_TOKENS);
+
+/**
+ * Returns true when an assessee display name still carries a raw folder/task prefix
+ * (e.g. `TUGAS SUANGI`, `DIT LUMIKA`, `Kelompok 1`) rather than a clean person name.
+ */
+export function hasTaskOrFolderPrefix(raw: string): boolean {
+  const normalized = raw.trim().replace(/[_-]+/g, " ");
+  if (!normalized) return false;
+  return TASK_OR_FOLDER_NAME_PREFIX_RE.test(normalized);
+}
 
 function isNonCandidateFolder(raw: string): boolean {
   const lower = raw.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   if (!lower) return true;
   if (EXTRA_NON_CANDIDATE_FOLDER_RE.test(lower)) return true;
+  if (STRUCTURAL_FOLDER_CONTAINS_RE.test(lower)) return true;
   return SHARED_NON_CANDIDATE_TOKEN_SET.has(lower);
 }
 
@@ -610,6 +637,7 @@ export function cleanCandidateLabel(raw: string): string {
     .replace(/^\d+[\s._-]+/, "")
     .replace(/[_]+/g, " ")
     .replace(/^(?:tugas\s*presentasi\s*dit|tugas\s*dit|tugas\s*\d+|tugas|dit|presentasi)(?:$|\s+)/i, "")
+    .replace(/^[\s._-]+/, "")
     .replace(/\(\d+\)$/g, "")
     .replace(/(?:\s+|[-._]+)(?:v\d+|rev\s*\d*|final|k3|ak3u|bnsp)$/i, "")
     .replace(/\s+/g, " ")
@@ -650,11 +678,14 @@ export function inferCandidateFromDrivePath(
           return { candidateName: cleaned, isAuthoritativeRoster: true };
         }
       }
+      return { candidateName: null, isAuthoritativeRoster: false };
     }
 
     if (/tugas\s*dit/i.test(folder)) {
       const next = folders[i + 1];
-      if (next && !isNonCandidateFolder(next)) {
+      if (next) {
+        // Strip leading task prefixes (e.g. "TUGAS DIT WIWI" -> "WIWI", "TUGAS SUANGI" -> "SUANGI")
+        // before validating whether the remaining label is a usable person name rather than a folder title.
         const cleaned = cleanCandidateLabel(next);
         if (isUsefulCandidateLabel(cleaned)) {
           return { candidateName: cleaned, isAuthoritativeRoster: false };
@@ -670,12 +701,18 @@ export function inferCandidateFromDrivePath(
           }
         }
       }
+      // Never fall through to raw parent folder names for Tugas DIT files
+      return { candidateName: null, isAuthoritativeRoster: false };
     }
   }
 
-  // Fallback: direct parent folder if not a generic structural category
+  // Fallback: direct parent folder ONLY when it is not structural/task-prefixed
   const immediateParent = folders[folders.length - 1] ?? "";
-  if (immediateParent && !isNonCandidateFolder(immediateParent)) {
+  if (
+    immediateParent &&
+    !isNonCandidateFolder(immediateParent) &&
+    !hasTaskOrFolderPrefix(immediateParent)
+  ) {
     const cleaned = cleanCandidateLabel(immediateParent);
     if (isUsefulCandidateLabel(cleaned)) {
       return { candidateName: cleaned, isAuthoritativeRoster: false };

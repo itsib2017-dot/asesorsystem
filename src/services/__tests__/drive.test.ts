@@ -4,9 +4,11 @@ import {
   classifyDriveFileName,
   crawlPublicDriveFolder,
   extractCandidateNamesFromDocumentText,
+  hasTaskOrFolderPrefix,
   inferCandidateFromDrivePath,
   inferCandidateNameFromDrivePath,
 } from "../drive";
+import { findBestMatchingCandidate } from "@/lib/names";
 
 describe("Drive folder crawling & BNSP path classification", () => {
   afterEach(() => {
@@ -328,5 +330,72 @@ describe("Drive folder crawling & BNSP path classification", () => {
         "SURAT TUGAS\nDAFTAR PESERTA\n1. Bagas Priambodo\n2. Kiki Triyana\n",
       ),
     ).toEqual(["Bagas Priambodo", "Kiki Triyana"]);
+  });
+
+  it("classifies dot-prefixed F.ERP/F.Investigasi forms as dit_form, Cv. as cv, and MUK admin templates as template_muk (R10 Cacat 2)", () => {
+    expect(
+      classifyDriveFileName(
+        "F.ERP_Lintang Trenggono.docx",
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT/Lintang Trenggono",
+      ).docType,
+    ).toBe("dit_form");
+    expect(classifyDriveFileName("F.ERP.docx", "Tugas DIT/Andi").docType).toBe("dit_form");
+    expect(
+      classifyDriveFileName("F.IBPR-HIRADC AK3U_Lintang Trenggono.docx", "Tugas DIT/Lintang").docType,
+    ).toBe("dit_form");
+    expect(
+      classifyDriveFileName("F.Investigasi_Insiden.docx", "Tugas DIT/Andi").docType,
+    ).toBe("dit_form");
+    expect(
+      classifyDriveFileName("keperluan_administrasi.docx", "Persyaratan/1. Andi").docType,
+    ).not.toBe("dit_form");
+
+    expect(
+      classifyDriveFileName("Cv. Suangi new.jpg", "Persyaratan Pelatihan AK3 umum BNSP/18. Suangi")
+        .docType,
+    ).toBe("cv");
+
+    expect(
+      classifyDriveFileName(
+        "FR.MAPA.02. PETA INSTRUMEN ASESMEN (L).docx",
+        "",
+      ).docType,
+    ).toBe("template_muk");
+    expect(classifyDriveFileName("FR.AK.05. LAPORAN ASESMEN.docx", "").docType).toBe("template_muk");
+    expect(classifyDriveFileName("DAFTAR PERIKSA MUK.docx", "").docType).toBe("template_muk");
+    expect(classifyDriveFileName("SKKNI 2019-038.pdf.pdf", "").docType).toBe("template_muk");
+    expect(classifyDriveFileName("Berita Acara Ujikom (AK3U).docx", "BA").docType).toBe(
+      "template_muk",
+    );
+  });
+
+  it("extracts TUGAS DIT WIWI -> Wiwi Widiawati (never WIWIK) and blocks raw folder names (R10 Cacat 3)", () => {
+    const wiwiCandidate = inferCandidateNameFromDrivePath(
+      "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT/TUGAS DIT WIWI/2. Form ERP WIWI.docx",
+      "2. Form ERP WIWI.docx",
+    );
+    expect(wiwiCandidate).toBe("WIWI");
+
+    const pool = [
+      { id: "wiwik", displayName: "WIWIK SRIWAHYUNI BATUBARA" },
+      { id: "wiwi", displayName: "Wiwi Widiawati, S.K.M" },
+    ];
+    expect(findBestMatchingCandidate(wiwiCandidate!, pool)?.id).toBe("wiwi");
+
+    expect(
+      inferCandidateNameFromDrivePath(
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT/Kelompok 2/DIT_Kelompok_2.pptx",
+        "DIT_Kelompok_2.pptx",
+      ),
+    ).toBeNull();
+    expect(
+      inferCandidateNameFromDrivePath(
+        "Pelatihan Ahli K3 Umum Sertifkasi BNSP tahun 2026/Tugas DIT/TUGAS PRESENTASI DIT.pptx",
+        "TUGAS PRESENTASI DIT.pptx",
+      ),
+    ).toBeNull();
+    expect(hasTaskOrFolderPrefix("TUGAS SUANGI")).toBe(true);
+    expect(hasTaskOrFolderPrefix("Suangi")).toBe(false);
+    expect(hasTaskOrFolderPrefix("Dita Permata")).toBe(false);
   });
 });

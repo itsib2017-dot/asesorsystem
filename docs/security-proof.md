@@ -1,13 +1,13 @@
 # F10 — Security Proof & Hardening Evidence
 
-- **Date:** 2026-11-18
+- **Date:** 2026-11-19
 - **Authority:** `ground_rules_v5.md` (§Security Hardening & §A.4)
 
 ---
 
 | Requirement | Proof / Test | Command | Observed Result |
 | :--- | :--- | :--- | :--- |
-| **Multi-Tenant & Role RLS** | `tests/rls-multi-lsp.test.sql` (31 scenarios) | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | 31/31 PASS (cross-LSP reads return 0) |
+| **Multi-Tenant & Role RLS** | `tests/rls-multi-lsp.test.sql` (37 scenarios) | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | 37/37 PASS (cross-LSP reads return 0; `unextractable` status verified) |
 | **Supabase Advisors** | Database security & performance linter | `supabase db advisors --remote` | 0 issues found |
 | **AES-256-GCM BYOK Crypto** | `src/lib/crypto/__tests__/encryption.test.ts` | `npm test` | 4/4 PASS (tamper & missing key rejected) |
 | **PII / NIK Redaction** | `src/ai/__tests__/redact.test.ts` | `npm test` | 4/4 PASS (16-digit NIK & image URIs blocked) |

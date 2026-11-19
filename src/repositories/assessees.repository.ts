@@ -361,6 +361,49 @@ export async function upsertAssesseesForBatch(params: {
   return listAssesseesByBatch(params.userId, params.batchId);
 }
 
+export interface PrunedDuplicateAssessee {
+  id: string;
+  displayName: string;
+}
+
+/**
+ * Updates an unconfirmed assessee's display name in-place (e.g. stripping a legacy folder/task
+ * prefix like `TUGAS SUANGI` -> `Suangi`) without deleting the record or touching confirmed names.
+ */
+export async function updateAssesseeDisplayName(params: {
+  userId: string;
+  assesseeId: string;
+  displayName: string;
+}): Promise<void> {
+  if (!isUuid(params.assesseeId)) return;
+  const cleaned = params.displayName.trim();
+  if (!cleaned) return;
+  const now = new Date();
+  await runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssesseesRepository.updateAssesseeDisplayName",
+    drizzle: async (tx) => {
+      await tx
+        .update(assessees)
+        .set({
+          displayName: cleaned,
+          updatedAt: now,
+        })
+        .where(eq(assessees.id, params.assesseeId));
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase
+        .from("assessees")
+        .update({
+          display_name: cleaned,
+          updated_at: now.toISOString(),
+        })
+        .eq("id", params.assesseeId);
+    },
+  });
+}
+
 /**
  * Safely removes zero-file unconfirmed duplicate/folder-named assessee records after files
  * have been reassigned to canonical assessees (never removes confirmed names or records
@@ -369,7 +412,7 @@ export async function upsertAssesseesForBatch(params: {
 export async function pruneOrphanedDuplicateAssessees(params: {
   userId: string;
   batchId: string;
-}): Promise<string[]> {
+}): Promise<PrunedDuplicateAssessee[]> {
   if (!isUuid(params.batchId)) return [];
 
   const allAssessees = await listAssesseesByBatch(params.userId, params.batchId);
@@ -423,7 +466,7 @@ export async function pruneOrphanedDuplicateAssessees(params: {
       await tx
         .delete(assessees)
         .where(inArray(assessees.id, deletable.map((a) => a.id)));
-      return deletable.map((a) => a.displayName);
+      return deletable.map((a) => ({ id: a.id, displayName: a.displayName }));
     },
     supabase: async () => {
       const supabase = await getSupabaseServerClient();
@@ -465,7 +508,7 @@ export async function pruneOrphanedDuplicateAssessees(params: {
         console.warn("[AssesseesRepository Warning] prune duplicates skipped:", delError.message);
         return [];
       }
-      return deletable.map((a) => a.displayName);
+      return deletable.map((a) => ({ id: a.id, displayName: a.displayName }));
     },
   });
 }

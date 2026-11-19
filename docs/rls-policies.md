@@ -1,7 +1,7 @@
 # F4 Companion — Row Level Security (RLS) Policy Table
 
 - **Database:** Supabase PostgreSQL (`oiplhsmmfuqriaqrxjud`)
-- **Verification Evidence:** `tests/rls-multi-lsp.test.sql` (36/36 PASS)
+- **Verification Evidence:** `tests/rls-multi-lsp.test.sql` (37/37 PASS)
 - **Report Reference:** `docs/testing/feature-test-report.md`
 
 ---

@@ -6,6 +6,7 @@ import { getUser } from "@/lib/auth/get-session";
 import { listAuditLogsForResource } from "@/repositories/audit.repository";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { getLatestJobForBatch } from "@/repositories/jobs.repository";
+import { JobStatusPoller } from "@/components/batch/job-status-poller";
 import { executeJob, getJobStatus } from "@/worker/queue";
 
 export const metadata = {
@@ -118,7 +119,7 @@ export default async function BatchIngestJobPage({
       </div>
 
       <div className="glass-card rounded-2xl p-6 space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             {job.status === "done" ? (
               <CheckCircle2 className="w-5 h-5 text-emerald-600" />
@@ -136,9 +137,13 @@ export default async function BatchIngestJobPage({
               </div>
             </div>
           </div>
-          <span className="font-mono text-sm font-bold text-slate-800">
-            {job.progress}%
-          </span>
+          <JobStatusPoller
+            batchId={batchId}
+            jobId={job.id}
+            initialStatus={job.status}
+            initialProgress={job.progress}
+            mode="job"
+          />
         </div>
 
         <div className="w-full h-2.5 rounded-full bg-slate-200 overflow-hidden">
@@ -201,22 +206,49 @@ export default async function BatchIngestJobPage({
           </p>
         ) : (
           <ul className="divide-y divide-slate-200 text-xs">
-            {jobLogs.map((entry) => (
-              <li key={entry.id} className="py-2.5 flex flex-wrap items-start justify-between gap-2">
-                <div className="space-y-0.5">
-                  <div className="font-semibold text-slate-900">
-                    {entry.action}
+            {jobLogs.map((entry) => {
+              const summary = entry.afterSummary ?? {};
+              const rosterChangeSummary =
+                typeof summary.rosterChangeSummary === "string"
+                  ? summary.rosterChangeSummary
+                  : null;
+              const scannedFiles =
+                typeof summary.scannedFiles === "number" ? summary.scannedFiles : null;
+              const discoveredAssessees =
+                typeof summary.discoveredAssessees === "number"
+                  ? summary.discoveredAssessees
+                  : null;
+              return (
+                <li
+                  key={entry.id}
+                  className="py-2.5 flex flex-wrap items-start justify-between gap-2"
+                >
+                  <div className="space-y-0.5">
+                    <div className="font-semibold text-slate-900">
+                      {entry.action}
+                    </div>
+                    <div className="text-slate-600">
+                      Aktor: {entry.actorName || "Sistem"} · corr:{" "}
+                      <span className="font-mono text-[11px]">{entry.correlationId}</span>
+                      {scannedFiles !== null && discoveredAssessees !== null && (
+                        <span>
+                          {" · "}
+                          {discoveredAssessees} asesi · {scannedFiles} berkas
+                        </span>
+                      )}
+                    </div>
+                    {rosterChangeSummary && (
+                      <div className="mt-1 px-2.5 py-1 rounded-lg bg-teal-50 border border-teal-200 text-teal-900 text-[11px]">
+                        Perubahan daftar asesi: {rosterChangeSummary}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-slate-600">
-                    Aktor: {entry.actorName || "Sistem"} · corr:{" "}
-                    <span className="font-mono text-[11px]">{entry.correlationId}</span>
-                  </div>
-                </div>
-                <span className="font-mono text-[11px] text-slate-500">
-                  {entry.createdAt}
-                </span>
-              </li>
-            ))}
+                  <span className="font-mono text-[11px] text-slate-500">
+                    {entry.createdAt}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

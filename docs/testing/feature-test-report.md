@@ -1,6 +1,6 @@
 # Feature Test Report
 
-- **Date:** 2026-11-19 (Round 9 Complexity Audit Remediation)
+- **Date:** 2026-11-19 (Round 10 Audit Remediation)
 - **Environment:** Remote Supabase (`oiplhsmmfuqriaqrxjud`) + Local Node.js + Live Vercel (`https://assessor-zeta.vercel.app`)
 - **Authority:** `ground_rules_v5.md` (§Feature/Module Testing)
 
@@ -12,7 +12,8 @@
 - **RLS-26..RLS-31**: Phase 1–5 tables (`scheme_form_manifests`, `drive_files`, `decisions`, `ak05_reports`, `assessor_llm_config`) — **6/6 PASS**.
 - **RLS-32**: Phase A (`interview_assessments` cross-LSP isolation) — **1/1 PASS**.
 - **RLS-33..RLS-35**: Migration `20261119000009_assessee_decision_overrides.sql` (`assessee_decision_overrides` cross-LSP isolation, `tuk_admin` write block, unassigned assessor batch block) — **3/3 PASS**.
-- **RLS-36**: Migration `20261119000010_drive_file_metadata.sql` (`assessees_delete` cross-LSP `DELETE` blocked with `0` rows affected) — **1/1 PASS** (`supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql`: **36/36 PASS**, **0 FAIL**).
+- **RLS-36**: Migration `20261119000010_drive_file_metadata.sql` (`assessees_delete` cross-LSP `DELETE` blocked with `0` rows affected) — **1/1 PASS**.
+- **RLS-37**: Migration `20261119000011_add_triage_unextractable.sql` (`drive_files.triage_status = 'unextractable'` permitted for authorized LSP assessor) — **1/1 PASS** (`supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql`: **37/37 PASS**, **0 FAIL**).
 
 ---
 
@@ -32,14 +33,14 @@
 | `src/services/__tests__/dit.test.ts` | 2 tests (completeness gate 422, dynamic count) | **PASS** | `npm test` |
 | `src/services/__tests__/no-hardcoded-values.test.ts` | 2 tests (zero literal scheme counts, zero prohibited status) | **PASS** | `npm test` |
 | `src/lib/supabase/__tests__/middleware.test.ts` | 2 tests (fail-closed auth redirect; public route pass) | **PASS** | `npm test` |
-| `src/services/__tests__/drive.test.ts` | 8 tests (Drive crawl, `dit_form` 5 worksheets, multi-format `.pdf`/`.docx`/`.pptx` DIT, typos, underscore `DIT_Faradhila`, content classification) | **PASS** | `npm test` |
+| `src/services/__tests__/drive.test.ts` | 10 tests (Drive crawl, `dit_form` incl. `F.ERP_...`/`F.Investigasi_...`, `Cv.`, `template_muk`, `TUGAS DIT WIWI -> Wiwi`, raw folder-name guard) | **PASS** | `npm test` |
 | `src/services/__tests__/drive-revisions.test.ts` | 4 tests (ISO/DD-MM-YYYY/compact/Indonesian date extraction, newest revision priority, multi-part KP/form slot grouping, deterministic confidence/filename tie-break without text-length bias) | **PASS** | `npm test` |
-| `src/services/__tests__/extract-and-drive-download.test.ts` | 9 tests (OOXML/PDF extraction, SSRF checks, ZIP safe unpack + CRC repair + ZIP child download, multi-part DIT aggregation, content reclassification) | **PASS** | `npm test` |
+| `src/services/__tests__/extract-and-drive-download.test.ts` | 10 tests (OOXML/PDF extraction, SSRF checks, Drive `#download-form` virus-scan confirm, `ZIP_ENCRYPTED` detection, ZIP safe unpack + CRC repair + ZIP child download, multi-part DIT aggregation, content reclassification) | **PASS** | `npm test` |
 | `src/app/api/v1/dit/[assesseeId]/analyse/__tests__/route.test.ts` | 4 tests (UUID guard, completeness gate, scheme & batch DB `drive_files` resolution) | **PASS** | `npm test` |
 | `src/lib/ak05/__tests__/rollup.test.ts` | 6 tests (undecided neutral, partial-K undecided, >=1 BK auto-BK, manual assessor override/clear, DOCX/PDF export) | **PASS** | `npm test` |
 | `src/services/__tests__/vatm-rollup.test.ts` | 2 tests (VATM multi-channel rollup incl. `FR.IA.09` interview) | **PASS** | `npm test` |
 | `src/services/__tests__/official-forms-export.test.ts` | 7 tests (AK.02, IA.04B, IA.06C DOCX exports, neutral unassessed rendering, auto-BK, XML `pgMar`/`bodyPr` normalization, `dit_form` `proyek` flag) | **PASS** | `npm test` |
-| `src/worker/__tests__/worker.test.ts` | 9 tests (`extract_file` raw + cached `extractedText` reuse, `similarity_run`, `ocr_ktp`, inline run, job audit lifecycle, two-pass roster merge + ZIP unpack + duplicate pruning, newest `06C` revision) | **PASS** | `npm test` |
+| `src/worker/__tests__/worker.test.ts` | 10 tests (`extract_file` raw + cached reuse, `similarity_run`, `ocr_ktp`, inline run, job audit lifecycle, two-pass roster merge + audit trail + ZIP unpack + duplicate pruning, in-place `TUGAS SUANGI -> Suangi` rename, `TUGAS DIT WIWI -> Wiwi`, encrypted ZIP `unextractable`, newest `06C` revision) | **PASS** | `npm test` |
 | `src/lib/written/__tests__/ooxml-decrypt.test.ts` | 3 tests (CFB + MS-OFFCRYPTO Agile v4.4 missing/wrong/valid password) | **PASS** | `npm test` |
 | `src/lib/similarity/__tests__/load-batch-similarity.test.ts` | 2 tests (threshold provenance label, uncalibrated notice, per-assessee summaries) | **PASS** | `npm test` |
 | `src/lib/forms/__tests__/scheme-manifest-portability.test.ts` | 3 tests (Non-AK3U manifest units, KP, `resolveUnitsForScheme` parity on `kelompokPekerjaan`-only manifests, `isGenericFallback` indicator, doc columns, branding) | **PASS** | `npm test` |
@@ -54,6 +55,6 @@
 | :--- | :--- | :--- |
 | TypeScript Strict | `npm run typecheck` | **PASS (0 errors)** |
 | ESLint Zero Warnings | `npx eslint . --max-warnings 0` | **PASS (0 errors, 0 warnings)** |
-| Vitest Unit Suite | `npm test` | **PASS (25 files, 101/101 tests)** |
+| Vitest Unit Suite | `npm test` | **PASS (25 files, 105/105 tests)** |
 | Production Build | `npm run build` | **PASS (36 app routes incl. Proxy Middleware)** |
-| Multi-LSP Postgres RLS | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS (36/36 tests on remote Supabase after R5 repo migration)** |
+| Multi-LSP Postgres RLS | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS (37/37 tests on remote Supabase incl. `RLS-37` unextractable status)** |

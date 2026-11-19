@@ -37,12 +37,55 @@ export interface DriveExtractionOutcome {
   error?: string;
 }
 
+/**
+ * Parses Google Drive's public virus-scan confirmation `#download-form` (used for large or
+ * unscannable public archives) into a validated follow-up URL. Returns null for login walls,
+ * permission prompts, or unexpected HTML.
+ */
+export function extractDriveVirusScanConfirmUrl(
+  html: string,
+  baseUrl: string,
+): string | null {
+  const formMatch = html.match(
+    /<form[^>]*\bid=["']download-form["'][^>]*\baction=["']([^"']+)["'][^>]*>([\s\S]*?)<\/form>/i,
+  );
+  if (!formMatch?.[1] || !formMatch[2]) return null;
+
+  let actionUrl: URL;
+  try {
+    actionUrl = new URL(formMatch[1], baseUrl);
+  } catch {
+    return null;
+  }
+
+  const inputRegex = /<input\b[^>]*>/gi;
+  let hasConfirm = false;
+  for (const match of formMatch[2].matchAll(inputRegex)) {
+    const tag = match[0];
+    const typeMatch = tag.match(/\btype=["']([^"']+)["']/i);
+    if ((typeMatch?.[1] ?? "").toLowerCase() !== "hidden") continue;
+    const nameMatch = tag.match(/\bname=["']([^"']+)["']/i);
+    const valMatch = tag.match(/\bvalue=["']([^"']*)["']/i);
+    const name = nameMatch?.[1]?.trim();
+    const val = valMatch?.[1] ?? "";
+    if (!name) continue;
+    if (name === "confirm") hasConfirm = true;
+    actionUrl.searchParams.set(name, val);
+  }
+
+  if (!hasConfirm) return null;
+  const resolved = actionUrl.toString();
+  const check = validateSafeExternalUrl(resolved, ALLOWED_DRIVE_DOWNLOAD_DOMAINS);
+  return check.safe ? resolved : null;
+}
+
 async function fetchWithValidatedRedirects(
   initialUrl: string,
   maxBytes: number,
-  maxRedirects = 3,
+  maxRedirects = 4,
 ): Promise<Buffer> {
   let currentUrl = initialUrl;
+  let usedVirusScanConfirm = false;
 
   for (let hop = 0; hop <= maxRedirects; hop++) {
     const check = validateSafeExternalUrl(currentUrl, ALLOWED_DRIVE_DOWNLOAD_DOMAINS);
@@ -74,6 +117,20 @@ async function fetchWithValidatedRedirects(
 
     const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
     if (contentType.includes("text/html")) {
+      const htmlSnippet = (await res.text()).slice(0, 32_768);
+      if (!usedVirusScanConfirm) {
+        const confirmUrl = extractDriveVirusScanConfirmUrl(htmlSnippet, currentUrl);
+        if (confirmUrl) {
+          usedVirusScanConfirm = true;
+          currentUrl = confirmUrl;
+          continue;
+        }
+      }
+      if (/accounts\.google\.com|ServiceLogin|You need access|Request access/i.test(htmlSnippet)) {
+        throw new Error(
+          'DRIVE_ACCESS_DENIED: Berkas Google Drive memerlukan izin akses publik ("Anyone with the link").',
+        );
+      }
       throw new Error(
         "DRIVE_HTML_INTERSTITIAL: Berkas Drive tidak dapat diunduh langsung (memerlukan izin atau konfirmasi ukuran).",
       );

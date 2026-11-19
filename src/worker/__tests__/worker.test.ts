@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   listDriveFilesForBatch: vi.fn(),
   listAssesseesByBatch: vi.fn(),
   upsertAssesseesForBatch: vi.fn(),
+  updateAssesseeDisplayName: vi.fn(),
   pruneOrphanedDuplicateAssessees: vi.fn(),
   saveSimilarityPairsForBatch: vi.fn(),
   getAssesseeById: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("@/repositories/assessees.repository", () => ({
   getAssesseeById: mocks.getAssesseeById,
   listAssesseesByBatch: mocks.listAssesseesByBatch,
   saveNameJuryVerdictAndOcr: mocks.saveNameJuryVerdictAndOcr,
+  updateAssesseeDisplayName: mocks.updateAssesseeDisplayName,
   upsertAssesseesForBatch: mocks.upsertAssesseesForBatch,
   pruneOrphanedDuplicateAssessees: mocks.pruneOrphanedDuplicateAssessees,
 }));
@@ -92,6 +94,7 @@ describe("Worker dispatcher and queue runner", () => {
     mocks.getSupabaseServerClient.mockResolvedValue({});
     mocks.writeAuditLog.mockResolvedValue("corr-1");
     mocks.listUserMemberships.mockResolvedValue([]);
+    mocks.updateAssesseeDisplayName.mockResolvedValue(undefined);
     mocks.upsertAssesseesForBatch.mockResolvedValue([]);
     mocks.upsertDriveFilesForBatch.mockResolvedValue(0);
     mocks.pruneOrphanedDuplicateAssessees.mockResolvedValue([]);
@@ -323,7 +326,10 @@ describe("Worker dispatcher and queue runner", () => {
       .mockResolvedValueOnce([...staleAndCanonicalBefore]);
     mocks.upsertAssesseesForBatch.mockResolvedValue(canonicalList);
     mocks.upsertDriveFilesForBatch.mockImplementation(async (args: { files: unknown[] }) => args.files.length);
-    mocks.pruneOrphanedDuplicateAssessees.mockResolvedValue(["as-dup-bagas", "as-dup-suangi"]);
+    mocks.pruneOrphanedDuplicateAssessees.mockResolvedValue([
+      { id: "as-dup-bagas", displayName: "BAGAS K3" },
+      { id: "as-dup-suangi", displayName: "TUGAS SUANGI" },
+    ]);
 
     const zip = new JSZip();
     zip.file("Persyaratan/1. Bagas Priambodo/2. Form ERP.txt", "Prosedur Tanggap Darurat Kebakaran");
@@ -511,5 +517,149 @@ describe("Worker dispatcher and queue runner", () => {
     expect(res.status).toBe("done");
     expect(res.meta).toMatchObject({ extractionMethod: "ooxml_docx", chars: 46 });
     expect(mocks.updateDriveFileExtraction).not.toHaveBeenCalled();
+  });
+
+  it("cleans legacy TUGAS SUANGI display name in-place, never creates fake folder assessees, maps TUGAS DIT WIWI -> Wiwi, and marks encrypted ZIP unextractable (R10)", async () => {
+    const batchId = "33333333-3333-4333-8333-333333333333";
+    mocks.getBatchById.mockResolvedValue({
+      id: batchId,
+      lspId: "lsp-1",
+      schemeId: "scheme-1",
+      name: "Batch R10",
+      driveFolderUrl: "https://drive.google.com/drive/folders/rootr10folder",
+    });
+    mocks.listDriveFilesForBatch.mockResolvedValue([]);
+
+    const existingBefore = [
+      { id: "as-suangi", displayName: "TUGAS SUANGI", certificateNameConfirmed: null },
+      { id: "as-wiwik", displayName: "WIWIK SRIWAHYUNI BATUBARA", certificateNameConfirmed: null },
+      { id: "as-wiwi", displayName: "Wiwi Widiawati, S.K.M", certificateNameConfirmed: null },
+    ];
+    mocks.listAssesseesByBatch.mockResolvedValue(existingBefore);
+    mocks.upsertAssesseesForBatch.mockResolvedValue(existingBefore);
+    mocks.upsertDriveFilesForBatch.mockImplementation(async (args: { files: unknown[] }) => args.files.length);
+    mocks.pruneOrphanedDuplicateAssessees.mockResolvedValue([]);
+
+    const htmlPage = (entries: Array<{ id: string; title: string; isFolder?: boolean }>) =>
+      entries
+        .map(
+          (e) => `
+          <div class="flip-entry" id="entry-${e.id}">
+            <a href="${e.isFolder ? `https://drive.google.com/drive/folders/${e.id}` : `https://drive.google.com/file/d/${e.id}/view`}">
+              <div class="flip-entry-title">${e.title}</div>
+            </a>
+          </div>`,
+        )
+        .join("\n");
+
+    const encryptedZipHeader = new Uint8Array([
+      0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x01, 0x00, 0x08, 0x00, 0x00, 0x00,
+    ]);
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const parsedUrl = new URL(String(input));
+      const fid = parsedUrl.searchParams.get("id");
+      if (fid === "rootr10folder") {
+        return new Response(
+          htmlPage([
+            { id: "r10-req", title: "Persyaratan Pelatihan AK3 umum BNSP", isFolder: true },
+            { id: "r10-dit", title: "Tugas DIT", isFolder: true },
+            { id: "enczip12345", title: "EncryptedPack.zip" },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (fid === "r10-req") {
+        return new Response(
+          htmlPage([
+            { id: "r10-s", title: "18. Suangi", isFolder: true },
+            { id: "r10-w1", title: "2. Wiwi Widiawati, S.K.M", isFolder: true },
+            { id: "r10-w2", title: "3. Wiwik Sriwahyuni Batubara", isFolder: true },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (fid === "r10-s") {
+        return new Response(htmlPage([{ id: "ktp-suangi", title: "KTP SUANGI.jpg" }]), { status: 200 });
+      }
+      if (fid === "r10-w1") {
+        return new Response(htmlPage([{ id: "ktp-wiwi", title: "KTP wiwi.pdf" }]), { status: 200 });
+      }
+      if (fid === "r10-w2") {
+        return new Response(htmlPage([{ id: "ktp-wiwik", title: "KTP.jpg" }]), { status: 200 });
+      }
+      if (fid === "r10-dit") {
+        return new Response(
+          htmlPage([
+            { id: "r10-dit-wiwi", title: "TUGAS DIT WIWI", isFolder: true },
+            { id: "r10-dit-unknown", title: "Orang Asing Tanpa Persyaratan", isFolder: true },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (fid === "r10-dit-wiwi") {
+        return new Response(htmlPage([{ id: "erp-wiwi", title: "2. Form ERP WIWI.docx" }]), {
+          status: 200,
+        });
+      }
+      if (fid === "r10-dit-unknown") {
+        return new Response(htmlPage([{ id: "ppt-unknown", title: "Paparan.pptx" }]), {
+          status: 200,
+        });
+      }
+      if (fid === "enczip12345") {
+        return new Response(encryptedZipHeader, {
+          status: 200,
+          headers: { "content-type": "application/zip" },
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const out = await runWorkerJob({
+      id: "job-r10-check",
+      type: "drive_scan",
+      userId: "user-1",
+      payload: { batchId },
+    });
+
+    expect(out.status).toBe("done");
+    // Only Pass 1 authoritative upsert ran; unmatched non-authoritative folder did NOT create a fake assessee
+    expect(mocks.upsertAssesseesForBatch).toHaveBeenCalledTimes(1);
+    expect(mocks.updateAssesseeDisplayName).toHaveBeenCalledWith({
+      userId: "user-1",
+      assesseeId: "as-suangi",
+      displayName: "Suangi",
+    });
+    expect(out.meta).toMatchObject({
+      renamedAssesseesCount: 1,
+      unextractableFiles: 1,
+    });
+    expect(String(out.meta?.rosterChangeSummary ?? "")).toContain("TUGAS SUANGI → Suangi");
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "batch.roster.reconciled",
+        resource: "batches",
+        resource_id: batchId,
+      }),
+      expect.anything(),
+    );
+
+    const savedPayload = mocks.upsertDriveFilesForBatch.mock.calls[0]?.[0] as {
+      files: Array<{
+        fileName: string;
+        assesseeId: string | null;
+        triageStatus?: string;
+        triageReason?: string | null;
+      }>;
+    };
+    const wiwiErp = savedPayload.files.find((f) => f.fileName === "2. Form ERP WIWI.docx");
+    const unknownPpt = savedPayload.files.find((f) => f.fileName === "Paparan.pptx");
+    const encZip = savedPayload.files.find((f) => f.fileName === "EncryptedPack.zip");
+
+    expect(wiwiErp?.assesseeId).toBe("as-wiwi");
+    expect(unknownPpt).toMatchObject({ assesseeId: null, triageStatus: "unmatched" });
+    expect(encZip).toMatchObject({ triageStatus: "unextractable" });
+    expect(encZip?.triageReason).toContain("terenkripsi");
   });
 });

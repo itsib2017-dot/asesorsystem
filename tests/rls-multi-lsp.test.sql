@@ -411,6 +411,19 @@ SELECT 'RLS-36', 'assessor', 'LSP-B', 'assessees (cross-delete)', '0', count(*):
        CASE WHEN count(*) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM deleted_cross;
 
+-- T5.5: Authorized LSP-A assessor can persist triage_status = 'unextractable' (R10 Cacat 4)
+DO $mut$
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"sub":"10000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+  BEGIN
+    INSERT INTO public.drive_files (lsp_id, batch_id, drive_file_id, file_name, mime_type, drive_path, doc_type, triage_status, triage_reason)
+    VALUES ('a0000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000001', 'rls-zip-enc-1', 'Locked.zip', 'application/zip', 'Locked.zip', 'unknown', 'unextractable', 'ZIP_ENCRYPTED');
+    INSERT INTO test_results VALUES ('RLS-37', 'assessor', 'LSP-A', 'drive_files (unextractable status)', 'ALLOW', 'ALLOWED', 'PASS');
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO test_results VALUES ('RLS-37', 'assessor', 'LSP-A', 'drive_files (unextractable status)', 'ALLOW', SQLERRM, 'FAIL');
+  END;
+END $mut$;
+
 -- Switch back to postgres session to query results
 RESET ROLE;
 

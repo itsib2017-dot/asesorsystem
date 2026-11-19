@@ -1,7 +1,9 @@
 import type { RuntimeLlmConfig } from "@/ai/llm";
+import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { decryptSecret } from "@/lib/crypto/encryption";
 import { getConfig } from "@/lib/config/get-config";
 import { logEvent } from "@/lib/logger";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { readStringField } from "@/lib/utils/record-fields";
 import { findBestMatchingCandidate } from "@/lib/names";
 import {
@@ -9,6 +11,7 @@ import {
   listAssesseesByBatch,
   pruneOrphanedDuplicateAssessees,
   saveNameJuryVerdictAndOcr,
+  updateAssesseeDisplayName,
   upsertAssesseesForBatch,
 } from "@/repositories/assessees.repository";
 import {
@@ -24,6 +27,7 @@ import {
   listDriveFilesForBatch,
   updateDriveFileExtraction,
   upsertDriveFilesForBatch,
+  type DriveTriageStatus,
 } from "@/repositories/batches.repository";
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
@@ -36,6 +40,7 @@ import {
   crawlPublicDriveFolder,
   extractCandidateNamesFromDocumentText,
   extractDriveFolderId,
+  hasTaskOrFolderPrefix,
   inferCandidateFromDrivePath,
   type ClassifiedDriveFile,
 } from "@/services/drive";
@@ -163,13 +168,27 @@ async function requireLlmConfig(userId: string): Promise<RuntimeLlmConfig> {
 
 const MAX_ZIP_ARCHIVES_PER_SCAN = 5;
 const MAX_CONTENT_INSPECT_PER_SCAN = 12;
+const BATCH_MASTER_INSTRUMENT_TYPES = new Set(["04a", "06a", "06b", "09"]);
 
 interface ScanCandidateFile extends ClassifiedDriveFile {
-  triageStatus?: "assigned" | "unmatched" | "not_needed";
+  triageStatus?: DriveTriageStatus;
   archiveEntryPath?: string | null;
   extractedText?: string | null;
   extractionMethod?: string | null;
   triageReason?: string | null;
+}
+
+function formatUnextractableZipReason(rawError: string): string {
+  if (rawError.includes("ZIP_ENCRYPTED")) {
+    return "Tidak dapat diproses (arsip ZIP terenkripsi / dilindungi kata sandi). Tindakan: unduh manual dari Drive, ekstrak dengan kata sandi, lalu unggah berkas isinya ke folder batch atau ubah status ke 'not_needed'.";
+  }
+  if (rawError.includes("DRIVE_ACCESS_DENIED")) {
+    return "Tidak dapat diproses (izin akses Drive terbatas). Tindakan: ubah izin berbagi arsip menjadi 'Anyone with the link' lalu pindai ulang, atau unduh & unggah isi berkas secara manual.";
+  }
+  if (rawError.includes("ZIP_TOO_LARGE") || rawError.includes("FILE_TOO_LARGE")) {
+    return "Tidak dapat diproses (ukuran arsip melebihi batas ekstraksi otomatis 15 MB). Tindakan: ekstrak manual di perangkat Anda lalu unggah berkas isinya ke folder Drive batch.";
+  }
+  return `Tidak dapat diproses (${rawError}). Tindakan: unduh manual dari Google Drive, ekstrak berkas di perangkat Anda, lalu unggah isi berkasnya ke folder Drive batch atau ubah status ke 'not_needed'.`;
 }
 
 async function expandZipArchivesForScan(
@@ -200,25 +219,54 @@ async function expandZipArchivesForScan(
       const lastSlash = file.drivePath.lastIndexOf("/");
       const zipFolder = lastSlash > 0 ? file.drivePath.slice(0, lastSlash) : "";
 
-      output.push({
-        ...file,
-        triageStatus: entries.length > 0 ? "not_needed" : undefined,
-        classificationReason:
-          entries.length > 0
-            ? `Arsip ZIP diekstrak menjadi ${entries.length} berkas`
-            : file.classificationReason,
-      });
+      if (entries.length === 0) {
+        output.push({
+          ...file,
+          triageStatus: "unextractable",
+          classificationReason:
+            "Tidak dapat diproses (arsip ZIP kosong atau tidak memuat format dokumen yang didukung). Tindakan: periksa isi arsip secara manual lalu unggah berkas dokumennya atau ubah status ke 'not_needed'.",
+        });
+        continue;
+      }
 
-      for (const entry of entries) {
+      const preclassified = entries.map((entry) => {
         const syntheticPath = zipFolder ? `${zipFolder}/${entry.entryPath}` : entry.entryPath;
         const parentPath = syntheticPath.includes("/")
           ? syntheticPath.slice(0, syntheticPath.lastIndexOf("/"))
           : "";
-        let cls = classifyDriveFileName(entry.fileName, parentPath);
+        return {
+          entry,
+          syntheticPath,
+          parentPath,
+          cls: classifyDriveFileName(entry.fileName, parentPath),
+        };
+      });
+
+      const mukTemplateCount = preclassified.filter(
+        (item) => item.cls.docType === "template_muk",
+      ).length;
+      const isMasterMukArchive = zipFolder === "" && mukTemplateCount >= 3;
+
+      output.push({
+        ...file,
+        triageStatus: "not_needed",
+        classificationReason: isMasterMukArchive
+          ? `Arsip MUK master diekstrak menjadi ${entries.length} berkas`
+          : `Arsip ZIP diekstrak menjadi ${entries.length} berkas`,
+      });
+
+      for (const item of preclassified) {
+        const { entry, syntheticPath, parentPath } = item;
+        let cls = item.cls;
         let extractedText: string | null = null;
         let extractionMethod: string | null = null;
 
-        if (EXTRACTABLE_TEXT_EXT_RE.test(entry.fileName)) {
+        const shouldExtractEntryText =
+          EXTRACTABLE_TEXT_EXT_RE.test(entry.fileName) &&
+          cls.docType !== "materi_pelatihan" &&
+          cls.docType !== "template_muk";
+
+        if (shouldExtractEntryText) {
           try {
             const parsed = await extractTextFromBuffer({
               buffer: entry.buffer,
@@ -233,12 +281,28 @@ async function expandZipArchivesForScan(
                 entry.fileName,
                 parentPath,
               );
-              if (byText) cls = byText;
+              if (byText && cls.docType === "unknown") {
+                cls = byText;
+              }
             }
           } catch {
             // Keep filename-based classification when ZIP member is encrypted/image PDF
           }
         }
+
+        const entryStatus: DriveTriageStatus | undefined =
+          cls.docType === "materi_pelatihan" || cls.docType === "template_muk"
+            ? "not_needed"
+            : isMasterMukArchive
+              ? "not_needed"
+              : undefined;
+
+        const entryReason =
+          isMasterMukArchive && cls.docType !== "template_muk"
+            ? BATCH_MASTER_INSTRUMENT_TYPES.has(cls.docType)
+              ? `Instrumen master batch (${cls.docType}) dari arsip MUK ${file.fileName}`
+              : `Blanko template (${cls.docType}) dari arsip MUK master ${file.fileName}`
+            : cls.reason;
 
         output.push({
           driveFileId: `${file.driveFileId}::${entry.entryPath}`,
@@ -247,7 +311,8 @@ async function expandZipArchivesForScan(
           drivePath: syntheticPath,
           docType: cls.docType,
           confidence: cls.confidence,
-          classificationReason: cls.reason,
+          classificationReason: entryReason,
+          triageStatus: entryStatus,
           modifiedTime: entry.modifiedTimeIso ?? file.modifiedTime ?? null,
           archiveEntryPath: entry.entryPath,
           extractedText,
@@ -258,7 +323,8 @@ async function expandZipArchivesForScan(
       const reason = err instanceof Error ? err.message : "ZIP tidak dapat dibuka";
       output.push({
         ...file,
-        classificationReason: `Arsip ZIP belum diekstrak otomatis: ${reason}`,
+        triageStatus: "unextractable",
+        classificationReason: formatUnextractableZipReason(reason),
       });
     }
   }
@@ -395,6 +461,16 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
   let upsertedRecords = existingAssesseesBefore;
   const canonicalIds = new Set<string>();
   const staleDuplicateIds = new Set<string>();
+  const staleDuplicateMerges = new Map<
+    string,
+    { fromId: string; fromName: string; toId: string; toName: string }
+  >();
+  const renamedAssessees: Array<{
+    assesseeId: string;
+    fromName: string;
+    toName: string;
+    reason: string;
+  }> = [];
 
   if (authoritativeNames.length > 0) {
     const authUpserted = await upsertAssesseesForBatch({
@@ -410,6 +486,26 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     for (const authName of authoritativeNames) {
       const m = findBestMatchingCandidate(authName, authUpserted);
       if (m) {
+        if (
+          !m.certificateNameConfirmed &&
+          hasTaskOrFolderPrefix(m.displayName) &&
+          !hasTaskOrFolderPrefix(authName) &&
+          m.displayName !== authName
+        ) {
+          const previousName = m.displayName;
+          await updateAssesseeDisplayName({
+            userId,
+            assesseeId: m.id,
+            displayName: authName,
+          });
+          m.displayName = authName;
+          renamedAssessees.push({
+            assesseeId: m.id,
+            fromName: previousName,
+            toName: authName,
+            reason: "prefix_folder_tugas_dibersihkan",
+          });
+        }
         canonicalIds.add(m.id);
         canonicalTargets.push(m);
       }
@@ -431,23 +527,24 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     for (const existing of existingAssesseesBefore) {
       if (canonicalIds.has(existing.id) || existing.certificateNameConfirmed) continue;
       const cleanedExisting = cleanCandidateLabel(existing.displayName);
-      if (matchCanonical(cleanedExisting || existing.displayName)) {
+      const canonicalTarget = matchCanonical(cleanedExisting || existing.displayName);
+      if (canonicalTarget) {
         staleDuplicateIds.add(existing.id);
+        staleDuplicateMerges.set(existing.id, {
+          fromId: existing.id,
+          fromName: existing.displayName,
+          toId: canonicalTarget.id,
+          toName: canonicalTarget.displayName,
+        });
       }
     }
-
-    const trulyNewNonAuth = nonAuthNames.filter((name) => !matchCanonical(name));
-    if (trulyNewNonAuth.length > 0) {
-      upsertedRecords = await upsertAssesseesForBatch({
-        userId,
-        lspId: batch.lspId,
-        batchId: batch.id,
-        names: trulyNewNonAuth,
-        existingPool: authUpserted,
-      });
-    }
+    // When an authoritative roster exists (Persyaratan / Surat Tugas / APL.01),
+    // never auto-create new assessee rows from non-authoritative task folders/filenames;
+    // unmatched files stay in Triage (`unmatched`) for assessor review.
   } else {
-    const fallbackNames = Array.from(new Set([...nonAuthNames]));
+    const fallbackNames = Array.from(
+      new Set(nonAuthNames.filter((name) => !hasTaskOrFolderPrefix(name))),
+    );
     if (fallbackNames.length > 0) {
       upsertedRecords = await upsertAssesseesForBatch({
         userId,
@@ -475,6 +572,29 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
       }
     }
 
+    if (file.triageStatus === "unextractable") {
+      return {
+        driveFileId: file.driveFileId,
+        fileName: file.fileName,
+        mimeType: file.mimeType,
+        drivePath: file.drivePath,
+        docType: file.docType,
+        confidence: file.confidence,
+        assesseeId: matched?.id ?? null,
+        triageStatus: "unextractable" as const,
+        triageReason:
+          file.classificationReason ??
+          "Tidak dapat diproses otomatis — unduh dan unggah berkas secara manual.",
+        driveModifiedTime: file.modifiedTime ?? null,
+        archiveEntryPath: file.archiveEntryPath ?? null,
+      };
+    }
+
+    const isNonAssesseeDoc =
+      file.docType === "materi_pelatihan" ||
+      file.docType === "template_muk" ||
+      file.triageStatus === "not_needed";
+
     if (matched) {
       return {
         driveFileId: file.driveFileId,
@@ -484,10 +604,7 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
         docType: file.docType,
         confidence: file.confidence,
         assesseeId: matched.id,
-        triageStatus:
-          file.docType === "materi_pelatihan" || file.triageStatus === "not_needed"
-            ? ("not_needed" as const)
-            : ("assigned" as const),
+        triageStatus: isNonAssesseeDoc ? ("not_needed" as const) : ("assigned" as const),
         triageReason:
           file.classificationReason ?? `Cocok ke ${matched.displayName}`,
         driveModifiedTime: file.modifiedTime ?? null,
@@ -504,12 +621,15 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
         ? existing.assesseeId
         : null;
 
-    const status =
-      file.docType === "materi_pelatihan" || file.triageStatus === "not_needed"
-        ? ("not_needed" as const)
+    const isBatchMasterInstrument =
+      !keepManualAssessee && BATCH_MASTER_INSTRUMENT_TYPES.has(file.docType);
+
+    const status: DriveTriageStatus =
+      isNonAssesseeDoc || isBatchMasterInstrument
+        ? "not_needed"
         : keepManualAssessee
-          ? ("assigned" as const)
-          : ("unmatched" as const);
+          ? "assigned"
+          : "unmatched";
 
     return {
       driveFileId: file.driveFileId,
@@ -520,9 +640,12 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
       confidence: file.confidence,
       assesseeId: keepManualAssessee,
       triageStatus: status,
-      triageReason: candidateName
-        ? `Kandidat "${candidateName}" belum cocok unik — perlu verifikasi di Triage (${file.classificationReason ?? file.docType})`
-        : (file.classificationReason ?? "Berkas belum dipetakan ke asesi"),
+      triageReason: isBatchMasterInstrument
+        ? (file.classificationReason ??
+            `Instrumen master tingkat batch (${file.docType}) — tidak perlu dipetakan ke asesi`)
+        : candidateName
+          ? `Kandidat "${candidateName}" belum cocok dengan peserta otoritatif — petakan manual di Triage (${file.classificationReason ?? file.docType})`
+          : (file.classificationReason ?? "Berkas belum dipetakan ke asesi"),
       driveModifiedTime: file.modifiedTime ?? null,
       archiveEntryPath: file.archiveEntryPath ?? null,
       ...(file.extractedText ? { extractedText: file.extractedText } : {}),
@@ -537,10 +660,71 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     files: enrichedFiles,
   });
 
-  const prunedIds = await pruneOrphanedDuplicateAssessees({
+  const prunedRows = await pruneOrphanedDuplicateAssessees({
     userId,
     batchId: batch.id,
   });
+
+  const mergedAssessees = prunedRows.map((row) => {
+    const entry = typeof row === "string" ? { id: row, displayName: row } : row;
+    const mergeInfo = staleDuplicateMerges.get(entry.id);
+    return {
+      fromId: entry.id,
+      fromName: mergeInfo?.fromName ?? entry.displayName,
+      toId: mergeInfo?.toId ?? null,
+      toName: mergeInfo?.toName ?? null,
+      reason: mergeInfo
+        ? "duplikat_digabung_ke_kanonikal"
+        : "entri_kosong_dibersihkan",
+    };
+  });
+
+  const summaryParts: string[] = [];
+  if (mergedAssessees.length > 0) {
+    const mergeLabel = mergedAssessees
+      .map((m) => (m.toName ? `${m.fromName} → ${m.toName}` : m.fromName))
+      .join(", ");
+    summaryParts.push(`Digabung (${mergedAssessees.length}): ${mergeLabel}`);
+  }
+  if (renamedAssessees.length > 0) {
+    const renameLabel = renamedAssessees
+      .map((r) => `${r.fromName} → ${r.toName}`)
+      .join(", ");
+    summaryParts.push(`Dibersihkan (${renamedAssessees.length}): ${renameLabel}`);
+  }
+  const rosterChangeSummary = summaryParts.join(" · ");
+
+  if (mergedAssessees.length > 0 || renamedAssessees.length > 0) {
+    try {
+      const supabase = await getSupabaseServerClient();
+      await writeAuditLog(
+        {
+          lsp_id: batch.lspId,
+          actor_id: userId,
+          action: "batch.roster.reconciled",
+          resource: "batches",
+          resource_id: batch.id,
+          correlation_id: job.id,
+          after_summary: {
+            batchId: batch.id,
+            jobId: job.id,
+            beforeCount: existingAssesseesBefore.length,
+            afterCount: Math.max(0, matchTargets.length),
+            mergedAssessees,
+            renamedAssessees,
+            rosterChangeSummary,
+          },
+        },
+        supabase,
+      );
+    } catch {
+      // Non-fatal outside Next.js request scope (e.g. unit tests)
+    }
+  }
+
+  const unextractableFiles = enrichedFiles.filter(
+    (f) => f.triageStatus === "unextractable",
+  ).length;
 
   return {
     status: "done",
@@ -548,7 +732,12 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     meta: {
       scannedFiles: savedCount,
       discoveredAssessees: Math.max(0, matchTargets.length),
-      prunedDuplicateAssessees: prunedIds.length,
+      prunedDuplicateAssessees: mergedAssessees.length,
+      ...(renamedAssessees.length > 0 ? { renamedAssesseesCount: renamedAssessees.length } : {}),
+      ...(unextractableFiles > 0 ? { unextractableFiles } : {}),
+      ...(mergedAssessees.length > 0 ? { mergedAssessees } : {}),
+      ...(renamedAssessees.length > 0 ? { renamedAssessees } : {}),
+      ...(rosterChangeSummary ? { rosterChangeSummary } : {}),
       folderId,
     },
   };

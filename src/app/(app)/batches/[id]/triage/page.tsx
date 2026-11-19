@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getUser } from "@/lib/auth/get-session";
+import { listAuditLogsForResource } from "@/repositories/audit.repository";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { assignDriveFileAction, reclassifyBatchContentAction } from "./actions";
@@ -27,6 +28,7 @@ const DOC_TYPE_OPTIONS = [
   { value: "pas_foto", label: "Pas Foto" },
   { value: "sertifikat_pelatihan", label: "Sertifikat Pelatihan" },
   { value: "materi_pelatihan", label: "Materi Pelatihan (Tidak Dipakai)" },
+  { value: "template_muk", label: "Template / Administrasi MUK (Tidak Dipakai)" },
   { value: "unknown", label: "unknown" },
 ] as const;
 
@@ -60,10 +62,17 @@ export default async function TriagePage({
   const batch = await getBatchById(user.id, id);
   if (!batch) return notFound();
 
-  const [files, assessees] = await Promise.all([
+  const [files, assessees, batchAuditLogs] = await Promise.all([
     listDriveFilesForBatch(user.id, id),
     listAssesseesByBatch(user.id, id),
+    listAuditLogsForResource(user.id, batch.lspId, "batches", id, 10),
   ]);
+
+  const rosterAuditEntries = batchAuditLogs.filter(
+    (entry) => entry.action === "batch.roster.reconciled",
+  );
+  const unmatchedCount = files.filter((f) => f.triageStatus === "unmatched").length;
+  const unextractableCount = files.filter((f) => f.triageStatus === "unextractable").length;
 
   const q = (sp.q ?? "").trim();
   const statusFilter = (sp.status ?? "").trim();
@@ -108,7 +117,8 @@ export default async function TriagePage({
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-slate-600 font-mono">
-            Total: {files.length} berkas · Terfilter: {filtered.length}
+            Total: {files.length} · Belum terpetakan: {unmatchedCount}
+            {unextractableCount > 0 ? ` · Tidak bisa diproses: ${unextractableCount}` : ""} · Terfilter: {filtered.length}
           </span>
           <form action={reclassifyBatchContentAction}>
             <input type="hidden" name="batchId" value={id} />
@@ -121,6 +131,53 @@ export default async function TriagePage({
           </form>
         </div>
       </div>
+
+      {rosterAuditEntries.length > 0 && (
+        <div className="glass-card rounded-2xl p-4 border border-teal-200 bg-teal-50/50 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-teal-900">
+              Jejak Penyelarasan Daftar Asesi (Rescan Terakhir)
+            </h2>
+            <Link
+              href="/settings/audit"
+              className="text-xs text-teal-700 hover:underline font-medium"
+            >
+              Lihat Log Audit Lengkap &rarr;
+            </Link>
+          </div>
+          <ul className="space-y-1.5 text-xs text-slate-800">
+            {rosterAuditEntries.slice(0, 3).map((entry) => {
+              const summary = entry.afterSummary ?? {};
+              const changeText =
+                typeof summary.rosterChangeSummary === "string"
+                  ? summary.rosterChangeSummary
+                  : "Daftar asesi diselaraskan terhadap folder otoritatif.";
+              const beforeCount =
+                typeof summary.beforeCount === "number" ? summary.beforeCount : null;
+              const afterCount =
+                typeof summary.afterCount === "number" ? summary.afterCount : null;
+              return (
+                <li
+                  key={entry.id}
+                  className="flex flex-wrap items-baseline justify-between gap-2 bg-white/80 border border-teal-100 rounded-xl px-3 py-2"
+                >
+                  <div>
+                    {beforeCount !== null && afterCount !== null && (
+                      <span className="font-mono font-semibold text-teal-800 mr-2">
+                        [{beforeCount} &rarr; {afterCount} asesi]
+                      </span>
+                    )}
+                    <span>{changeText}</span>
+                  </div>
+                  <span className="font-mono text-[11px] text-slate-500">
+                    {entry.createdAt}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* Filter & Search Bar */}
       <form
@@ -152,9 +209,10 @@ export default async function TriagePage({
             className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs"
           >
             <option value="">Semua Status</option>
-            <option value="unmatched">unmatched</option>
-            <option value="assigned">assigned</option>
-            <option value="not_needed">not_needed</option>
+            <option value="unmatched">unmatched (Belum Terpetakan)</option>
+            <option value="unextractable">unextractable (Tidak Bisa Diproses)</option>
+            <option value="assigned">assigned (Terpetakan)</option>
+            <option value="not_needed">not_needed (Tidak Dipakai)</option>
           </select>
         </div>
 
@@ -216,14 +274,27 @@ export default async function TriagePage({
                 return (
                   <tr key={f.id} className="align-top">
                     <td className="py-3 px-4 max-w-md">
-                      <div className="font-medium text-slate-900 break-words">{f.fileName}</div>
+                      <div className="font-medium text-slate-900 break-words flex flex-wrap items-center gap-1.5">
+                        <span>{f.fileName}</span>
+                        {f.triageStatus === "unextractable" && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-100 text-rose-800 border border-rose-200">
+                            Tidak Bisa Diproses
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-slate-400 font-mono break-all">
                         {f.drivePath}
                       </div>
                       {(f.triageReason || f.driveModifiedTime) && (
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
                           {f.triageReason && (
-                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                            <span
+                              className={`px-2 py-0.5 rounded ${
+                                f.triageStatus === "unextractable"
+                                  ? "bg-rose-50 text-rose-900 border border-rose-200"
+                                  : "bg-slate-100 text-slate-700"
+                              }`}
+                            >
                               {f.triageReason}
                             </span>
                           )}
@@ -260,7 +331,9 @@ export default async function TriagePage({
                           aria-label={`Status triase ${f.fileName}`}
                           name="triageStatus"
                           defaultValue={
-                            f.triageStatus === "not_needed" || f.triageStatus === "unmatched"
+                            f.triageStatus === "not_needed" ||
+                            f.triageStatus === "unmatched" ||
+                            f.triageStatus === "unextractable"
                               ? f.triageStatus
                               : "assigned"
                           }
@@ -268,6 +341,7 @@ export default async function TriagePage({
                         >
                           <option value="assigned">assigned</option>
                           <option value="unmatched">unmatched</option>
+                          <option value="unextractable">unextractable</option>
                           <option value="not_needed">not_needed</option>
                         </select>
 

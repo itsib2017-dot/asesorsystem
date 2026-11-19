@@ -15,6 +15,7 @@ vi.mock("@/repositories/batches.repository", () => ({
 import {
   extractTextFromBuffer,
   extractTextFromPdfBasic,
+  isEncryptedZipBuffer,
   isOleEncryptedBuffer,
   repairBrokenZipCrcBuffer,
   unpackSafeZipEntries,
@@ -22,6 +23,7 @@ import {
 import {
   downloadPublicDriveFileBuffer,
   ensureDriveFileExtracted,
+  extractDriveVirusScanConfirmUrl,
   reclassifyBatchFilesByContent,
   resolveAssesseeDitInputs,
 } from "../drive-extract";
@@ -321,5 +323,50 @@ describe("File text extraction & SSRF-guarded Drive download (T2)", () => {
         triageStatus: "assigned",
       }),
     );
+  });
+
+  it("follows Google Drive public virus-scan confirmation form and rejects encrypted ZIPs cleanly (R10 Cacat 4)", async () => {
+    const confirmHtml = `<!DOCTYPE html><html><head><title>Google Drive - Virus scan warning</title></head><body><form id="download-form" action="https://drive.usercontent.google.com/download" method="get"><input type="hidden" name="id" value="1Jl1TfI9IC_FPA5wbl2aGVPjzR1brKg8p"><input type="hidden" name="export" value="download"><input type="hidden" name="confirm" value="t"><input type="hidden" name="uuid" value="test-uuid-123"></form></body></html>`;
+
+    expect(
+      extractDriveVirusScanConfirmUrl(
+        confirmHtml,
+        "https://drive.usercontent.google.com/download?id=1Jl1TfI9IC_FPA5wbl2aGVPjzR1brKg8p",
+      ),
+    ).toBe(
+      "https://drive.usercontent.google.com/download?id=1Jl1TfI9IC_FPA5wbl2aGVPjzR1brKg8p&export=download&confirm=t&uuid=test-uuid-123",
+    );
+
+    const zip = new JSZip();
+    zip.file("FR.IA.06B.txt", "Kunci jawaban tertulis");
+    const zipBuf = await zip.generateAsync({ type: "nodebuffer" });
+
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(confirmHtml, {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(new Uint8Array(zipBuf), {
+          status: 200,
+          headers: { "content-type": "application/octet-stream" },
+        }),
+      );
+
+    const downloaded = await downloadPublicDriveFileBuffer({
+      driveFileId: "1Jl1TfI9IC_FPA5wbl2aGVPjzR1brKg8p",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(downloaded.length).toBe(zipBuf.length);
+
+    // Encrypted PKZIP header (PK\x03\x04 with general-purpose bit 0 set)
+    const encryptedZipHeader = Buffer.from([
+      0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x01, 0x00, 0x08, 0x00, 0x00, 0x00,
+    ]);
+    expect(isEncryptedZipBuffer(encryptedZipHeader)).toBe(true);
+    await expect(unpackSafeZipEntries(encryptedZipHeader)).rejects.toThrow("ZIP_ENCRYPTED");
   });
 });

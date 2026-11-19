@@ -11,6 +11,7 @@ export interface DriveDocTypeSpec {
 
 export const DRIVE_DOC_TYPES = {
   materi_pelatihan: { singleton: false, defaultConfidence: 0.92 },
+  template_muk: { singleton: false, defaultConfidence: 0.9 },
   ktp: { singleton: true, defaultConfidence: 0.95 },
   apl01: { singleton: true, defaultConfidence: 0.95 },
   apl02: { singleton: true, defaultConfidence: 0.95 },
@@ -110,7 +111,7 @@ export function detectDitFormKind(
   if (/identifikasi\s*bahaya|penilaian\s*risiko|\bibpr\b|\bhiradc\b/.test(norm)) {
     return "ibpr";
   }
-  if (/emergency\s*response|tanggap\s*darurat|(?:^|\s)erp(?:$|\s)/.test(norm)) {
+  if (/emergency\s*response|tanggap\s*darurat|\berp\b/.test(norm)) {
     return "erp";
   }
   if (/work\s*permit|permit\s*kerja|izin\s*kerja/.test(norm)) {
@@ -122,7 +123,7 @@ export function detectDitFormKind(
   if (/inspeksi.*\bapd\b|\bapd\b/.test(norm)) {
     return "inspeksi_apd";
   }
-  if (/in[ve]*stigasi\s*kecelakaan|(?<!\S)in[ve]*stigasi(?!\S)/.test(norm)) {
+  if (/in[ve]*stigasi\s*kecelakaan|\bin[ve]*stigasi\b/.test(norm)) {
     return "investigasi";
   }
 

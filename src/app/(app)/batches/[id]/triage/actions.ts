@@ -24,7 +24,7 @@ const triageSchema = z.object({
   fileId: z.string().uuid(),
   assesseeId: z.string().uuid().nullable(),
   docType: z.string().trim().min(1).max(64).optional(),
-  triageStatus: z.enum(["assigned", "not_needed", "unmatched"]),
+  triageStatus: z.enum(["assigned", "not_needed", "unmatched", "unextractable"]),
 });
 
 export async function assignDriveFileAction(formData: FormData) {

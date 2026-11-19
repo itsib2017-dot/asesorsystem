@@ -18,6 +18,13 @@ export interface BatchSummary {
   createdAt: string;
 }
 
+export type DriveTriageStatus =
+  | "unmatched"
+  | "suggested"
+  | "assigned"
+  | "not_needed"
+  | "unextractable";
+
 export interface DriveFileRecord {
   id: string;
   lspId: string;
@@ -29,7 +36,7 @@ export interface DriveFileRecord {
   drivePath: string;
   docType: string;
   classificationConfidence: number;
-  triageStatus: "unmatched" | "suggested" | "assigned" | "not_needed";
+  triageStatus: DriveTriageStatus;
   triageReason: string | null;
   extractedText: string | null;
   extractionMethod: string | null;
@@ -282,7 +289,7 @@ export async function updateDriveFileTriage(params: {
   fileId: string;
   assesseeId: string | null;
   docType?: string;
-  triageStatus: "assigned" | "not_needed" | "unmatched";
+  triageStatus: "assigned" | "not_needed" | "unmatched" | "unextractable";
   triageReason?: string;
 }): Promise<void> {
   return runRepositoryDualPath({
@@ -329,7 +336,7 @@ export async function upsertDriveFilesForBatch(params: {
     docType: string;
     confidence: number;
     assesseeId?: string | null;
-    triageStatus?: "unmatched" | "suggested" | "assigned" | "not_needed";
+    triageStatus?: DriveTriageStatus;
     triageReason?: string | null;
     extractedText?: string | null;
     extractionMethod?: string | null;

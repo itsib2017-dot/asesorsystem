@@ -22,6 +22,7 @@ import { pickLatestDriveFile } from "@/services/drive-revisions";
 import { enqueueJob } from "@/worker/queue";
 import { CompletenessMatrix, type CompletenessRow } from "@/components/batch/completeness-matrix";
 import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
+import { JobStatusPoller } from "@/components/batch/job-status-poller";
 import { RescanDriveButton } from "./_components/rescan-drive-button";
 
 export const metadata = {
@@ -105,6 +106,7 @@ export default async function BatchDetailPage({
   });
 
   const unmatchedCount = files.filter((f) => f.triageStatus === "unmatched").length;
+  const unextractableCount = files.filter((f) => f.triageStatus === "unextractable").length;
   const active06bFile = files.find((f) => f.docType.toLowerCase() === "06b") ?? null;
 
   return (
@@ -123,7 +125,7 @@ export default async function BatchDetailPage({
         <div className="flex flex-wrap items-center gap-2">
           {batch.driveFolderUrl && (
             <form action={rescanBatchDriveAction}>
-              <RescanDriveButton />
+              <RescanDriveButton batchId={batch.id} />
             </form>
           )}
           {latestJob && (
@@ -181,17 +183,13 @@ export default async function BatchDetailPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span
-              className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${
-                latestJob?.status === "done"
-                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                  : latestJob?.status === "failed"
-                    ? "bg-rose-50 text-rose-700 border-rose-200"
-                    : "bg-amber-50 text-amber-800 border-amber-200"
-              }`}
-            >
-              {latestJob ? `${latestJob.status} (${latestJob.progress}%)` : "belum berjalan"}
-            </span>
+            <JobStatusPoller
+              batchId={batch.id}
+              jobId={latestJob?.id ?? null}
+              initialStatus={latestJob?.status ?? null}
+              initialProgress={latestJob?.progress ?? 0}
+              mode="batch"
+            />
             {latestJob && (
               <Link
                 href={`/batches/${batch.id}/ingest/${latestJob.id}`}
@@ -211,6 +209,17 @@ export default async function BatchDetailPage({
               {assessees.length} asesi terdeteksi · {files.length} berkas terpindai ·{" "}
               {unmatchedCount} perlu triase
             </strong>
+            {unextractableCount > 0 && (
+              <>
+                {" · "}
+                <Link
+                  href={`/batches/${batch.id}/triage?status=unextractable`}
+                  className="text-rose-700 font-semibold hover:underline"
+                >
+                  {unextractableCount} tidak bisa diproses
+                </Link>
+              </>
+            )}
           </span>
           {latestJob && (
             <span className="text-slate-500 font-mono">
