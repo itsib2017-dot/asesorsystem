@@ -622,7 +622,14 @@ export default async function TriagePage({
                     </td>
                     <td className="py-3 px-4 max-w-xs">
                       {(() => {
-                        const reason = explainNameInference(f.drivePath);
+                        let reason: string | null = null;
+                        try {
+                          reason = explainNameInference(f.drivePath);
+                        } catch {
+                          // A single bad drivePath must never break the whole
+                          // triage page render; render a neutral placeholder.
+                          reason = null;
+                        }
                         if (!reason) return <span className="text-[10px] text-slate-400">—</span>;
                         return (
                           <span

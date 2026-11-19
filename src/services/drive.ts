@@ -781,6 +781,12 @@ function cleanStatusSuffixes(raw: string): string {
  * so triage can show a transparent reason per file instead of a blank roster.
  */
 export function explainNameInference(drivePath: string): string | null {
+  // Defensive: drive_path is NOT NULL DEFAULT "" in the DB and coerced to "" in
+  // both repository mappers, but guard against any non-string value so a single
+  // bad row can never throw and kill the whole triage page render.
+  if (typeof drivePath !== "string") {
+    return "Jalur Drive tidak valid — tidak dapat menampilkan alasan tanpa kandidat nama.";
+  }
   const segments = drivePath.split("/").map((s) => s.trim()).filter(Boolean);
   if (segments.length <= 1) {
     return "Jalur Drive tidak memuat folder induk — tidak ada konteks nama yang dapat diinferensi.";
