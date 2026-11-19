@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
     // script and WASM core are loaded dynamically, so the default Next.js
     // file trace omits them on Vercel (MODULE_NOT_FOUND at runtime).
     "/batches/*/assessees/*": [
-      "./node_modules/tesseract.js/src/worker-script/node/**/*",
+      "./node_modules/tesseract.js/**/*",
       "./node_modules/tesseract.js-core/**/*",
     ],
   },
