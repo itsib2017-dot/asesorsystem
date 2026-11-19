@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, KeyRound, Lock, ShieldOff, Upload } from "lucide-react";
 import {
@@ -52,6 +53,7 @@ export function BatchKeyUploadPanel({
   const [status, setStatus] = useState<{
     type: "success" | "error";
     text: string;
+    auditLink?: boolean;
   } | null>(null);
 
   const handleUpload = async (e: React.FormEvent) => {
@@ -110,6 +112,7 @@ export function BatchKeyUploadPanel({
         setStatus({
           type: "error",
           text: res.error || "Gagal mengaktifkan kandidat kunci 06B.",
+          auditLink: true,
         });
       } else {
         setStatus({
@@ -333,9 +336,22 @@ export function BatchKeyUploadPanel({
                       {pendingActionId === c.id ? "Mengaktifkan..." : "Tandai Sebagai Kunci Aktif"}
                     </button>
                   ) : (
-                    <span className="inline-block px-2.5 py-1 rounded-lg bg-slate-100 text-slate-500 text-[11px]">
-                      Tidak dapat diaktifkan (blanko / tidak terbaca)
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-block px-2.5 py-1 rounded-lg bg-slate-100 text-slate-500 text-[11px]">
+                        Tidak dapat diaktifkan (blanko / tidak terbaca)
+                      </span>
+                      <button
+                        type="button"
+                        data-testid={`try-activate-06b-${c.id}`}
+                        onClick={() => handleActivateCandidate(c.id)}
+                        disabled={pendingActionId !== null}
+                        className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 hover:bg-amber-50 text-amber-900 text-xs font-medium cursor-pointer disabled:opacity-50"
+                      >
+                        {pendingActionId === c.id
+                          ? "Menguji Validasi..."
+                          : "Coba Aktifkan / Uji Validasi"}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -347,13 +363,23 @@ export function BatchKeyUploadPanel({
       {status && (
         <div
           role="status"
-          className={`p-3 rounded-xl text-xs border ${
+          className={`p-3 rounded-xl text-xs border space-y-1.5 ${
             status.type === "success"
               ? "bg-emerald-50 border-emerald-200 text-emerald-800"
               : "bg-rose-50 border-rose-200 text-rose-800"
           }`}
         >
-          {status.text}
+          <div>{status.text}</div>
+          {status.auditLink && (
+            <div>
+              <Link
+                href="/settings/audit"
+                className="font-semibold underline hover:text-rose-950"
+              >
+                Lihat entri penolakan di Log Audit &rarr;
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </div>

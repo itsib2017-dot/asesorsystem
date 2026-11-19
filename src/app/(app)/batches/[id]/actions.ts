@@ -5,6 +5,7 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { requireLspRole } from "@/lib/auth/get-role";
 import { getUser } from "@/lib/auth/get-session";
+import { checkRateLimit } from "@/lib/security/rate-limit";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { decryptAgileOoxmlBuffer } from "@/lib/written/ooxml-decrypt";
 import {
@@ -178,6 +179,7 @@ export async function uploadBatchMasterKey06bAction(formData: FormData): Promise
 
   revalidatePath(`/batches/${batchId}`);
   revalidatePath(`/batches/${batchId}/triage`);
+  revalidatePath("/settings/audit");
   return {
     ok: true,
     fileName: parsed.fileName,
@@ -205,6 +207,14 @@ export async function activateBatchMasterKey06bAction(formData: FormData): Promi
   }
   const { batchId, fileId } = parsedInput.data;
 
+  const rate = checkRateLimit(`key06b:activate:${user.id}:${batchId}`, 20, 60_000);
+  if (!rate.allowed) {
+    return {
+      ok: false,
+      error: `Terlalu banyak percobaan aktivasi kunci 06B. Coba lagi dalam ${rate.retryAfterSeconds} detik.`,
+    };
+  }
+
   const rawPassword = formData.get("masterKeyPassword");
   const runtimePassword =
     typeof rawPassword === "string" && rawPassword.length > 0 ? rawPassword : undefined;
@@ -227,14 +237,22 @@ export async function activateBatchMasterKey06bAction(formData: FormData): Promi
     return { ok: false, error: "Berkas kandidat kunci 06B tidak ditemukan pada batch ini." };
   }
 
+  const source = classifyMasterKeyOrigin(file);
   const textRes = await tryResolveCandidate06bText(user.id, file, runtimePassword);
-  if (!textRes.ok) {
-    return { ok: false, error: textRes.error };
-  }
 
-  const validation = validateMasterKey06bContent(textRes.text);
+  const validation = textRes.ok
+    ? validateMasterKey06bContent(textRes.text)
+    : {
+        valid: false as const,
+        status: (source === "archive_extract"
+          ? "encrypted_unreadable"
+          : "empty_or_blanko") as "encrypted_unreadable" | "empty_or_blanko",
+        summary: textRes.error,
+        substantiveChars: 0,
+        substantiveWords: 0,
+      };
+
   if (!validation.valid) {
-    const source = classifyMasterKeyOrigin(file);
     try {
       const supabase = await getSupabaseServerClient();
       await writeAuditLog(
@@ -258,13 +276,17 @@ export async function activateBatchMasterKey06bAction(formData: FormData): Promi
     } catch (err) {
       console.warn("[MasterKey06bActivateRejected] audit log failed:", err instanceof Error ? err.message : String(err));
     }
+
+    revalidatePath(`/batches/${batchId}`);
+    revalidatePath("/settings/audit");
     return {
       ok: false,
-      error: `Aktivasi kunci "${file.fileName}" ditolak: ${validation.summary}`,
+      fileName: file.fileName,
+      validationSummary: `${validation.status} (${validation.substantiveWords} kata substantif): ${validation.summary}`,
+      error: `Aktivasi kunci "${file.fileName}" ditolak [${validation.status} · ${validation.substantiveWords} kata]: ${validation.summary}`,
     };
   }
 
-  const source = classifyMasterKeyOrigin(file);
   const activated = await setBatchActiveMasterKey({
     userId: user.id,
     batchId: batch.id,
@@ -312,6 +334,7 @@ export async function activateBatchMasterKey06bAction(formData: FormData): Promi
 
   revalidatePath(`/batches/${batchId}`);
   revalidatePath(`/batches/${batchId}/triage`);
+  revalidatePath("/settings/audit");
   return {
     ok: true,
     fileName: file.fileName,
@@ -387,5 +410,6 @@ export async function deactivateBatchMasterKey06bAction(formData: FormData): Pro
 
   revalidatePath(`/batches/${batchId}`);
   revalidatePath(`/batches/${batchId}/triage`);
+  revalidatePath("/settings/audit");
   return { ok: true };
 }

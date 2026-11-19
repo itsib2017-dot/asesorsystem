@@ -28,3 +28,47 @@ export function resolveAuditResourceHref(row: AuditLinkableRow): string | null {
 
   return null;
 }
+
+const PREFERRED_AUDIT_SUMMARY_KEYS = [
+  "name",
+  "code",
+  "type",
+  "status",
+  "scannedFiles",
+  "discoveredAssessees",
+  "prunedDuplicateAssessees",
+  "renamedAssesseesCount",
+  "unextractableFiles",
+  "rosterChangeSummary",
+  "fileName",
+  "source",
+  "validationStatus",
+  "substantiveWords",
+  "rejectionReason",
+  "deactivatedFileId",
+  "attempts",
+  "batchId",
+  "provider",
+  "model",
+  "mimeType",
+  "error",
+] as const;
+
+/**
+ * Formats structured audit summary metadata into a deterministic single-line overview,
+ * surfacing 06B key validation metrics and rejection reasons alongside job metadata.
+ */
+export function formatAuditSummary(summary: Record<string, unknown> | null): string {
+  if (!summary) return "-";
+  const parts: string[] = [];
+  for (const key of PREFERRED_AUDIT_SUMMARY_KEYS) {
+    if (summary[key] !== undefined && summary[key] !== null && summary[key] !== "") {
+      parts.push(`${key}: ${String(summary[key])}`);
+    }
+  }
+  if (parts.length > 0) return parts.join(" · ");
+  const entries = Object.entries(summary).slice(0, 3);
+  return entries.length > 0
+    ? entries.map(([k, v]) => `${k}: ${String(v)}`).join(" · ")
+    : "-";
+}

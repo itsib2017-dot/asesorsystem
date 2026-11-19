@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { resolveAuditResourceHref } from "../job-audit";
+import { formatAuditSummary, resolveAuditResourceHref } from "../job-audit";
 import { writeAuditLog } from "../write-audit-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -116,5 +116,24 @@ describe("resolveAuditResourceHref", () => {
         afterSummary: { batchId: "f98e5671-fbcb-42cb-a724-9f69d24f780b" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("formatAuditSummary", () => {
+  it("surfaces 06B key validation metrics and rejectionReason cleanly", () => {
+    const formatted = formatAuditSummary({
+      fileId: "2179b19b-1c9e-4ad6-a2f6-d7816ec9f7ab",
+      fileName: "FR.IA.06B. LEMBAR KUNCI JAWABAN PERTANYAAN TERTULIS ESAI.docx",
+      source: "archive_extract",
+      validationStatus: "encrypted_unreadable",
+      substantiveWords: 0,
+      rejectionReason: "Berkas 06B tidak terbaca (blanko kosong atau terenkripsi).",
+    });
+
+    expect(formatted).toContain("fileName: FR.IA.06B.");
+    expect(formatted).toContain("source: archive_extract");
+    expect(formatted).toContain("validationStatus: encrypted_unreadable");
+    expect(formatted).toContain("substantiveWords: 0");
+    expect(formatted).toContain("rejectionReason: Berkas 06B tidak terbaca");
   });
 });

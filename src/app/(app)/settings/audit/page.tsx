@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { RefreshCw, ShieldCheck } from "lucide-react";
-import { resolveAuditResourceHref } from "@/lib/audit/job-audit";
+import { formatAuditSummary, resolveAuditResourceHref } from "@/lib/audit/job-audit";
 import { getUser } from "@/lib/auth/get-session";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { listAuditLogsForUser } from "@/repositories/audit.repository";
@@ -11,55 +11,35 @@ export const metadata = {
   title: "Log Audit Aktivitas — AsesorKompetensi",
 };
 
-function formatAuditSummary(summary: Record<string, unknown> | null): string {
-  if (!summary) return "-";
-  const preferredKeys = [
-    "name",
-    "code",
-    "type",
-    "status",
-    "scannedFiles",
-    "discoveredAssessees",
-    "prunedDuplicateAssessees",
-    "renamedAssesseesCount",
-    "unextractableFiles",
-    "rosterChangeSummary",
-    "fileName",
-    "source",
-    "validationStatus",
-    "deactivatedFileId",
-    "attempts",
-    "batchId",
-    "provider",
-    "model",
-    "mimeType",
-    "error",
-  ];
-  const parts: string[] = [];
-  for (const key of preferredKeys) {
-    if (summary[key] !== undefined && summary[key] !== null && summary[key] !== "") {
-      parts.push(`${key}: ${String(summary[key])}`);
-    }
-  }
-  if (parts.length > 0) return parts.join(" · ");
-  const entries = Object.entries(summary).slice(0, 3);
-  return entries.length > 0
-    ? entries.map(([k, v]) => `${k}: ${String(v)}`).join(" · ")
-    : "-";
+function parsePositiveInt(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-export default async function AuditLogPage() {
+export default async function AuditLogPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ beforeId?: string; limit?: string }>;
+}) {
   const user = await getUser();
   if (!user) {
     return null;
   }
 
+  const params = searchParams ? await searchParams : {};
+  const beforeId = parsePositiveInt(params.beforeId);
+  const parsedLimit = parsePositiveInt(params.limit);
+  const pageLimit = Math.min(200, Math.max(10, parsedLimit ?? 100));
+
   const roleCheck = await resolveAuthorizedLsp(user.id, ["lsp_admin"]);
 
   const logs =
     roleCheck.allowed && roleCheck.lspId
-      ? await listAuditLogsForUser(user.id, roleCheck.lspId, 50)
+      ? await listAuditLogsForUser(user.id, roleCheck.lspId, pageLimit, beforeId)
       : [];
+  const lastLogId = logs.length > 0 ? logs[logs.length - 1]?.id : undefined;
+  const hasMoreLogs = logs.length === pageLimit && typeof lastLogId === "number";
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -73,6 +53,11 @@ export default async function AuditLogPage() {
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
               Log Audit Aktivitas (Append-Only)
             </h1>
+            {roleCheck.allowed && (
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                Menampilkan {logs.length} entri
+              </span>
+            )}
           </div>
           <p className="text-sm text-slate-500 mt-1">
             Rekaman jejak audit keamanan dan perubahan data penting pada LSP Anda (khusus Admin LSP).
@@ -92,11 +77,24 @@ export default async function AuditLogPage() {
           Hanya pengguna dengan peran <strong>Admin LSP</strong> yang berwenang melihat riwayat log audit.
         </div>
       ) : logs.length === 0 ? (
-        <div className="glass-card rounded-2xl p-8 text-center text-sm text-slate-500">
-          Belum ada catatan log audit yang terekam untuk LSP ini.
+        <div className="glass-card rounded-2xl p-8 text-center text-sm text-slate-500 space-y-3">
+          <p>
+            {beforeId
+              ? "Tidak ada entri log audit yang lebih lama pada halaman ini."
+              : "Belum ada catatan log audit yang terekam untuk LSP ini."}
+          </p>
+          {beforeId && (
+            <Link
+              href="/settings/audit"
+              className="inline-flex items-center px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-700"
+            >
+              &larr; Kembali ke Entri Terbaru
+            </Link>
+          )}
         </div>
       ) : (
-        <div className="glass-card rounded-2xl overflow-x-auto">
+        <div className="space-y-4">
+          <div className="glass-card rounded-2xl overflow-x-auto">
           <table className="w-full text-xs text-left table-fixed">
             <thead className="bg-slate-50 border-b border-slate-200 uppercase text-slate-600">
               <tr>
@@ -153,6 +151,31 @@ export default async function AuditLogPage() {
               })}
             </tbody>
           </table>
+          </div>
+          {(beforeId || hasMoreLogs) && (
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <div>
+                {beforeId && (
+                  <Link
+                    href={`/settings/audit?limit=${pageLimit}`}
+                    className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5"
+                  >
+                    &larr; Kembali ke Entri Terbaru
+                  </Link>
+                )}
+              </div>
+              <div>
+                {hasMoreLogs && lastLogId && (
+                  <Link
+                    href={`/settings/audit?beforeId=${lastLogId}&limit=${pageLimit}`}
+                    className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5"
+                  >
+                    Muat Entri Lebih Lama &rarr;
+                  </Link>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,9 +1,9 @@
 # Feature Test Report
 
-- **Date:** 2026-11-19 (Round 11 Audit Remediation + Round 12 Defect Fixes)
-- **Environment:** Remote Supabase (`oiplhsmmfuqriaqrxjud`) + Local Node.js + Live Vercel (`https://assessor-zeta.vercel.app`)
+- **Date:** 2026-11-19 (Round 11–13 Audit Remediation)
+- **Environment:** Remote Supabase (`oiplhsmmfuqriaqrxjud`) + Local Node.js + Local Production Server (`next start -p 3199`) + Live Vercel (`https://assessor-zeta.vercel.app`)
 - **Authority:** `ground_rules_v5.md` (§Feature/Module Testing)
-- **Mode:** FAST MODE (§0.2 ground_rules_v5.md) — bug fixes in existing patterns, no trust boundary changes
+- **Mode:** AUDIT MODE (§0.2 ground_rules_v5.md) — audit log scoping & 06B key activation trust boundary
 
 ---
 
@@ -28,7 +28,8 @@
 | `src/lib/security/__tests__/ssrf.test.ts` | 3 tests (private IP/localhost block, Drive allow-list) | **PASS** | `npm test` |
 | `src/lib/security/__tests__/rate-limit.test.ts` | 2 tests (sliding rate limit throttle, internal redirect sanitizer) | **PASS** | `npm test` |
 | `src/lib/__tests__/names.test.ts` | 5 tests (KTP authority, confidence floor, Declan Rice, Wiwi vs Wiwik, R8 ambiguous BNSP spelling matching) | **PASS** | `npm test` |
-| `src/lib/audit/__tests__/write-audit-log.test.ts` | 5 tests (audit insert, error catch, `resolveAuditResourceHref` batch/job routing) | **PASS** | `npm test` |
+| `src/lib/audit/__tests__/write-audit-log.test.ts` | 6 tests (audit insert, error catch, `resolveAuditResourceHref` batch/job routing, `formatAuditSummary` 06B rejection fields) | **PASS** | `npm test` |
+| `src/repositories/__tests__/audit.repository.test.ts` | 1 test (SQL-level `lsp_id IS NULL` actor scoping, deterministic `created_at DESC, id DESC`, `beforeId` cursor, ID deduplication) | **PASS** | `npm test` |
 | `src/lib/config/__tests__/get-config.test.ts` | 3 tests (hierarchical `scheme -> lsp -> global -> default` `app_config` resolution) | **PASS** | `npm test` |
 | `src/services/__tests__/similarity.test.ts` | 1 test (copy-paste vs paraphrase vs unrelated calibration) | **PASS** | `npm test` |
 | `src/services/__tests__/export.test.ts` | 5 tests (D8 format lock, AK.05 PDF/DOCX/XLSX, signatures, >12 rows, similarity DOCX w/ threshold source) | **PASS** | `npm test` |
@@ -42,7 +43,8 @@
 | `src/lib/ak05/__tests__/rollup.test.ts` | 6 tests (undecided neutral, partial-K undecided, >=1 BK auto-BK, manual assessor override/clear, DOCX/PDF export) | **PASS** | `npm test` |
 | `src/services/__tests__/vatm-rollup.test.ts` | 2 tests (VATM multi-channel rollup incl. `FR.IA.09` interview) | **PASS** | `npm test` |
 | `src/services/__tests__/official-forms-export.test.ts` | 7 tests (AK.02, IA.04B, IA.06C DOCX exports, neutral unassessed rendering, auto-BK, XML `pgMar`/`bodyPr` normalization, `dit_form` `proyek` flag) | **PASS** | `npm test` |
-| `src/worker/__tests__/worker.test.ts` | 12 tests (`extract_file` raw + cached reuse, `similarity_run`, `ocr_ktp`, inline run, job audit lifecycle, two-pass roster merge + audit trail + ZIP unpack + duplicate pruning, in-place `TUGAS SUANGI -> Suangi` rename, `TUGAS DIT WIWI -> Wiwi`, encrypted ZIP `unextractable`, newest `06C` revision, MUK archive `06B` non-activation, `written_grading` blanko/inactive key block) | **PASS** | `npm test` |
+| `src/worker/__tests__/worker.test.ts` | 13 tests (`extract_file` raw + cached reuse, `similarity_run`, `ocr_ktp`, inline run, job audit lifecycle, two-pass roster merge + audit trail + ZIP unpack + duplicate pruning, in-place `TUGAS SUANGI -> Suangi` rename, `TUGAS DIT WIWI -> Wiwi`, encrypted ZIP `unextractable`, newest `06C` revision, MUK archive `06B` non-activation, `written_grading` blanko/inactive key block, terminal `failed` job re-execution guard) | **PASS** | `npm test` |
+| `src/app/(app)/batches/[id]/__tests__/actions.test.ts` | 5 tests (encrypted MUK archive 06B & blanko 06B rejection -> `batch.key_06b.activate.rejected` audit write, RBAC deny, IDOR cross-batch guard, valid 06B activate, `BatchKeyUploadPanel` SSR per-file `"Coba Aktifkan / Uji Validasi"` render) | **PASS** | `npm test` |
 | `src/lib/written/__tests__/master-key.test.ts` | 3 tests (`validateMasterKey06bContent` blanko/06A/empty rejection & working key acceptance, `resolveBatchActiveMasterKey` explicit pointer & MUK blanko isolation) | **PASS** | `npm test` |
 | `src/lib/written/__tests__/ooxml-decrypt.test.ts` | 3 tests (CFB + MS-OFFCRYPTO Agile v4.4 missing/wrong/valid password) | **PASS** | `npm test` |
 | `src/lib/similarity/__tests__/load-batch-similarity.test.ts` | 2 tests (threshold provenance label, uncalibrated notice, per-assessee summaries) | **PASS** | `npm test` |
@@ -56,24 +58,29 @@
 
 | Gate | Command | Result |
 | :--- | :--- | :--- |
-| TypeScript Strict | `npm run typecheck` | **PASS (0 errors)** |
+| TypeScript Strict | `npx tsc --noEmit` | **PASS (0 errors)** |
 | ESLint Zero Warnings | `npx eslint . --max-warnings 0` | **PASS (0 errors, 0 warnings)** |
-| Vitest Unit Suite | `npm test` | **PASS (26 files, 110/110 tests)** |
+| Vitest Unit Suite | `npm test` | **PASS (28 files, 118/118 tests)** |
 | Production Build | `npm run build` | **PASS (36 app routes incl. Proxy Middleware)** |
-| Multi-LSP Postgres RLS | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS (40/40 tests on remote Supabase incl. `RLS-38..RLS-40` `batch_roster_notes`)** |
+| Multi-LSP Postgres RLS | `npx supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS (40/40 PASS, 0 FAIL on remote Supabase)** |
+| Playwright Headless UI & Viewport | `python verify_ui_playwright.py` against `next start -p 3199` | **PASS (15/15 checks at `1440x900` & `390x844`: `/api/health` 200, 0 overflow, 0 console/page/5xx errors, fail-closed auth redirects)** |
 
 ---
 
 ## 4. Round 12 Defect Fixes (per brief-developer-putaran-12-2026-11-19.md)
 
-| Cacat | Severity | Issue | Fix | Files Changed | Verification Needed |
+| Cacat | Severity | Issue | Fix | Files Changed | Verification Result |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Cacat 1** | Menengah | 06B key activation rejection not written to audit log (`/settings/audit` shows no "06B"/"kunci" entries) | Added `batch.key_06b.activate.rejected` audit entry when activation is rejected due to invalid content validation, with actor, file, source, validation status, and rejection reason | `src/app/(app)/batches/[id]/actions.ts` | Live UI: activate blanko 06B → expect rejection entry in `/settings/audit` |
-| **Cacat 2** | Rendah | Disabled "Simpan Kunci 06B & Jalankan Koreksi Tertulis" button looks teal solid (indistinguishable from active) | Changed disabled styling from `disabled:opacity-50` to `disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed disabled:hover:bg-slate-200` for clear visual distinction | `src/app/(app)/batches/[id]/assessees/[assesseeId]/written/_components/written-key-form.tsx` | Live UI: disabled grading button should appear gray/slate, not teal |
-| **Cacat 3** | Rendah | Duplicate `job.drive_scan.failed` audit entries for same job | Added terminal-state guard in `executeJob`: skips re-execution of `done`/`failed` jobs unless explicit `triggerAction: "retry"` | `src/worker/queue.ts` | Live UI: `/settings/audit` should show exactly one `job.drive_scan.failed` per failed job |
+| **Cacat 1** | Menengah | 06B key activation rejection not written to audit log (`/settings/audit` shows no "06B"/"kunci" entries) | Added `batch.key_06b.activate.rejected` audit entry (extended in Round 13 to cover unextracted/encrypted MUK archive blankos) | `src/app/(app)/batches/[id]/actions.ts` | **PASS (unit + SSR; live UI interactive check after Round 14 deploy)** |
+| **Cacat 2** | Rendah | Disabled "Simpan Kunci 06B & Jalankan Koreksi Tertulis" button looks teal solid (indistinguishable from active) | Changed disabled styling from `disabled:opacity-50` to `disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed disabled:hover:bg-slate-200` | `src/app/(app)/batches/[id]/assessees/[assesseeId]/written/_components/written-key-form.tsx` | **PASS (verified live by Round 13 auditor)** |
+| **Cacat 3** | Rendah | Duplicate `job.drive_scan.failed` audit entries for same job | Added terminal-state guard in `executeJob`: skips re-execution of `done`/`failed` jobs unless explicit `triggerAction: "retry"` | `src/worker/queue.ts` | **PASS (unit test in `worker.test.ts` + DB forensics)** |
 
-**Gates pending (no Node.js/network in this sandbox — to be run in Claude Code / local checkout):**
-- `npx tsc --noEmit` — must pass 0 errors
-- `npx eslint . --ext .ts,.tsx --max-warnings 0` — must pass 0 warnings
-- `npm test` — all existing tests must still pass (guard allows retries; pending jobs execute normally)
-- Playwright E2E on preview — verify all three cacat fixes live
+---
+
+## 5. Round 13 Defect Fixes & Forensics (per brief-developer-putaran-13-2026-11-19.md)
+
+| Item | Severity | Root Cause / Finding | Fix / Forensic Result | Files Changed | Verification |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Cacat 1** | Menengah | Non-activatable 06B cards rendered only a static span (`Tidak dapat diaktifkan`) and `activateBatchMasterKey06bAction` returned early before writing `batch.key_06b.activate.rejected` when `tryResolveCandidate06bText` failed | Added per-file `"Coba Aktifkan / Uji Validasi"` button (`data-testid="try-activate-06b-<id>"`), `/settings/audit` link on rejection banner, rate limit (`20/60s`), unified rejection audit logging (`batch.key_06b.activate.rejected`) + `formatAuditSummary` support for `substantiveWords` & `rejectionReason` | `src/components/batch/batch-key-upload-panel.tsx`, `src/app/(app)/batches/[id]/actions.ts`, `src/lib/audit/job-audit.ts`, `src/app/(app)/batches/[id]/__tests__/actions.test.ts` | `tsc`, `eslint`, `vitest` (5/5 tests in `actions.test.ts`), `next build` |
+| **Cacat 2** | Menengah | Read-only SQL on `public.audit_log` (42 rows; `LSP-K3-ID2` = 29 rows; contiguous `BIGSERIAL` `id` `14..19` between `06:02` and `08:55` UTC on 18 Nov) and `public.jobs` (`82988849` failed `06:16:32+00`, 18h before Round 7 added `recordJobAuditEvent`) proves no R3 `job.drive_scan.failed` row ever existed in `public.audit_log`. Hardened repository query window & ordering | Pushed `lsp_id IS NULL` actor membership scoping into SQL (`drizzle` + `supabase`), enforced deterministic `created_at DESC, id DESC`, added `beforeId` cursor pagination, deduplicated by `id`, and added cursor pagination UI on `/settings/audit` | `src/repositories/audit.repository.ts`, `src/app/(app)/settings/audit/page.tsx`, `src/repositories/__tests__/audit.repository.test.ts`, `src/lib/audit/__tests__/write-audit-log.test.ts`, `src/worker/__tests__/worker.test.ts` | `tsc`, `eslint`, `vitest` (118/118), `RLS` (40/40), Playwright `1440x900` & `390x844` (15/15) |
+| **Observasi R1/R2** | Info | `public.batches` contains 4 rows total (`Demo Audit R4` & `Demo Audit R3` in `LSP-K3-ID2`; 2 synthetic batches in `LSP-VERIFY-E2E`). No batches named `R1` or `R2` exist | Documented exact `public.batches` rows in `_documentations_/2026-11-19_1830_round13_remediation_report.md` | `_documentations_/2026-11-19_1830_round13_remediation_report.md` | Read-only SQL query verified |

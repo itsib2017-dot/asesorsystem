@@ -792,4 +792,57 @@ describe("Worker dispatcher and queue runner", () => {
       }),
     ).rejects.toThrow("INVALID_MASTER_KEY_06B");
   });
+
+  it("prevents duplicate job.drive_scan.failed audit events when executeJob is invoked again on a terminal failed job (R13 Cacat 2)", async () => {
+    const batchId = "a3b77bbe-7543-48b7-99e1-25e286689999";
+    const jobId = "82988849-c68b-4447-9f8b-07ec816784be";
+    const lspId = "b03afb00-9266-467d-823e-44a7830a4077";
+
+    const pendingJob = {
+      id: jobId,
+      createdBy: "user-1",
+      type: "drive_scan",
+      status: "pending" as const,
+      payload: { batchId, driveFolderUrl: "https://drive.google.com/drive/folders/invalid" },
+      progress: 0,
+      error: null,
+      attempts: 0,
+      createdAt: "2026-11-18T06:16:26Z",
+      updatedAt: "2026-11-18T06:16:26Z",
+    };
+    const failedJob = {
+      ...pendingJob,
+      status: "failed" as const,
+      error: "DRIVE_API_KEY_MISSING",
+      attempts: 1,
+    };
+
+    mocks.getBatchById.mockResolvedValue({
+      id: batchId,
+      lspId,
+      schemeId: "scheme-1",
+      name: "Demo Audit R3",
+    });
+    mocks.getJobRecordById
+      .mockResolvedValueOnce(pendingJob)
+      .mockResolvedValueOnce(failedJob)
+      .mockResolvedValueOnce(failedJob);
+    mocks.updateJobStatusRecord.mockResolvedValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("Not Found", { status: 404 }));
+
+    await executeJob("user-1", jobId, { lspId });
+    const firstFailedCalls = mocks.writeAuditLog.mock.calls.filter(
+      (c) => c[0]?.action === "job.drive_scan.failed",
+    );
+    expect(firstFailedCalls).toHaveLength(1);
+
+    // Second invocation without triggerAction="retry" must be a complete no-op
+    const secondResult = await executeJob("user-1", jobId, { lspId });
+    expect(secondResult).toEqual(failedJob);
+
+    const totalFailedCalls = mocks.writeAuditLog.mock.calls.filter(
+      (c) => c[0]?.action === "job.drive_scan.failed",
+    );
+    expect(totalFailedCalls).toHaveLength(1);
+  });
 });

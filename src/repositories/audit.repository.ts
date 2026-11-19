@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
-import { runRepositoryDualPath } from "@/db";
+import { and, desc, eq, inArray, isNull, lt, or, type SQL } from "drizzle-orm";
+import { isUuid, runRepositoryDualPath } from "@/db";
 import { assessors, auditLog, lspMemberships } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -41,7 +41,8 @@ export async function insertAuditLogRecord(
 export async function listAuditLogsForUser(
   userId: string,
   lspId?: string,
-  limit = 50,
+  limit = 100,
+  beforeId?: number,
 ): Promise<AuditLogViewRow[]> {
   return runRepositoryDualPath({
     userId,
@@ -62,29 +63,42 @@ export async function listAuditLogsForUser(
               .where(inArray(assessors.id, memberIds))
           : [];
 
-      const base = tx.select().from(auditLog);
-      const filtered = lspId
-        ? memberIds.length > 0
-          ? base.where(
-              or(
-                eq(auditLog.lspId, lspId),
-                isNull(auditLog.lspId),
-              ),
-            )
-          : base.where(eq(auditLog.lspId, lspId))
-        : base;
+      const conditions: SQL[] = [];
+      if (lspId) {
+        if (memberIds.length > 0) {
+          const tenantScope = or(
+            eq(auditLog.lspId, lspId),
+            and(isNull(auditLog.lspId), inArray(auditLog.actorId, memberIds)),
+          );
+          if (tenantScope) conditions.push(tenantScope);
+        } else {
+          conditions.push(eq(auditLog.lspId, lspId));
+        }
+      }
+      if (typeof beforeId === "number" && Number.isFinite(beforeId) && beforeId > 0) {
+        conditions.push(lt(auditLog.id, Math.floor(beforeId)));
+      }
 
-      const rows = await filtered.orderBy(desc(auditLog.createdAt)).limit(limit);
+      const base = tx.select().from(auditLog);
+      const filtered = conditions.length > 0 ? base.where(and(...conditions)) : base;
+
+      const rows = await filtered
+        .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+        .limit(limit);
       const memberSet = new Set(memberIds);
       const actorNameMap = new Map(actorRows.map((a) => [a.id, a.fullName]));
+      const seenIds = new Set<number>();
 
       return rows
-        .filter(
-          (r) =>
+        .filter((r) => {
+          if (seenIds.has(r.id)) return false;
+          seenIds.add(r.id);
+          return (
             !lspId ||
             r.lspId === lspId ||
-            (r.lspId === null && r.actorId !== null && memberSet.has(r.actorId)),
-        )
+            (r.lspId === null && r.actorId !== null && memberSet.has(r.actorId))
+          );
+        })
         .map((r) => ({
           id: r.id,
           lspId: r.lspId,
@@ -100,6 +114,7 @@ export async function listAuditLogsForUser(
     },
     supabase: async () => {
       const supabase = await getSupabaseServerClient();
+      let safeIds: string[] = [];
       let memberSet = new Set<string>();
       const actorNameMap = new Map<string, string>();
 
@@ -108,14 +123,16 @@ export async function listAuditLogsForUser(
           .from("lsp_memberships")
           .select("assessor_id")
           .eq("lsp_id", lspId);
-        const ids = (members ?? []).map((m) => String(m.assessor_id));
-        memberSet = new Set(ids);
+        safeIds = (members ?? [])
+          .map((m) => String(m.assessor_id))
+          .filter((id) => isUuid(id));
+        memberSet = new Set(safeIds);
 
-        if (ids.length > 0) {
+        if (safeIds.length > 0) {
           const { data: profiles } = await supabase
             .from("assessors")
             .select("id, full_name")
-            .in("id", ids);
+            .in("id", safeIds);
           for (const p of profiles ?? []) {
             actorNameMap.set(String(p.id), String(p.full_name));
           }
@@ -126,20 +143,35 @@ export async function listAuditLogsForUser(
         .from("audit_log")
         .select("id, lsp_id, actor_id, action, resource, resource_id, after_summary, correlation_id, created_at")
         .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
         .limit(limit);
 
       if (lspId) {
-        query = query.or(`lsp_id.eq.${lspId},lsp_id.is.null`);
+        if (safeIds.length > 0) {
+          query = query.or(`lsp_id.eq.${lspId},and(lsp_id.is.null,actor_id.in.(${safeIds.join(",")}))`);
+        } else {
+          query = query.eq("lsp_id", lspId);
+        }
+      }
+
+      if (typeof beforeId === "number" && Number.isFinite(beforeId) && beforeId > 0) {
+        query = query.lt("id", Math.floor(beforeId));
       }
 
       const { data } = await query;
+      const seenIds = new Set<number>();
+
       return (data ?? [])
-        .filter(
-          (r) =>
+        .filter((r) => {
+          const id = Number(r.id);
+          if (seenIds.has(id)) return false;
+          seenIds.add(id);
+          return (
             !lspId ||
             r.lsp_id === lspId ||
-            (r.lsp_id === null && r.actor_id !== null && memberSet.has(String(r.actor_id))),
-        )
+            (r.lsp_id === null && r.actor_id !== null && memberSet.has(String(r.actor_id)))
+          );
+        })
         .map((r) => {
           const actorId = (r.actor_id as string | null) ?? null;
           return {
@@ -183,6 +215,14 @@ export async function listAuditLogsForResource(
               .where(inArray(assessors.id, memberIds))
           : [];
 
+      const tenantScope =
+        memberIds.length > 0
+          ? or(
+              eq(auditLog.lspId, lspId),
+              and(isNull(auditLog.lspId), inArray(auditLog.actorId, memberIds)),
+            )
+          : eq(auditLog.lspId, lspId);
+
       const rows = await tx
         .select()
         .from(auditLog)
@@ -190,21 +230,25 @@ export async function listAuditLogsForResource(
           and(
             eq(auditLog.resource, resource),
             eq(auditLog.resourceId, resourceId),
-            or(eq(auditLog.lspId, lspId), isNull(auditLog.lspId)),
+            tenantScope,
           ),
         )
-        .orderBy(desc(auditLog.createdAt))
+        .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
         .limit(limit);
 
       const memberSet = new Set(memberIds);
       const actorNameMap = new Map(actorRows.map((a) => [a.id, a.fullName]));
+      const seenIds = new Set<number>();
 
       return rows
-        .filter(
-          (r) =>
+        .filter((r) => {
+          if (seenIds.has(r.id)) return false;
+          seenIds.add(r.id);
+          return (
             r.lspId === lspId ||
-            (r.lspId === null && r.actorId !== null && memberSet.has(r.actorId)),
-        )
+            (r.lspId === null && r.actorId !== null && memberSet.has(r.actorId))
+          );
+        })
         .map((r) => ({
           id: r.id,
           lspId: r.lspId,
@@ -224,35 +268,50 @@ export async function listAuditLogsForResource(
         .from("lsp_memberships")
         .select("assessor_id")
         .eq("lsp_id", lspId);
-      const ids = (members ?? []).map((m) => String(m.assessor_id));
-      const memberSet = new Set(ids);
+      const safeIds = (members ?? [])
+        .map((m) => String(m.assessor_id))
+        .filter((id) => isUuid(id));
+      const memberSet = new Set(safeIds);
       const actorNameMap = new Map<string, string>();
 
-      if (ids.length > 0) {
+      if (safeIds.length > 0) {
         const { data: profiles } = await supabase
           .from("assessors")
           .select("id, full_name")
-          .in("id", ids);
+          .in("id", safeIds);
         for (const p of profiles ?? []) {
           actorNameMap.set(String(p.id), String(p.full_name));
         }
       }
 
-      const { data } = await supabase
+      let query = supabase
         .from("audit_log")
         .select("id, lsp_id, actor_id, action, resource, resource_id, after_summary, correlation_id, created_at")
         .eq("resource", resource)
         .eq("resource_id", resourceId)
-        .or(`lsp_id.eq.${lspId},lsp_id.is.null`)
         .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
         .limit(limit);
 
+      if (safeIds.length > 0) {
+        query = query.or(`lsp_id.eq.${lspId},and(lsp_id.is.null,actor_id.in.(${safeIds.join(",")}))`);
+      } else {
+        query = query.eq("lsp_id", lspId);
+      }
+
+      const { data } = await query;
+      const seenIds = new Set<number>();
+
       return (data ?? [])
-        .filter(
-          (r) =>
+        .filter((r) => {
+          const id = Number(r.id);
+          if (seenIds.has(id)) return false;
+          seenIds.add(id);
+          return (
             r.lsp_id === lspId ||
-            (r.lsp_id === null && r.actor_id !== null && memberSet.has(String(r.actor_id))),
-        )
+            (r.lsp_id === null && r.actor_id !== null && memberSet.has(String(r.actor_id)))
+          );
+        })
         .map((r) => {
           const actorId = (r.actor_id as string | null) ?? null;
           return {
