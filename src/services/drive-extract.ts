@@ -1,6 +1,9 @@
 import { validateSafeExternalUrl } from "@/lib/security/ssrf";
 import { findBestMatchingCandidate } from "@/lib/names";
-import { resolveSchemeKelompokPekerjaan } from "@/lib/forms/assessee-forms";
+import {
+  formatSchemeInstructionsText,
+  selectDitInputFiles,
+} from "@/lib/forms/dit-inputs";
 import {
   updateDriveFileClassification,
   updateDriveFileExtraction,
@@ -12,13 +15,12 @@ import {
   extractCandidateNamesFromDocumentText,
 } from "@/services/drive";
 import {
-  deduplicateFilesByLatestRevision,
-  pickLatestDriveFile,
-} from "@/services/drive-revisions";
-import {
+  EXTRACTABLE_TEXT_EXT_RE,
   extractTextFromBuffer,
   unpackSafeZipEntries,
 } from "@/services/extract";
+
+export { formatSchemeInstructionsText, selectDitInputFiles };
 
 const DRIVE_FILE_ID_REGEX = /^[a-zA-Z0-9_-]{5,128}$/;
 const MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024;
@@ -28,8 +30,6 @@ const ALLOWED_DRIVE_DOWNLOAD_DOMAINS = [
   "googleusercontent.com",
   "www.googleapis.com",
 ];
-
-const EXTRACTABLE_EXT_RE = /\.(docx|pptx|xlsx|pdf|txt|csv|md)$/i;
 
 export interface DriveExtractionOutcome {
   text: string | null;
@@ -154,13 +154,19 @@ export async function downloadPublicDriveFileBuffer(params: {
   return fetchWithValidatedRedirects(publicUrl, maxBytes);
 }
 
+export type ExtractableDriveFileRef = Pick<
+  DriveFileRecord,
+  "id" | "driveFileId" | "fileName" | "mimeType" | "extractedText" | "extractionMethod"
+> &
+  Partial<DriveFileRecord>;
+
 /**
  * Extracts text on demand from a Drive file record if `extractedText` is still empty,
  * persisting the extracted text back to `drive_files` for subsequent runs.
  */
 export async function ensureDriveFileExtracted(params: {
   userId: string;
-  file: DriveFileRecord;
+  file: ExtractableDriveFileRef;
   apiKey?: string;
 }): Promise<DriveExtractionOutcome> {
   const existing = params.file.extractedText?.trim();
@@ -174,7 +180,7 @@ export async function ensureDriveFileExtracted(params: {
   if (
     !params.file.driveFileId ||
     params.file.driveFileId.startsWith("manual-") ||
-    !EXTRACTABLE_EXT_RE.test(params.file.fileName)
+    !EXTRACTABLE_TEXT_EXT_RE.test(params.file.fileName)
   ) {
     return { text: null, error: "Format berkas tidak mendukung ekstraksi teks otomatis." };
   }
@@ -212,27 +218,6 @@ export async function ensureDriveFileExtracted(params: {
     console.warn(`[DriveExtract Warning] file=${params.file.id}: ${message}`);
     return { text: null, error: message };
   }
-}
-
-export function formatSchemeInstructionsText(scheme?: SchemeRecord | null): string {
-  if (!scheme) return "";
-  const kelompok = resolveSchemeKelompokPekerjaan(scheme);
-  if (kelompok.length === 0) return "";
-  const lines: string[] = [
-    `[Referensi Instruksi Tugas DIT dari Skema: ${scheme.name}]`,
-  ];
-  for (const kp of kelompok) {
-    lines.push(`\nKelompok Pekerjaan ${kp.kpIndex}: ${kp.title}`);
-    for (const u of kp.units) {
-      lines.push(`- Unit ${u.code}: ${u.title}`);
-    }
-    for (const a of kp.aspects) {
-      lines.push(
-        `  • Aspek ${a.no} (${a.unitCode} — ${a.lingkup}): ${a.question} [KUK: ${a.kukRef}]`,
-      );
-    }
-  }
-  return lines.join("\n").trim();
 }
 
 async function extractMultipleDriveFiles(params: {
@@ -291,27 +276,16 @@ export async function resolveAssesseeDitInputs(params: {
 }> {
   const extractionErrors: string[] = [];
 
-  const assessee04a = deduplicateFilesByLatestRevision(
-    params.files.filter((f) => f.docType === "04a"),
-  );
-  const sharedBatch04a =
-    assessee04a.length === 0 && params.batchFiles
-      ? deduplicateFilesByLatestRevision(
-          params.batchFiles.filter((f) => !f.assesseeId && f.docType === "04a"),
-        )
-      : [];
-  const used04aFiles = assessee04a.length > 0 ? assessee04a : sharedBatch04a;
-
-  const used04bFiles = deduplicateFilesByLatestRevision(
-    params.files.filter((f) => f.docType === "04b"),
-  );
-  const usedDitFormFiles = deduplicateFilesByLatestRevision(
-    params.files.filter((f) => f.docType === "dit_form"),
-  );
-
-  const fileCv =
-    pickLatestDriveFile(params.files.filter((f) => f.docType === "cv")) ??
-    pickLatestDriveFile(params.files.filter((f) => f.docType === "portofolio"));
+  const selected = selectDitInputFiles(params.files, params.batchFiles);
+  const {
+    assessee04a,
+    sharedBatch04a,
+    used04aFiles,
+    used04bFiles,
+    usedDitFormFiles,
+    combinedDitFiles,
+    usedCvFile: fileCv,
+  } = selected;
 
   const [text04a, textDitParts, resCv] = await Promise.all([
     extractMultipleDriveFiles({
@@ -323,7 +297,7 @@ export async function resolveAssesseeDitInputs(params: {
     }),
     extractMultipleDriveFiles({
       userId: params.userId,
-      files: [...used04bFiles, ...usedDitFormFiles],
+      files: combinedDitFiles,
       apiKey: params.apiKey,
       labelPrefix: "Tugas DIT",
       extractionErrors,
@@ -370,6 +344,205 @@ export async function resolveAssesseeDitInputs(params: {
   };
 }
 
+export interface ContentEnrichableFile {
+  id?: string;
+  driveFileId: string;
+  fileName: string;
+  mimeType: string;
+  drivePath: string;
+  docType: string;
+  confidence?: number;
+  classificationConfidence?: number;
+  classificationReason?: string | null;
+  triageReason?: string | null;
+  extractedText?: string | null;
+  extractionMethod?: string | null;
+  assesseeId?: string | null;
+}
+
+/**
+ * Unified content enrichment & classification engine shared by background Drive scans
+ * (in-memory pre-persistence enrichment) and Triage actions (persistent reclassification
+ * + optional unmatched assessee assignment).
+ */
+export async function enrichFilesByContent<T extends ContentEnrichableFile>(params: {
+  files: T[];
+  userId?: string;
+  apiKey?: string;
+  maxInspect?: number;
+  includeUnmatched?: boolean;
+  reassignAssessee?: boolean;
+  persistUpdates?: boolean;
+  assessees?: Array<{ id: string; displayName: string }>;
+  cachedTextLookup?: (file: T) => string | null | undefined;
+}): Promise<{ inspected: number; reclassified: number; reassigned: number }> {
+  const maxInspect = params.maxInspect ?? 12;
+  let inspected = 0;
+  let reclassified = 0;
+  let reassigned = 0;
+  let networkBudgetUsed = 0;
+
+  const networkQueue: Array<{ file: T; parentPath: string; currentConf: number }> = [];
+
+  const applyClassification = async (
+    file: T,
+    text: string,
+    extractionMethod: string | null,
+    parentPath: string,
+    currentConf: number,
+  ) => {
+    const contentCls = classifyDocumentTextContent(text, file.fileName, parentPath);
+    const shouldUpgradeType =
+      Boolean(contentCls) &&
+      (Boolean(params.persistUpdates) ||
+        file.docType === "unknown" ||
+        (contentCls?.confidence ?? 0) > currentConf);
+
+    let matchedAssesseeId = file.assesseeId ?? null;
+    if (
+      params.reassignAssessee &&
+      !matchedAssesseeId &&
+      params.assessees &&
+      params.assessees.length > 0
+    ) {
+      const detectedType = contentCls?.docType ?? file.docType;
+      const names = extractCandidateNamesFromDocumentText(detectedType, text);
+      for (const candidateName of names) {
+        const matched = findBestMatchingCandidate(candidateName, params.assessees);
+        if (matched) {
+          matchedAssesseeId = matched.id;
+          reassigned++;
+          break;
+        }
+      }
+    }
+
+    if (shouldUpgradeType && contentCls) {
+      if (contentCls.docType !== file.docType) {
+        reclassified++;
+      }
+      file.docType = contentCls.docType;
+      file.confidence = contentCls.confidence;
+      file.classificationConfidence = contentCls.confidence;
+      file.classificationReason = contentCls.reason;
+      file.triageReason = contentCls.reason;
+    }
+
+    if (
+      params.persistUpdates &&
+      params.userId &&
+      file.id &&
+      (contentCls || matchedAssesseeId !== (file.assesseeId ?? null))
+    ) {
+      const nextDocType = contentCls?.docType ?? file.docType;
+      await updateDriveFileClassification({
+        userId: params.userId,
+        fileId: file.id,
+        docType: nextDocType,
+        confidence: contentCls?.confidence ?? currentConf,
+        triageReason:
+          contentCls?.reason ??
+          file.triageReason ??
+          "Teridentifikasi melalui isi teks dokumen.",
+        extractedText: text,
+        extractionMethod: extractionMethod ?? file.extractionMethod ?? null,
+        assesseeId: matchedAssesseeId,
+        triageStatus:
+          nextDocType === "materi_pelatihan"
+            ? "not_needed"
+            : matchedAssesseeId
+              ? "assigned"
+              : "unmatched",
+      });
+    }
+  };
+
+  for (const file of params.files) {
+    const currentConf = file.confidence ?? file.classificationConfidence ?? 0;
+    const parentPath = file.drivePath.includes("/")
+      ? file.drivePath.slice(0, file.drivePath.lastIndexOf("/"))
+      : "";
+    const cachedText = (params.cachedTextLookup?.(file) ?? file.extractedText ?? "").trim();
+
+    if (cachedText) {
+      inspected++;
+      await applyClassification(
+        file,
+        cachedText,
+        file.extractionMethod ?? null,
+        parentPath,
+        currentConf,
+      );
+      continue;
+    }
+
+    const dt = file.docType.toLowerCase();
+    const isAmbiguous =
+      dt === "unknown" ||
+      dt === "portofolio" ||
+      currentConf < 0.85 ||
+      (Boolean(params.includeUnmatched) && !file.assesseeId);
+
+    if (!isAmbiguous || !EXTRACTABLE_TEXT_EXT_RE.test(file.fileName)) continue;
+    if (networkBudgetUsed >= maxInspect) continue;
+
+    networkBudgetUsed++;
+    networkQueue.push({ file, parentPath, currentConf });
+  }
+
+  const CONCURRENCY = 4;
+  for (let i = 0; i < networkQueue.length; i += CONCURRENCY) {
+    const chunk = networkQueue.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      chunk.map(async ({ file, parentPath, currentConf }) => {
+        inspected++;
+        let text = "";
+        let extractionMethod: string | null = null;
+
+        try {
+          if (params.persistUpdates && params.userId && file.id) {
+            const extracted = await ensureDriveFileExtracted({
+              userId: params.userId,
+              file: {
+                id: file.id,
+                driveFileId: file.driveFileId,
+                fileName: file.fileName,
+                mimeType: file.mimeType,
+                extractedText: file.extractedText ?? null,
+                extractionMethod: file.extractionMethod ?? null,
+              },
+              apiKey: params.apiKey,
+            });
+            text = (extracted.text ?? "").trim();
+            extractionMethod = extracted.extractionMethod ?? null;
+          } else {
+            const buffer = await downloadPublicDriveFileBuffer({
+              driveFileId: file.driveFileId,
+              apiKey: params.apiKey,
+            });
+            const parsed = await extractTextFromBuffer({
+              buffer,
+              fileName: file.fileName,
+              mimeType: file.mimeType,
+            });
+            text = parsed.text.trim();
+            extractionMethod = parsed.extractionMethod;
+          }
+        } catch {
+          return;
+        }
+
+        if (!text) return;
+        file.extractedText = text;
+        file.extractionMethod = extractionMethod;
+        await applyClassification(file, text, extractionMethod, parentPath, currentConf);
+      }),
+    );
+  }
+
+  return { inspected, reclassified, reassigned };
+}
+
 export async function reclassifyBatchFilesByContent(params: {
   userId: string;
   files: DriveFileRecord[];
@@ -377,91 +550,14 @@ export async function reclassifyBatchFilesByContent(params: {
   apiKey?: string;
   maxInspect?: number;
 }): Promise<{ inspected: number; reclassified: number; reassigned: number }> {
-  const maxInspect = params.maxInspect ?? 12;
-  const candidates = params.files
-    .filter((f) => {
-      if (!EXTRACTABLE_EXT_RE.test(f.fileName)) return false;
-      const dt = f.docType.toLowerCase();
-      return (
-        dt === "unknown" ||
-        dt === "portofolio" ||
-        f.classificationConfidence < 0.85 ||
-        !f.assesseeId
-      );
-    })
-    .slice(0, maxInspect);
-
-  let inspected = 0;
-  let reclassified = 0;
-  let reassigned = 0;
-
-  const CONCURRENCY = 4;
-  for (let i = 0; i < candidates.length; i += CONCURRENCY) {
-    const chunk = candidates.slice(i, i + CONCURRENCY);
-    await Promise.all(
-      chunk.map(async (file) => {
-        inspected++;
-        const extracted = await ensureDriveFileExtracted({
-          userId: params.userId,
-          file,
-          apiKey: params.apiKey,
-        });
-        const text = extracted.text ?? "";
-        if (!text) return;
-
-        const folderParent = file.drivePath.includes("/")
-          ? file.drivePath.slice(0, file.drivePath.lastIndexOf("/"))
-          : "";
-        const contentCls = classifyDocumentTextContent(
-          text,
-          file.fileName,
-          folderParent,
-        );
-
-        let matchedAssesseeId = file.assesseeId ?? null;
-        if (!matchedAssesseeId && params.assessees.length > 0) {
-          const detectedType = contentCls?.docType ?? file.docType;
-          const names = extractCandidateNamesFromDocumentText(detectedType, text);
-          for (const candidateName of names) {
-            const matched = findBestMatchingCandidate(
-              candidateName,
-              params.assessees,
-            );
-            if (matched) {
-              matchedAssesseeId = matched.id;
-              reassigned++;
-              break;
-            }
-          }
-        }
-
-        if (contentCls || matchedAssesseeId !== file.assesseeId) {
-          if (contentCls && contentCls.docType !== file.docType) {
-            reclassified++;
-          }
-          await updateDriveFileClassification({
-            userId: params.userId,
-            fileId: file.id,
-            docType: contentCls?.docType ?? file.docType,
-            confidence: contentCls?.confidence ?? file.classificationConfidence,
-            triageReason:
-              contentCls?.reason ??
-              file.triageReason ??
-              "Teridentifikasi melalui isi teks dokumen.",
-            extractedText: text,
-            extractionMethod: extracted.extractionMethod ?? file.extractionMethod ?? null,
-            assesseeId: matchedAssesseeId,
-            triageStatus:
-              (contentCls?.docType ?? file.docType) === "materi_pelatihan"
-                ? "not_needed"
-                : matchedAssesseeId
-                  ? "assigned"
-                  : "unmatched",
-          });
-        }
-      }),
-    );
-  }
-
-  return { inspected, reclassified, reassigned };
+  return enrichFilesByContent({
+    files: params.files,
+    userId: params.userId,
+    apiKey: params.apiKey,
+    maxInspect: params.maxInspect ?? 12,
+    includeUnmatched: true,
+    reassignAssessee: true,
+    persistUpdates: true,
+    assessees: params.assessees,
+  });
 }

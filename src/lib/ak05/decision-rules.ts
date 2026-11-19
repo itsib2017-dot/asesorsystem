@@ -1,3 +1,5 @@
+import { readField, readStringField } from "@/lib/utils/record-fields";
+
 export interface Ak05RollupRow {
   no: number;
   assesseeId: string;
@@ -50,12 +52,20 @@ export interface ResolvedOverallDecision {
 function formatUnitLabels(units: UnitDecisionLike[]): string[] {
   return units
     .map((u) => {
-      const code = (u.unitCode ?? u.unit_code ?? "").trim();
-      const title = (u.unitTitle ?? u.unit_title ?? "").trim();
+      const row = u as unknown as Record<string, unknown>;
+      const code = readStringField(row, "unitCode", "unit_code");
+      const title = readStringField(row, "unitTitle", "unit_title");
       if (code && title) return `${code} (${title})`;
       return code || title;
     })
     .filter(Boolean);
+}
+
+export const OVERALL_DECISION_RULE_LEAD =
+  "Aturan otomatis: apabila minimal 1 unit kompetensi bertanda BK, rekomendasi AK.02 & AK.05 otomatis menjadi BK.";
+
+export function formatOverallDecisionRuleSummary(totalSchemeUnits: number): string {
+  return `${OVERALL_DECISION_RULE_LEAD} Status K otomatis hanya muncul bila seluruh ${totalSchemeUnits} unit selesai dinilai K tanpa BK.`;
 }
 
 /**
@@ -98,23 +108,20 @@ export function resolveAssesseeOverallDecision(params: {
     autoKeterangan = "";
   }
 
-  const rawOverrideDecision =
-    params.manualOverride?.overrideDecision ??
-    params.manualOverride?.override_decision ??
-    null;
+  const overrideRow = params.manualOverride as Record<string, unknown> | null | undefined;
+  const rawOverrideDecision = readField<string | null>(
+    overrideRow,
+    "overrideDecision",
+    "override_decision",
+  );
   const overrideDecision =
     rawOverrideDecision === "K" || rawOverrideDecision === "BK"
       ? rawOverrideDecision
       : null;
-  const rawOverrideReason =
-    params.manualOverride?.overrideReason ??
-    params.manualOverride?.override_reason ??
-    "";
-  const overrideReason = rawOverrideReason.trim() || null;
+  const overrideReason =
+    readStringField(overrideRow, "overrideReason", "override_reason") || null;
   const overriddenAt =
-    params.manualOverride?.overriddenAt ??
-    params.manualOverride?.overridden_at ??
-    null;
+    readField<string | null>(overrideRow, "overriddenAt", "overridden_at") ?? null;
 
   if (overrideDecision) {
     const manualKeterangan = overrideReason

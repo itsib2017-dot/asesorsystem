@@ -1,3 +1,11 @@
+import {
+  GENERIC_REVISION_TAG_RE,
+  SINGLETON_DOC_TYPES,
+  detectDitFormKind,
+  normaliseFileTokens,
+  stripKnownFileExtensions,
+} from "@/services/drive-doc-types";
+
 export interface RevisionComparableFile {
   id?: string;
   fileName: string;
@@ -73,7 +81,7 @@ export function extractDateMsFromFileName(fileName: string): number {
 }
 
 export function extractExplicitRevisionRank(fileName: string): number {
-  const lower = fileName.toLowerCase().replace(/\.[a-z0-9]{2,5}(?:\.[a-z0-9]{2,5})?$/i, "");
+  const lower = stripKnownFileExtensions(fileName.toLowerCase());
   let rank = 0;
 
   // Explicit version or revision tags outweigh plain duplicate "(1)" counters
@@ -107,7 +115,7 @@ export function extractExplicitRevisionRank(fileName: string): number {
  * 1. Explicit Google Drive / ZIP `driveModifiedTime` when available
  * 2. Embedded filename date
  * 3. Explicit revision / final / duplicate `(N)` rank
- * 4. Extracted text presence & filename deterministic tie-break
+ * 4. Classification confidence & deterministic filename tie-break
  */
 export function compareDriveFileFreshnessDesc<T extends RevisionComparableFile>(
   a: T,
@@ -134,13 +142,12 @@ export function compareDriveFileFreshnessDesc<T extends RevisionComparableFile>(
     return revB - revA;
   }
 
-  const textLenA = a.extractedText?.trim().length ?? 0;
-  const textLenB = b.extractedText?.trim().length ?? 0;
-  if (textLenA !== textLenB) {
-    return textLenB - textLenA;
+  const confDiff = (b.classificationConfidence ?? 0) - (a.classificationConfidence ?? 0);
+  if (confDiff !== 0) {
+    return confDiff;
   }
 
-  return (b.classificationConfidence ?? 0) - (a.classificationConfidence ?? 0);
+  return a.fileName.localeCompare(b.fileName, "en", { sensitivity: "base" });
 }
 
 export function pickLatestDriveFile<T extends RevisionComparableFile>(
@@ -149,20 +156,6 @@ export function pickLatestDriveFile<T extends RevisionComparableFile>(
   if (files.length === 0) return null;
   return [...files].sort(compareDriveFileFreshnessDesc)[0] ?? null;
 }
-
-const SINGLETON_DOC_TYPES = new Set([
-  "06a",
-  "06b",
-  "06c",
-  "09",
-  "cv",
-  "ktp",
-  "apl01",
-  "apl02",
-  "ijazah",
-  "surat_tugas",
-  "pas_foto",
-]);
 
 /**
  * Computes a logical artifact slot so distinct multi-part files (e.g. Kelompok 1..4,
@@ -175,22 +168,18 @@ export function extractMultiPartSlotKey(file: RevisionComparableFile): string {
     return `singleton:${dt}`;
   }
 
-  const clean = file.fileName
-    .toLowerCase()
-    .replace(/\.[a-z0-9]{2,5}(?:\.[a-z0-9]{2,5})?$/i, "")
-    .replace(/\(\d+\)\s*$/g, "")
-    .replace(/\b(?:rev(?:isi)?[\s._-]*\d+|v\d+|final|fiks|fix|terbaru|updated?)\b/gi, "")
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const clean = normaliseFileTokens(
+    stripKnownFileExtensions(file.fileName.toLowerCase())
+      .replace(/\(\d+\)\s*$/g, "")
+      .replace(GENERIC_REVISION_TAG_RE, ""),
+    false,
+  );
 
   if (dt === "dit_form") {
-    if (/\bibpr\b|\bhiradc\b/.test(clean)) return "dit_form:ibpr";
-    if (/\berp\b|tanggap\s*darurat/.test(clean)) return "dit_form:erp";
-    if (/work\s*permit|permit\s*kerja|izin\s*kerja/.test(clean)) return "dit_form:work_permit";
-    if (/inspeksi.*\bp3k\b|\bp3k\b/.test(clean)) return "dit_form:inspeksi_p3k";
-    if (/inspeksi.*\bapd\b|\bapd\b/.test(clean)) return "dit_form:inspeksi_apd";
-    if (/in[ve]*stigasi|kecelakaan/.test(clean)) return "dit_form:investigasi";
+    const kind = detectDitFormKind(clean, { isContent: false });
+    if (kind && kind !== "generic" && kind !== "inspeksi") {
+      return `dit_form:${kind}`;
+    }
   }
 
   if (dt === "04a" || dt === "04b") {

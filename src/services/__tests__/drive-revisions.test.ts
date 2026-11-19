@@ -71,4 +71,23 @@ describe("Drive Revision Freshness & Multi-Part Grouping", () => {
     expect(extractMultiPartSlotKey(wiwikMultiPart[4]!)).toBe("dit_form:ibpr");
     expect(deduplicateFilesByLatestRevision(wiwikMultiPart)).toHaveLength(9);
   });
+
+  it("uses deterministic confidence and filename tie-breaks instead of extracted text length (T7)", () => {
+    const fileA = {
+      id: "a",
+      fileName: "A_Lampiran.pdf",
+      docType: "04b",
+      classificationConfidence: 0.9,
+      extractedText: "pendek",
+    };
+    const fileB = {
+      id: "b",
+      fileName: "B_Lampiran.pdf",
+      docType: "04b",
+      classificationConfidence: 0.9,
+      extractedText: "teks jauh lebih panjang dari yang lain untuk menguji tie-break",
+    };
+
+    expect([fileB, fileA].sort(compareDriveFileFreshnessDesc)[0]?.id).toBe("a");
+  });
 });

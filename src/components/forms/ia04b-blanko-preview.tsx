@@ -43,6 +43,18 @@ export function Ia04bBlankoPreview(props: {
         isNameConfirmed={props.isNameConfirmed}
       />
 
+      {kelompokList.some((kp) => kp.isGenericFallback) && (
+        <div
+          role="status"
+          className="rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-950"
+        >
+          <strong>Catatan Skema (Pertanyaan Generik):</strong> Manifest skema belum mendefinisikan
+          daftar resmi Kelompok Pekerjaan FR.IA.04B, sehingga pertanyaan di bawah merupakan
+          fallback generik per unit. Lengkapi <em>Kelompok Pekerjaan</em> pada Pengaturan Skema untuk
+          naskah resmi BNSP.
+        </div>
+      )}
+
       <BlankoA4Sheet className="space-y-3">
         <BlankoTitleBar
           code="FR.IA.04B."

@@ -12,7 +12,9 @@ import type {
 import {
   resolveAssesseeOverallDecision,
   type OverallDecisionOverrideLike,
+  type ResolvedOverallDecision,
 } from "@/lib/ak05/decision-rules";
+import { readField, readStringField } from "@/lib/utils/record-fields";
 
 export const AK3U_OFFICIAL_UNITS = [
   "Merancang Strategi Pengendalian Risiko K3 di Tempat Kerja",
@@ -40,12 +42,7 @@ export interface Ia04bAspectSpec {
   kukRef: string;
 }
 
-export interface Ia04bKelompokSpec {
-  kpIndex: number;
-  title: string;
-  units: Array<{ no: number; code: string; title: string }>;
-  aspects: Ia04bAspectSpec[];
-}
+export type Ia04bKelompokSpec = SchemeKelompokSpec;
 
 export const IA04B_KELOMPOK_PEKERJAAN: Ia04bKelompokSpec[] = [
   {
@@ -269,6 +266,7 @@ export function resolveSchemeKelompokPekerjaan(
       {
         kpIndex: 1,
         title: "Kelompok Pekerjaan 1",
+        isGenericFallback: true,
         units: units.map((u, idx) => ({ no: idx + 1, code: u.code, title: u.title })),
         aspects: units.map((u, idx) => ({
           kpIndex: 1,
@@ -283,6 +281,10 @@ export function resolveSchemeKelompokPekerjaan(
     ];
   }
   return IA04B_KELOMPOK_PEKERJAAN;
+}
+
+export function hasGenericFallbackKelompok(scheme?: SchemeRecord | null): boolean {
+  return resolveSchemeKelompokPekerjaan(scheme).some((kp) => Boolean(kp.isGenericFallback));
 }
 
 export function resolveSchemeDocColumns(scheme?: SchemeRecord | null): string[] {
@@ -325,14 +327,6 @@ export function normalizeTukType(
   return "sewaktu";
 }
 
-function normalizeStr(s?: unknown): string {
-  return typeof s === "string" ? s.trim() : "";
-}
-
-function getField<T = unknown>(row: Record<string, unknown>, camel: string, snake: string): T | undefined {
-  return (row[camel] ?? row[snake]) as T | undefined;
-}
-
 export interface RawDecisionRow {
   unitCode?: string;
   unit_code?: string;
@@ -354,6 +348,7 @@ export function buildAk02Payload(params: {
   assessmentDate: string;
   decisions: RawDecisionRow[];
   manualOverride?: OverallDecisionOverrideLike | null;
+  resolvedOverall?: ResolvedOverallDecision;
   hasDit: boolean;
   hasDitForms?: boolean;
   hasWritten: boolean;
@@ -361,12 +356,15 @@ export function buildAk02Payload(params: {
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
 }): Ak02ExportPayload {
-  const decisionList = params.decisions.map((d) => ({
-    unitCode: normalizeStr(d.unitCode ?? d.unit_code),
-    unitTitle: normalizeStr(d.unitTitle ?? d.unit_title),
-    decision: d.decision ?? null,
-    note: normalizeStr(d.assessorNote ?? d.assessor_note),
-  }));
+  const decisionList = params.decisions.map((d) => {
+    const row = d as unknown as Record<string, unknown>;
+    return {
+      unitCode: readStringField(row, "unitCode", "unit_code"),
+      unitTitle: readStringField(row, "unitTitle", "unit_title"),
+      decision: d.decision ?? null,
+      note: readStringField(row, "assessorNote", "assessor_note"),
+    };
+  });
   const decidedList = decisionList.filter(
     (d) => d.decision === "K" || d.decision === "BK",
   );
@@ -397,11 +395,13 @@ export function buildAk02Payload(params: {
     };
   });
 
-  const resolved = resolveAssesseeOverallDecision({
-    unitDecisions: decisionList,
-    totalSchemeUnits: targetUnits.length,
-    manualOverride: params.manualOverride,
-  });
+  const resolved =
+    params.resolvedOverall ??
+    resolveAssesseeOverallDecision({
+      unitDecisions: decisionList,
+      totalSchemeUnits: targetUnits.length,
+      manualOverride: params.manualOverride,
+    });
   const bkDecisions = decidedList.filter((d) => d.decision === "BK");
   const bkFollowUp = bkDecisions
     .map((d) => `${d.unitCode || d.unitTitle}${d.note ? `: ${d.note}` : ""}`)
@@ -470,20 +470,20 @@ export function buildIa04bPayload(params: {
     ? resolveSchemeUnitsList(params.scheme)
     : AK3U_OFFICIAL_UNITS.map((title) => ({ code: undefined, title }));
   const matrixRaw = params.ditAnalysis
-    ? getField<Array<{ focusPoint?: string; status?: string }>>(
+    ? readField<Array<{ focusPoint?: string; status?: string }>>(
         params.ditAnalysis,
         "coverageMatrix",
         "coverage_matrix",
       )
     : undefined;
   const readinessRaw = params.ditAnalysis
-    ? getField<{ recommendation?: string }>(params.ditAnalysis, "readiness", "readiness")
+    ? readField<{ recommendation?: string }>(params.ditAnalysis, "readiness", "readiness")
     : undefined;
 
   const decisionMap = new Map<string, string>();
   for (const d of params.decisions) {
     if (d.decision !== "K" && d.decision !== "BK") continue;
-    const title = normalizeStr(d.unitTitle ?? d.unit_title).toLowerCase();
+    const title = readStringField(d as unknown as Record<string, unknown>, "unitTitle", "unit_title").toLowerCase();
     if (title) decisionMap.set(title, d.decision);
   }
 
@@ -570,7 +570,7 @@ export function buildIa06cPayload(params: {
   signatureMimeType?: "image/png" | "image/jpeg";
 }): Ia06cExportPayload {
   const itemVerdicts = params.writtenGrading
-    ? getField<
+    ? readField<
         Array<{
           questionNo: number;
           verdict: "Benar" | "Sebagian" | "Salah";
@@ -581,7 +581,7 @@ export function buildIa06cPayload(params: {
     : [];
 
   const vatmRecs = params.writtenGrading
-    ? getField<
+    ? readField<
         Array<{
           unitCode: string;
           unitTitle: string;

@@ -27,6 +27,7 @@ const MAX_ZIP_ARCHIVE_BYTES = 15 * 1024 * 1024;
 const MAX_ZIP_ENTRIES = 120;
 const MAX_ZIP_UNCOMPRESSED_BYTES = 40 * 1024 * 1024;
 const ZIP_EXTRACTABLE_EXT_RE = /\.(docx|doc|pptx|ppt|xlsx|xls|pdf|txt|csv|md|jpe?g|png|webp)$/i;
+export const EXTRACTABLE_TEXT_EXT_RE = /\.(docx|pptx|xlsx|pdf|txt|csv|md)$/i;
 
 export function inferMimeTypeFromFileName(fileName: string): string {
   const lower = fileName.toLowerCase();

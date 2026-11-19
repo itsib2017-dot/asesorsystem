@@ -2,6 +2,7 @@ import type { RuntimeLlmConfig } from "@/ai/llm";
 import { decryptSecret } from "@/lib/crypto/encryption";
 import { getConfig } from "@/lib/config/get-config";
 import { logEvent } from "@/lib/logger";
+import { readStringField } from "@/lib/utils/record-fields";
 import { findBestMatchingCandidate } from "@/lib/names";
 import {
   getAssesseeById,
@@ -19,10 +20,10 @@ import {
 import { getAssessorProfile } from "@/repositories/auth.repository";
 import {
   getBatchById,
+  getDriveFileById,
   listDriveFilesForBatch,
   updateDriveFileExtraction,
   upsertDriveFilesForBatch,
-  type DriveFileRecord,
 } from "@/repositories/batches.repository";
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
@@ -43,11 +44,13 @@ import {
   pickLatestDriveFile,
 } from "@/services/drive-revisions";
 import {
+  EXTRACTABLE_TEXT_EXT_RE,
   extractTextFromBuffer,
   unpackSafeZipEntries,
 } from "@/services/extract";
 import {
   downloadPublicDriveFileBuffer,
+  enrichFilesByContent,
   ensureDriveFileExtracted,
   resolveAssesseeDitInputs,
 } from "@/services/drive-extract";
@@ -102,6 +105,9 @@ async function resolveOptionalLlmConfig(
   };
 }
 
+import type { BatchSummary } from "@/repositories/batches.repository";
+import type { SchemeRecord } from "@/repositories/schemes.repository";
+
 async function resolveOptionalDriveApiKey(
   userId: string,
 ): Promise<string | undefined> {
@@ -112,6 +118,37 @@ async function resolveOptionalDriveApiKey(
   } catch {
     return undefined;
   }
+}
+
+async function resolveDriveApiKeyIfNeeded(
+  userId: string,
+  needed: boolean,
+  explicitKey?: string,
+): Promise<string | undefined> {
+  const cleanExplicit = explicitKey?.trim();
+  if (cleanExplicit) return cleanExplicit;
+  if (!needed) return undefined;
+  return resolveOptionalDriveApiKey(userId);
+}
+
+async function resolveSchemeForBatch(
+  userId: string,
+  batch: BatchSummary,
+): Promise<SchemeRecord | null> {
+  const schemes = await listSchemes(userId, batch.lspId);
+  return schemes.find((s) => s.id === batch.schemeId) ?? null;
+}
+
+async function loadBatchWithScheme(
+  userId: string,
+  batchId: string,
+): Promise<{ batch: BatchSummary; scheme: SchemeRecord | null }> {
+  const batch = await getBatchById(userId, batchId);
+  if (!batch) {
+    throw new Error(`NOT_FOUND: Batch ${batchId} tidak ditemukan.`);
+  }
+  const scheme = await resolveSchemeForBatch(userId, batch);
+  return { batch, scheme };
 }
 
 async function requireLlmConfig(userId: string): Promise<RuntimeLlmConfig> {
@@ -126,13 +163,13 @@ async function requireLlmConfig(userId: string): Promise<RuntimeLlmConfig> {
 
 const MAX_ZIP_ARCHIVES_PER_SCAN = 5;
 const MAX_CONTENT_INSPECT_PER_SCAN = 12;
-const SCAN_EXTRACTABLE_EXT_RE = /\.(docx|pptx|xlsx|pdf|txt|csv|md)$/i;
 
 interface ScanCandidateFile extends ClassifiedDriveFile {
   triageStatus?: "assigned" | "unmatched" | "not_needed";
   archiveEntryPath?: string | null;
   extractedText?: string | null;
   extractionMethod?: string | null;
+  triageReason?: string | null;
 }
 
 async function expandZipArchivesForScan(
@@ -181,7 +218,7 @@ async function expandZipArchivesForScan(
         let extractedText: string | null = null;
         let extractionMethod: string | null = null;
 
-        if (SCAN_EXTRACTABLE_EXT_RE.test(entry.fileName)) {
+        if (EXTRACTABLE_TEXT_EXT_RE.test(entry.fileName)) {
           try {
             const parsed = await extractTextFromBuffer({
               buffer: entry.buffer,
@@ -227,73 +264,6 @@ async function expandZipArchivesForScan(
   }
 
   return { items: output, unpackedZipCount };
-}
-
-async function enrichAmbiguousFilesByContent(
-  files: ScanCandidateFile[],
-  existingByDriveId: Map<string, DriveFileRecord>,
-  apiKey: string | undefined,
-): Promise<void> {
-  let networkInspected = 0;
-
-  for (const file of files) {
-    const existing = existingByDriveId.get(file.driveFileId);
-    const parentPath = file.drivePath.includes("/")
-      ? file.drivePath.slice(0, file.drivePath.lastIndexOf("/"))
-      : "";
-
-    const cachedText = file.extractedText ?? existing?.extractedText ?? null;
-    if (cachedText) {
-      const byText = classifyDocumentTextContent(
-        cachedText,
-        file.fileName,
-        parentPath,
-      );
-      if (byText && (file.docType === "unknown" || byText.confidence > file.confidence)) {
-        file.docType = byText.docType;
-        file.confidence = byText.confidence;
-        file.classificationReason = byText.reason;
-      }
-      continue;
-    }
-
-    const isAmbiguous =
-      file.docType === "unknown" ||
-      file.docType === "portofolio" ||
-      file.confidence < 0.85;
-    if (!isAmbiguous || !SCAN_EXTRACTABLE_EXT_RE.test(file.fileName)) continue;
-    if (networkInspected >= MAX_CONTENT_INSPECT_PER_SCAN) continue;
-
-    networkInspected++;
-    try {
-      const buffer = await downloadPublicDriveFileBuffer({
-        driveFileId: file.driveFileId,
-        apiKey,
-      });
-      const parsed = await extractTextFromBuffer({
-        buffer,
-        fileName: file.fileName,
-        mimeType: file.mimeType,
-      });
-      const trimmed = parsed.text.trim();
-      if (!trimmed) continue;
-
-      file.extractedText = trimmed;
-      file.extractionMethod = parsed.extractionMethod;
-      const byText = classifyDocumentTextContent(
-        trimmed,
-        file.fileName,
-        parentPath,
-      );
-      if (byText) {
-        file.docType = byText.docType;
-        file.confidence = byText.confidence;
-        file.classificationReason = byText.reason;
-      }
-    } catch {
-      // Ignore transient/mocked download misses during scan; assessor can re-run via Triage
-    }
-  }
 }
 
 async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult> {
@@ -352,9 +322,9 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
   }
 
   const payloadApiKey =
-    typeof job.payload.apiKey === "string" ? job.payload.apiKey.trim() : "";
+    typeof job.payload.apiKey === "string" ? job.payload.apiKey : undefined;
   const driveApiKey =
-    payloadApiKey || (await resolveOptionalDriveApiKey(userId)) || "";
+    (await resolveDriveApiKeyIfNeeded(userId, true, payloadApiKey)) ?? "";
 
   const [discovered, existingFiles, existingAssesseesBefore] = await Promise.all([
     crawlPublicDriveFolder({
@@ -372,11 +342,14 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     driveApiKey || undefined,
   );
 
-  await enrichAmbiguousFilesByContent(
-    expandedFiles,
-    existingByDriveId,
-    driveApiKey || undefined,
-  );
+  await enrichFilesByContent({
+    files: expandedFiles,
+    apiKey: driveApiKey || undefined,
+    maxInspect: MAX_CONTENT_INSPECT_PER_SCAN,
+    persistUpdates: false,
+    reassignAssessee: false,
+    cachedTextLookup: (file) => existingByDriveId.get(file.driveFileId)?.extractedText,
+  });
 
   const suratTugasRoster: string[] = [];
   const inferredPerFile = expandedFiles.map((file) => {
@@ -429,6 +402,7 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
       lspId: batch.lspId,
       batchId: batch.id,
       names: authoritativeNames,
+      existingPool: existingAssesseesBefore,
     });
     upsertedRecords = authUpserted;
 
@@ -441,27 +415,35 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
       }
     }
 
+    const canonicalMatchCache = new Map<
+      string,
+      { id: string; displayName: string } | null
+    >();
+    const matchCanonical = (label: string) => {
+      if (canonicalMatchCache.has(label)) {
+        return canonicalMatchCache.get(label) ?? undefined;
+      }
+      const matched = findBestMatchingCandidate(label, canonicalTargets) ?? null;
+      canonicalMatchCache.set(label, matched);
+      return matched ?? undefined;
+    };
+
     for (const existing of existingAssesseesBefore) {
       if (canonicalIds.has(existing.id) || existing.certificateNameConfirmed) continue;
       const cleanedExisting = cleanCandidateLabel(existing.displayName);
-      const dupMatch = findBestMatchingCandidate(
-        cleanedExisting || existing.displayName,
-        canonicalTargets,
-      );
-      if (dupMatch) {
+      if (matchCanonical(cleanedExisting || existing.displayName)) {
         staleDuplicateIds.add(existing.id);
       }
     }
 
-    const trulyNewNonAuth = nonAuthNames.filter(
-      (name) => !findBestMatchingCandidate(name, canonicalTargets),
-    );
+    const trulyNewNonAuth = nonAuthNames.filter((name) => !matchCanonical(name));
     if (trulyNewNonAuth.length > 0) {
       upsertedRecords = await upsertAssesseesForBatch({
         userId,
         lspId: batch.lspId,
         batchId: batch.id,
         names: trulyNewNonAuth,
+        existingPool: authUpserted,
       });
     }
   } else {
@@ -472,19 +454,26 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
         lspId: batch.lspId,
         batchId: batch.id,
         names: fallbackNames,
+        existingPool: existingAssesseesBefore,
       });
     }
   }
 
-  const latestAssessees = await listAssesseesByBatch(userId, batch.id);
-  const assesseePool = latestAssessees.length > 0 ? latestAssessees : upsertedRecords;
+  const assesseePool = upsertedRecords.length > 0 ? upsertedRecords : existingAssesseesBefore;
   const matchTargets = assesseePool.filter((a) => !staleDuplicateIds.has(a.id));
+  const poolMatchCache = new Map<string, (typeof matchTargets)[number] | null>();
 
   const enrichedFiles = inferredPerFile.map(({ file, candidateName }) => {
     const existing = existingByDriveId.get(file.driveFileId);
-    const matched = candidateName
-      ? findBestMatchingCandidate(candidateName, matchTargets)
-      : undefined;
+    let matched: (typeof matchTargets)[number] | undefined;
+    if (candidateName) {
+      if (poolMatchCache.has(candidateName)) {
+        matched = poolMatchCache.get(candidateName) ?? undefined;
+      } else {
+        matched = findBestMatchingCandidate(candidateName, matchTargets);
+        poolMatchCache.set(candidateName, matched ?? null);
+      }
+    }
 
     if (matched) {
       return {
@@ -593,18 +582,41 @@ async function handleExtractFileJob(job: WorkerJobInput): Promise<WorkerJobResul
     extractedText = parsed.text;
     extractionMethod = parsed.extractionMethod;
   } else if (!extractedText && driveFileId) {
-    const driveApiKey = await resolveOptionalDriveApiKey(userId);
-    const buffer = await downloadPublicDriveFileBuffer({
+    const existingRecord = await getDriveFileById(userId, fileId);
+    const driveApiKey = await resolveDriveApiKeyIfNeeded(
+      userId,
+      !existingRecord?.extractedText?.trim(),
+    );
+    const targetFile = existingRecord ?? {
+      id: fileId,
       driveFileId,
-      apiKey: driveApiKey,
-    });
-    const parsed = await extractTextFromBuffer({
-      buffer,
       fileName: fileName || "document.docx",
       mimeType,
+      extractedText: null,
+      extractionMethod: null,
+    };
+
+    const outcome = await ensureDriveFileExtracted({
+      userId,
+      file: targetFile,
+      apiKey: driveApiKey,
     });
-    extractedText = parsed.text;
-    extractionMethod = parsed.extractionMethod;
+    extractedText = outcome.text ?? "";
+    extractionMethod = outcome.extractionMethod ?? "drive_extract";
+
+    if (!extractedText) {
+      throw new Error(
+        outcome.error
+          ? `UNPROCESSABLE: ${outcome.error}`
+          : "UNPROCESSABLE: Tidak ada teks yang dapat diekstrak dari berkas.",
+      );
+    }
+
+    return {
+      status: "done",
+      progress: 100,
+      meta: { fileId, extractionMethod, chars: extractedText.length },
+    };
   }
 
   if (!extractedText) {
@@ -693,15 +705,9 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
     throw new Error(`NOT_FOUND: Asesi ${assesseeId} tidak ditemukan.`);
   }
 
-  const batch = await getBatchById(userId, assessee.batchId);
-  if (!batch) {
-    throw new Error(`NOT_FOUND: Batch ${assessee.batchId} tidak ditemukan.`);
-  }
-
+  const { batch, scheme } = await loadBatchWithScheme(userId, assessee.batchId);
   const files = await listDriveFilesForBatch(userId, batch.id);
   const assesseeFiles = files.filter((f) => f.assesseeId === assessee.id);
-  const schemes = await listSchemes(userId, assessee.lspId);
-  const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
 
   const payload04a = typeof job.payload.frIa04aText === "string" ? job.payload.frIa04aText.trim() : "";
   const payload04b =
@@ -713,20 +719,17 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
       ? job.payload.candidateProfileSummary.trim()
       : "";
 
-  const driveApiKey =
-    !payload04a || !payload04b || !payloadCv
-      ? await resolveOptionalDriveApiKey(userId)
-      : undefined;
-  const resolvedInputs =
-    !payload04a || !payload04b || !payloadCv
-      ? await resolveAssesseeDitInputs({
-          userId,
-          files: assesseeFiles,
-          batchFiles: files,
-          scheme,
-          apiKey: driveApiKey,
-        })
-      : null;
+  const needsInputs = !payload04a || !payload04b || !payloadCv;
+  const driveApiKey = await resolveDriveApiKeyIfNeeded(userId, needsInputs);
+  const resolvedInputs = needsInputs
+    ? await resolveAssesseeDitInputs({
+        userId,
+        files: assesseeFiles,
+        batchFiles: files,
+        scheme,
+        apiKey: driveApiKey,
+      })
+    : null;
 
   const frIa04aText = payload04a || resolvedInputs?.frIa04aText || "";
   const presentationTranscript = payload04b || resolvedInputs?.presentationTranscript || "";
@@ -802,13 +805,7 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
     throw new Error(`NOT_FOUND: Asesi ${assesseeId} tidak ditemukan.`);
   }
 
-  const batch = await getBatchById(userId, assessee.batchId);
-  if (!batch) {
-    throw new Error(`NOT_FOUND: Batch ${assessee.batchId} tidak ditemukan.`);
-  }
-
-  const schemes = await listSchemes(userId, assessee.lspId);
-  const scheme = schemes.find((s) => s.id === batch.schemeId);
+  const { batch, scheme } = await loadBatchWithScheme(userId, assessee.batchId);
   const configuredMapping = await getConfig("form_mapping.06", { lspId: assessee.lspId });
   const mapping = scheme?.manifest?.formSuffixMapping ??
     configuredMapping ?? {
@@ -831,9 +828,7 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
   const needsDriveExtraction =
     (!job.payload.masterKeyText || !job.payload.studentAnswerText) &&
     candidateFiles.some((f) => !f.extractedText);
-  const driveApiKey = needsDriveExtraction
-    ? await resolveOptionalDriveApiKey(userId)
-    : undefined;
+  const driveApiKey = await resolveDriveApiKeyIfNeeded(userId, needsDriveExtraction);
 
   const byDocType: Record<string, string> = {};
   for (const f of candidateFiles) {
@@ -935,25 +930,31 @@ async function handleSimilarityRunJob(job: WorkerJobInput): Promise<WorkerJobRes
       }))
       .filter((s) => s.assesseeId && s.text.trim().length > 0);
   } else {
-    const driveApiKey = await resolveOptionalDriveApiKey(userId);
+    const selectedByAssessee = assessees.map((a) => ({
+      assesseeId: a.id,
+      targetFile: pickLatestDriveFile(
+        files.filter(
+          (f) => f.assesseeId === a.id && f.docType.toLowerCase() === answerDocType,
+        ),
+      ),
+    }));
+    const needsExtraction = selectedByAssessee.some(
+      (x) => x.targetFile && !x.targetFile.extractedText?.trim(),
+    );
+    const driveApiKey = await resolveDriveApiKeyIfNeeded(userId, needsExtraction);
     const resolved: Array<{ assesseeId: string; text: string }> = [];
     const CHUNK = 5;
-    for (let i = 0; i < assessees.length; i += CHUNK) {
-      const slice = assessees.slice(i, i + CHUNK);
+    for (let i = 0; i < selectedByAssessee.length; i += CHUNK) {
+      const slice = selectedByAssessee.slice(i, i + CHUNK);
       const batchTexts = await Promise.all(
-        slice.map(async (a) => {
-          const targetFile = pickLatestDriveFile(
-            files.filter(
-              (f) => f.assesseeId === a.id && f.docType.toLowerCase() === answerDocType,
-            ),
-          );
-          if (!targetFile) return { assesseeId: a.id, text: "" };
+        slice.map(async ({ assesseeId, targetFile }) => {
+          if (!targetFile) return { assesseeId, text: "" };
           const outcome = await ensureDriveFileExtracted({
             userId,
             file: targetFile,
             apiKey: driveApiKey,
           });
-          return { assesseeId: a.id, text: outcome.text ?? "" };
+          return { assesseeId, text: outcome.text ?? "" };
         }),
       );
       resolved.push(...batchTexts);
@@ -1033,11 +1034,10 @@ async function handleAk05ExportJob(job: WorkerJobInput): Promise<WorkerJobResult
     );
   }
 
-  const [profile, schemes] = await Promise.all([
+  const [profile, scheme] = await Promise.all([
     getAssessorProfile(userId),
-    listSchemes(userId, batch.lspId),
+    resolveSchemeForBatch(userId, batch),
   ]);
-  const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
   const totalSchemeUnits = resolveUnitsForScheme(scheme).length;
   const rows = await resolveAk05BatchRows(userId, batchId, assessees, {
     totalSchemeUnits,
@@ -1049,8 +1049,7 @@ async function handleAk05ExportJob(job: WorkerJobInput): Promise<WorkerJobResult
     batchId: batch.id,
     assessorId: userId,
     assessorRegNo:
-      (profile?.regNoMet as string | null | undefined) ??
-      (profile?.reg_no_met as string | null | undefined) ??
+      readStringField(profile as Record<string, unknown> | null | undefined, "regNoMet", "reg_no_met") ||
       null,
     tukType: batch.tukType ?? "sewaktu",
     status: "draft",

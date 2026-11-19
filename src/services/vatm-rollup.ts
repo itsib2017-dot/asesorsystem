@@ -1,3 +1,5 @@
+import { readArrayField, readField, readStringField } from "@/lib/utils/record-fields";
+
 export interface SchemeUnitRef {
   code: string;
   title: string;
@@ -14,16 +16,6 @@ function normalizeUnitKey(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function getArrayField(
-  row: Record<string, unknown> | null | undefined,
-  camel: string,
-  snake: string,
-): Array<Record<string, unknown>> {
-  if (!row) return [];
-  const val = row[camel] ?? row[snake];
-  return Array.isArray(val) ? (val as Array<Record<string, unknown>>) : [];
-}
-
 /**
  * Aggregates binary VATM recommendations per competency unit across all three
  * assessment evidence channels: DIT (04A/04B), Written Test (06B/06C), and
@@ -36,27 +28,29 @@ export function computeVatmUnitRollup(params: {
   writtenGrading?: Record<string, unknown> | null;
   interviewAssessment?: Record<string, unknown> | null;
 }): VatmUnitRollupItem[] {
-  const writtenRecs = getArrayField(
+  const writtenRecs = readArrayField(
     params.writtenGrading,
     "vatmUnitRecommendations",
     "vatm_unit_recommendations",
   );
-  const interviewRecs = getArrayField(
+  const interviewRecs = readArrayField(
     params.interviewAssessment,
     "vatmUnitRecommendations",
     "vatm_unit_recommendations",
   );
 
-  const ditCoverage = getArrayField(
+  const ditCoverage = readArrayField(
     params.ditAnalysis,
     "coverageMatrix",
     "coverage_matrix",
   );
   const ditReadiness =
     (params.ditAnalysis?.readiness as { recommendation?: string } | undefined) ?? undefined;
-  const interviewOverall =
-    (params.interviewAssessment?.overallRecommendation ??
-      params.interviewAssessment?.overall_recommendation) as "K" | "BK" | undefined;
+  const interviewOverall = readField<"K" | "BK">(
+    params.interviewAssessment,
+    "overallRecommendation",
+    "overall_recommendation",
+  );
 
   // Build deduplicated unit catalog from scheme manifest + any explicit channel outputs
   const unitMap = new Map<string, SchemeUnitRef>();
@@ -64,8 +58,8 @@ export function computeVatmUnitRollup(params: {
     if (u.code.trim()) unitMap.set(normalizeUnitKey(u.code), u);
   }
   for (const r of [...writtenRecs, ...interviewRecs]) {
-    const code = String(r.unitCode ?? r.unit_code ?? "").trim();
-    const title = String(r.unitTitle ?? r.unit_title ?? "").trim();
+    const code = readStringField(r, "unitCode", "unit_code");
+    const title = readStringField(r, "unitTitle", "unit_title");
     if (code && !unitMap.has(normalizeUnitKey(code))) {
       unitMap.set(normalizeUnitKey(code), { code, title: title || code });
     }
@@ -77,14 +71,14 @@ export function computeVatmUnitRollup(params: {
     const titleKey = normalizeUnitKey(unit.title);
 
     const wMatch = writtenRecs.find((r) => {
-      const rc = normalizeUnitKey(String(r.unitCode ?? r.unit_code ?? ""));
-      const rt = normalizeUnitKey(String(r.unitTitle ?? r.unit_title ?? ""));
+      const rc = normalizeUnitKey(readStringField(r, "unitCode", "unit_code"));
+      const rt = normalizeUnitKey(readStringField(r, "unitTitle", "unit_title"));
       return (rc && rc === codeKey) || (rt && rt === titleKey);
     });
 
     const iMatch = interviewRecs.find((r) => {
-      const rc = normalizeUnitKey(String(r.unitCode ?? r.unit_code ?? ""));
-      const rt = normalizeUnitKey(String(r.unitTitle ?? r.unit_title ?? ""));
+      const rc = normalizeUnitKey(readStringField(r, "unitCode", "unit_code"));
+      const rt = normalizeUnitKey(readStringField(r, "unitTitle", "unit_title"));
       return (rc && rc === codeKey) || (rt && rt === titleKey);
     });
 

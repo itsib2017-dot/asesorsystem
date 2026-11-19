@@ -1,5 +1,5 @@
 import { desc, eq, sql } from "drizzle-orm";
-import { hasDatabaseUrl, runRepositoryDualPath, withRlsTransaction } from "@/db";
+import { runRepositoryDualPath } from "@/db";
 import {
   ditAnalyses,
   writtenGradings,
@@ -12,28 +12,31 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function getLatestDitAnalysis(userId: string, assesseeId: string) {
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, (tx) =>
-      tx
+  return runRepositoryDualPath({
+    userId,
+    label: "AssessmentRepository.getLatestDitAnalysis",
+    drizzle: async (tx) => {
+      const rows = await tx
         .select()
         .from(ditAnalyses)
         .where(eq(ditAnalyses.assesseeId, assesseeId))
         .orderBy(desc(ditAnalyses.createdAt))
-        .limit(1),
-    );
-    return rows[0] ?? null;
-  }
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("dit_analyses")
+        .select("*")
+        .eq("assessee_id", assesseeId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase
-    .from("dit_analyses")
-    .select("*")
-    .eq("assessee_id", assesseeId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return data ?? null;
+      return data ?? null;
+    },
+  });
 }
 
 export async function saveDitAnalysis(params: {
@@ -51,10 +54,12 @@ export async function saveDitAnalysis(params: {
   official04b: unknown;
   status: "done" | "needs_manual_review" | "failed";
   rawOutput: unknown;
-}) {
-  if (hasDatabaseUrl()) {
-    await withRlsTransaction(params.userId, (tx) =>
-      tx.insert(ditAnalyses).values({
+}): Promise<void> {
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssessmentRepository.saveDitAnalysis",
+    drizzle: async (tx) => {
+      await tx.insert(ditAnalyses).values({
         lspId: params.lspId,
         batchId: params.batchId,
         assesseeId: params.assesseeId,
@@ -69,74 +74,79 @@ export async function saveDitAnalysis(params: {
         status: params.status,
         rawOutput: params.rawOutput,
         createdBy: params.userId,
-      }),
-    );
-    return;
-  }
-
-  const supabase = await getSupabaseServerClient();
-  await supabase.from("dit_analyses").insert({
-    lsp_id: params.lspId,
-    batch_id: params.batchId,
-    assessee_id: params.assesseeId,
-    model: params.model,
-    prompt_version: params.promptVersion,
-    coverage_matrix: params.coverageMatrix,
-    gap_questions: params.gapQuestions,
-    question_bank: params.questionBank,
-    model_answers: params.modelAnswers,
-    readiness: params.readiness,
-    official_04b: params.official04b,
-    status: params.status,
-    raw_output: params.rawOutput,
-    created_by: params.userId,
+      });
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase.from("dit_analyses").insert({
+        lsp_id: params.lspId,
+        batch_id: params.batchId,
+        assessee_id: params.assesseeId,
+        model: params.model,
+        prompt_version: params.promptVersion,
+        coverage_matrix: params.coverageMatrix,
+        gap_questions: params.gapQuestions,
+        question_bank: params.questionBank,
+        model_answers: params.modelAnswers,
+        readiness: params.readiness,
+        official_04b: params.official04b,
+        status: params.status,
+        raw_output: params.rawOutput,
+        created_by: params.userId,
+      });
+    },
   });
 }
 
 export async function getLatestWrittenGrading(userId: string, assesseeId: string) {
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, (tx) =>
-      tx
+  return runRepositoryDualPath({
+    userId,
+    label: "AssessmentRepository.getLatestWrittenGrading",
+    drizzle: async (tx) => {
+      const rows = await tx
         .select()
         .from(writtenGradings)
         .where(eq(writtenGradings.assesseeId, assesseeId))
         .orderBy(desc(writtenGradings.createdAt))
-        .limit(1),
-    );
-    return rows[0] ?? null;
-  }
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("written_gradings")
+        .select("*")
+        .eq("assessee_id", assesseeId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase
-    .from("written_gradings")
-    .select("*")
-    .eq("assessee_id", assesseeId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return data ?? null;
+      return data ?? null;
+    },
+  });
 }
 
 export async function listWrittenGradingsForBatch(userId: string, batchId: string) {
-  if (hasDatabaseUrl()) {
-    return withRlsTransaction(userId, (tx) =>
+  return runRepositoryDualPath({
+    userId,
+    label: "AssessmentRepository.listWrittenGradingsForBatch",
+    drizzle: async (tx) =>
       tx
         .select()
         .from(writtenGradings)
         .where(eq(writtenGradings.batchId, batchId))
         .orderBy(desc(writtenGradings.createdAt)),
-    );
-  }
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("written_gradings")
+        .select("*")
+        .eq("batch_id", batchId)
+        .order("created_at", { ascending: false });
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase
-    .from("written_gradings")
-    .select("*")
-    .eq("batch_id", batchId)
-    .order("created_at", { ascending: false });
-
-  return data ?? [];
+      return data ?? [];
+    },
+  });
 }
 
 export async function saveWrittenGrading(params: {
@@ -151,10 +161,12 @@ export async function saveWrittenGrading(params: {
   plagiarismReport: unknown;
   model: string;
   promptVersion: string;
-}) {
-  if (hasDatabaseUrl()) {
-    await withRlsTransaction(params.userId, (tx) =>
-      tx.insert(writtenGradings).values({
+}): Promise<void> {
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssessmentRepository.saveWrittenGrading",
+    drizzle: async (tx) => {
+      await tx.insert(writtenGradings).values({
         lspId: params.lspId,
         batchId: params.batchId,
         assesseeId: params.assesseeId,
@@ -165,48 +177,52 @@ export async function saveWrittenGrading(params: {
         plagiarismReport: params.plagiarismReport,
         model: params.model,
         promptVersion: params.promptVersion,
-      }),
-    );
-    return;
-  }
-
-  const supabase = await getSupabaseServerClient();
-  await supabase.from("written_gradings").insert({
-    lsp_id: params.lspId,
-    batch_id: params.batchId,
-    assessee_id: params.assesseeId,
-    form_mapping: params.formMapping,
-    item_verdicts: params.itemVerdicts,
-    error_summary: params.errorSummary,
-    vatm_unit_recommendations: params.vatmUnitRecommendations,
-    plagiarism_report: params.plagiarismReport,
-    model: params.model,
-    prompt_version: params.promptVersion,
+      });
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase.from("written_gradings").insert({
+        lsp_id: params.lspId,
+        batch_id: params.batchId,
+        assessee_id: params.assesseeId,
+        form_mapping: params.formMapping,
+        item_verdicts: params.itemVerdicts,
+        error_summary: params.errorSummary,
+        vatm_unit_recommendations: params.vatmUnitRecommendations,
+        plagiarism_report: params.plagiarismReport,
+        model: params.model,
+        prompt_version: params.promptVersion,
+      });
+    },
   });
 }
 
 export async function listDecisionsForAssessee(userId: string, assesseeId: string) {
-  if (hasDatabaseUrl()) {
-    return withRlsTransaction(userId, (tx) =>
+  return runRepositoryDualPath({
+    userId,
+    label: "AssessmentRepository.listDecisionsForAssessee",
+    drizzle: async (tx) =>
       tx.select().from(decisions).where(eq(decisions.assesseeId, assesseeId)),
-    );
-  }
-
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase.from("decisions").select("*").eq("assessee_id", assesseeId);
-  return data ?? [];
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase.from("decisions").select("*").eq("assessee_id", assesseeId);
+      return data ?? [];
+    },
+  });
 }
 
 export async function listDecisionsForBatch(userId: string, batchId: string) {
-  if (hasDatabaseUrl()) {
-    return withRlsTransaction(userId, (tx) =>
+  return runRepositoryDualPath({
+    userId,
+    label: "AssessmentRepository.listDecisionsForBatch",
+    drizzle: async (tx) =>
       tx.select().from(decisions).where(eq(decisions.batchId, batchId)),
-    );
-  }
-
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase.from("decisions").select("*").eq("batch_id", batchId);
-  return data ?? [];
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase.from("decisions").select("*").eq("batch_id", batchId);
+      return data ?? [];
+    },
+  });
 }
 
 export async function upsertUnitDecision(params: {
@@ -220,11 +236,13 @@ export async function upsertUnitDecision(params: {
   vatmReasoning?: string;
   decision: "K" | "BK";
   assessorNote?: string;
-}) {
+}): Promise<void> {
   const now = new Date();
-  if (hasDatabaseUrl()) {
-    await withRlsTransaction(params.userId, (tx) =>
-      tx
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssessmentRepository.upsertUnitDecision",
+    drizzle: async (tx) => {
+      await tx
         .insert(decisions)
         .values({
           lspId: params.lspId,
@@ -247,65 +265,70 @@ export async function upsertUnitDecision(params: {
             decidedBy: params.userId,
             decidedAt: now,
           },
-        }),
-    );
-    return;
-  }
-
-  const supabase = await getSupabaseServerClient();
-  await supabase.from("decisions").upsert(
-    {
-      lsp_id: params.lspId,
-      batch_id: params.batchId,
-      assessee_id: params.assesseeId,
-      unit_code: params.unitCode,
-      unit_title: params.unitTitle,
-      ai_recommendation: params.aiRecommendation ?? null,
-      vatm_reasoning: params.vatmReasoning ?? null,
-      decision: params.decision,
-      assessor_note: params.assessorNote ?? null,
-      decided_by: params.userId,
-      decided_at: now.toISOString(),
+        });
     },
-    { onConflict: "assessee_id,unit_code" },
-  );
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase.from("decisions").upsert(
+        {
+          lsp_id: params.lspId,
+          batch_id: params.batchId,
+          assessee_id: params.assesseeId,
+          unit_code: params.unitCode,
+          unit_title: params.unitTitle,
+          ai_recommendation: params.aiRecommendation ?? null,
+          vatm_reasoning: params.vatmReasoning ?? null,
+          decision: params.decision,
+          assessor_note: params.assessorNote ?? null,
+          decided_by: params.userId,
+          decided_at: now.toISOString(),
+        },
+        { onConflict: "assessee_id,unit_code" },
+      );
+    },
+  });
 }
 
 export async function listSimilarityPairsByBatch(userId: string, batchId: string) {
-  if (hasDatabaseUrl()) {
-    return withRlsTransaction(userId, (tx) =>
+  return runRepositoryDualPath({
+    userId,
+    label: "AssessmentRepository.listSimilarityPairsByBatch",
+    drizzle: async (tx) =>
       tx.select().from(similarityPairs).where(eq(similarityPairs.batchId, batchId)),
-    );
-  }
-
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase.from("similarity_pairs").select("*").eq("batch_id", batchId);
-  return data ?? [];
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase.from("similarity_pairs").select("*").eq("batch_id", batchId);
+      return data ?? [];
+    },
+  });
 }
 
 export async function getAk05ReportForBatch(userId: string, batchId: string) {
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, (tx) =>
-      tx
+  return runRepositoryDualPath({
+    userId,
+    label: "AssessmentRepository.getAk05ReportForBatch",
+    drizzle: async (tx) => {
+      const rows = await tx
         .select()
         .from(ak05Reports)
         .where(eq(ak05Reports.batchId, batchId))
         .orderBy(desc(ak05Reports.createdAt))
-        .limit(1),
-    );
-    return rows[0] ?? null;
-  }
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("ak05_reports")
+        .select("*")
+        .eq("batch_id", batchId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase
-    .from("ak05_reports")
-    .select("*")
-    .eq("batch_id", batchId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return data ?? null;
+      return data ?? null;
+    },
+  });
 }
 
 export async function saveSimilarityPairsForBatch(params: {
@@ -465,28 +488,31 @@ export async function saveAk05ReportForBatch(params: {
 }
 
 export async function getLatestInterviewAssessment(userId: string, assesseeId: string) {
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, (tx) =>
-      tx
+  return runRepositoryDualPath({
+    userId,
+    label: "AssessmentRepository.getLatestInterviewAssessment",
+    drizzle: async (tx) => {
+      const rows = await tx
         .select()
         .from(interviewAssessments)
         .where(eq(interviewAssessments.assesseeId, assesseeId))
         .orderBy(desc(interviewAssessments.createdAt))
-        .limit(1),
-    );
-    return rows[0] ?? null;
-  }
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("interview_assessments")
+        .select("*")
+        .eq("assessee_id", assesseeId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase
-    .from("interview_assessments")
-    .select("*")
-    .eq("assessee_id", assesseeId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return data ?? null;
+      return data ?? null;
+    },
+  });
 }
 
 export async function saveInterviewAssessment(params: {

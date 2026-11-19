@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   updateDriveFileClassification: vi.fn(),
   upsertDriveFilesForBatch: vi.fn(),
   getBatchById: vi.fn(),
+  getDriveFileById: vi.fn(),
   listDriveFilesForBatch: vi.fn(),
   listAssesseesByBatch: vi.fn(),
   upsertAssesseesForBatch: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@/repositories/jobs.repository", () => ({
 
 vi.mock("@/repositories/batches.repository", () => ({
   getBatchById: mocks.getBatchById,
+  getDriveFileById: mocks.getDriveFileById,
   listDriveFilesForBatch: mocks.listDriveFilesForBatch,
   updateDriveFileExtraction: mocks.updateDriveFileExtraction,
   updateDriveFileClassification: mocks.updateDriveFileClassification,
@@ -483,5 +485,31 @@ describe("Worker dispatcher and queue runner", () => {
 
     expect(out.status).toBe("done");
     expect(out.meta).toEqual({ comparedAssessees: 2, flaggedPairs: 1 });
+  });
+
+  it("reuses persisted extractedText cache on extract_file without re-downloading from Drive (T5a)", async () => {
+    mocks.getDriveFileById.mockResolvedValue({
+      id: "db-cached-1",
+      driveFileId: "drive-cached-1",
+      fileName: "FR.IA.06C.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      extractedText: "Teks sudah diekstrak sebelumnya dari database.",
+      extractionMethod: "ooxml_docx",
+    });
+
+    const res = await runWorkerJob({
+      id: "job-extract-cache",
+      type: "extract_file",
+      userId: "user-1",
+      payload: {
+        fileId: "db-cached-1",
+        driveFileId: "drive-cached-1",
+        fileName: "FR.IA.06C.docx",
+      },
+    });
+
+    expect(res.status).toBe("done");
+    expect(res.meta).toMatchObject({ extractionMethod: "ooxml_docx", chars: 46 });
+    expect(mocks.updateDriveFileExtraction).not.toHaveBeenCalled();
   });
 });

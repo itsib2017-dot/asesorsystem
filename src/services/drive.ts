@@ -1,5 +1,14 @@
 import { validateSafeExternalUrl } from "@/lib/security/ssrf";
 import { inferMimeTypeFromFileName } from "@/services/extract";
+import {
+  DRIVE_DOC_TYPES,
+  NON_CANDIDATE_SHARED_TOKENS,
+  detectDitFormKind,
+  isDitTaskContext,
+  normaliseFileTokens,
+  stripKnownFileExtensions,
+  type KnownDriveDocType,
+} from "@/services/drive-doc-types";
 
 export interface ClassifiedDriveFile {
   driveFileId: string;
@@ -39,6 +48,233 @@ export function extractGoogleSheetId(url: string): string | null {
   return match?.[1] ?? null;
 }
 
+interface NameMatchContext {
+  fnLower: string;
+  fnBase: string;
+  ppNorm: string;
+}
+
+interface UnifiedClassifierRule {
+  docType: KnownDriveDocType;
+  confidence: number;
+  matchesName?: (ctx: NameMatchContext) => boolean;
+  nameReason?: string;
+  contentPattern?: RegExp;
+  contentReason?: string;
+}
+
+const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> = {
+  materi_pelatihan: {
+    docType: "materi_pelatihan",
+    confidence: DRIVE_DOC_TYPES.materi_pelatihan.defaultConfidence,
+    matchesName: ({ ppNorm, fnBase }) =>
+      /(?:^|\/)\s*materi(?:\s|$|\/)/i.test(ppNorm) ||
+      /^(?:cover\s+materi|silabus|tata\s*tertib|\d+(?:\s*&\s*\d+)?\.\s*ahli\s*k3|modul\b|materi\b|handout\b|bahan\s*ajar\b|\d+\.\s*pengantar\s*pelatihan\b)/i.test(
+        fnBase,
+      ),
+    nameReason: "Materi atau silabus pelatihan",
+  },
+  ktp: {
+    docType: "ktp",
+    confidence: DRIVE_DOC_TYPES.ktp.defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /(?:^|\s)ktpp?(?:$|\s)|kartu\s*tanda\s*penduduk|(?:^|\s)nik(?:$|\s)/i.test(fnBase),
+    nameReason: "Dokumen identitas KTP",
+    contentPattern:
+      /kartu\s*tanda\s*penduduk|nik\s*:?\s*\d{12,16}|provinsi[\s\S]{0,60}kabupaten|gol\.?\s*darah/i,
+    contentReason: "Terdeteksi dari hasil OCR/teks: dokumen identitas KTP",
+  },
+  apl01: {
+    docType: "apl01",
+    confidence: DRIVE_DOC_TYPES.apl01.defaultConfidence,
+    matchesName: ({ fnBase }) => /apl[\s.]*0?1|permohonan\s*sertifikasi/i.test(fnBase),
+    nameReason: "Formulir permohonan FR.APL.01",
+    contentPattern: /\bfr[\s._-]*apl[\s._-]*01\b|permohonan\s*sertifikasi\s*kompetensi/i,
+    contentReason: "Terdeteksi dari isi dokumen: formulir FR.APL.01",
+  },
+  apl02: {
+    docType: "apl02",
+    confidence: DRIVE_DOC_TYPES.apl02.defaultConfidence,
+    matchesName: ({ fnBase }) => /apl[\s.]*0?2|asesmen\s*mandiri/i.test(fnBase),
+    nameReason: "Formulir asesmen mandiri FR.APL.02",
+    contentPattern: /\bfr[\s._-]*apl[\s._-]*02\b|asesmen\s*mandiri/i,
+    contentReason: "Terdeteksi dari isi dokumen: formulir FR.APL.02",
+  },
+  "04a": {
+    docType: "04a",
+    confidence: DRIVE_DOC_TYPES["04a"].defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /(?:^|\s)04a(?:$|\s)|ia[\s.]*04a|instruksi\s*terstruktur|daftar\s*instruksi|soal\s*dit|panduan\s*(?:tugas\s*)?dit/i.test(
+        fnBase,
+      ),
+    nameReason: "Daftar Instruksi Terstruktur FR.IA.04A",
+    contentPattern:
+      /\bfr[\s._-]*ia[\s._-]*04a\b|daftar\s*instruksi\s*terstruktur|penjelasan\s*proyek\s*singkat/i,
+    contentReason: "Terdeteksi dari isi dokumen: memuat judul/formulir FR.IA.04A",
+  },
+  "04b_explicit": {
+    docType: "04b",
+    confidence: DRIVE_DOC_TYPES["04b"].defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /(?:^|\s)04b(?:$|\s)|ia[\s.]*04b|observasi\s*demonstrasi|presentasi/i.test(fnBase),
+    nameReason: "Presentasi / Demonstrasi DIT FR.IA.04B",
+    contentPattern: /\bfr[\s._-]*ia[\s._-]*04b\b|penilaian\s*proyek\s*singkat/i,
+    contentReason: "Terdeteksi dari isi dokumen: memuat FR.IA.04B",
+  },
+  "06a": {
+    docType: "06a",
+    confidence: DRIVE_DOC_TYPES["06a"].defaultConfidence,
+    matchesName: ({ fnBase }) => /(?:^|\s)06a(?:$|\s)|ia[\s.]*06a/i.test(fnBase),
+    nameReason: "Soal tertulis FR.IA.06A",
+    contentPattern: /\bfr[\s._-]*ia[\s._-]*06a\b|daftar\s*pertanyaan\s*tertulis/i,
+    contentReason: "Terdeteksi dari isi dokumen: soal tertulis FR.IA.06A",
+  },
+  "06b": {
+    docType: "06b",
+    confidence: DRIVE_DOC_TYPES["06b"].defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /(?:^|\s)06b(?:$|\s)|ia[\s.]*06b|(?:^|\s)kunci(?:$|\s)/i.test(fnBase),
+    nameReason: "Kunci jawaban FR.IA.06B",
+    contentPattern: /\bfr[\s._-]*ia[\s._-]*06b\b|kunci\s*jawaban\s*pertanyaan\s*tertulis/i,
+    contentReason: "Terdeteksi dari isi dokumen: kunci jawaban FR.IA.06B",
+  },
+  "06c": {
+    docType: "06c",
+    confidence: DRIVE_DOC_TYPES["06c"].defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /(?:^|\s)06c(?:$|\s)|ia[\s.]*06c|(?:^|\s)jawaban(?:$|\s)/i.test(fnBase),
+    nameReason: "Lembar jawaban tertulis FR.IA.06C",
+    contentPattern: /\bfr[\s._-]*ia[\s._-]*06c\b|lembar\s*jawaban\s*tertulis/i,
+    contentReason: "Terdeteksi dari isi dokumen: lembar jawaban FR.IA.06C",
+  },
+  "09": {
+    docType: "09",
+    confidence: DRIVE_DOC_TYPES["09"].defaultConfidence,
+    matchesName: ({ fnBase }) => /fr[\s.]*ia[\s.]*09|ia[\s.]*09|wawancara/i.test(fnBase),
+    nameReason: "Formulir wawancara FR.IA.09",
+    contentPattern: /\bfr[\s._-]*ia[\s._-]*09\b|daftar\s*pertanyaan\s*wawancara/i,
+    contentReason: "Terdeteksi dari isi dokumen: formulir wawancara FR.IA.09",
+  },
+  "04b_slides": {
+    docType: "04b",
+    confidence: DRIVE_DOC_TYPES["04b"].defaultConfidence,
+    matchesName: ({ fnLower, ppNorm }) =>
+      /\.pptx?$/i.test(fnLower) && isDitTaskContext(fnLower, ppNorm, { broadTaskTokens: true }),
+    nameReason: "Salindia presentasi / penugasan DIT (.ppt/.pptx)",
+  },
+  dit_form: {
+    docType: "dit_form",
+    confidence: DRIVE_DOC_TYPES.dit_form.defaultConfidence,
+    matchesName: ({ fnLower, fnBase }) =>
+      !/\.zip$|\.rar$/i.test(fnLower) &&
+      detectDitFormKind(fnBase, { isContent: false }) !== null,
+    nameReason:
+      "Formulir pendukung tugas DIT FR.IA.04A (IBPR/HIRADC, ERP, Work Permit, Inspeksi, atau Investigasi)",
+    contentReason:
+      "Terdeteksi dari isi dokumen: formulir kerja tugas DIT (IBPR/HIRADC/ERP/Work Permit/Inspeksi/Investigasi)",
+  },
+  ijazah: {
+    docType: "ijazah",
+    confidence: DRIVE_DOC_TYPES.ijazah.defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /ijaz?ah|ijasah|ijajah|transkrip\s*nilai|sertifikat\s*kelulusan|surat\s*keterangan\s*(?:ll?ulus|kuliah|pendidikan)|\bsu?ket\s*(?:ll?ulus|s\s*[123])|\bs\s*[12]\b/i.test(
+        fnBase,
+      ),
+    nameReason: "Ijazah / surat keterangan pendidikan",
+    contentPattern:
+      /ijas?zah|surat\s*keterangan\s*(?:lulus|mahasiswa|kuliah)|transkrip\s*nilai|program\s*studi|magister|sarjana/i,
+    contentReason: "Terdeteksi dari isi dokumen: ijazah / surat keterangan studi",
+  },
+  cv: {
+    docType: "cv",
+    confidence: DRIVE_DOC_TYPES.cv.defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /(?:^|\s)cv(?:$|\s)|curr?iculum\s*vitae|daftar\s*riwayat\s*hidup/i.test(fnBase),
+    nameReason: "Daftar riwayat hidup (CV)",
+    contentPattern:
+      /daftar\s*riwayat\s*hidup|curriculum\s*vitae|riwayat\s*pendidikan|pengalaman\s*kerja/i,
+    contentReason: "Terdeteksi dari isi dokumen: riwayat hidup / CV",
+  },
+  surat_tugas: {
+    docType: "surat_tugas",
+    confidence: DRIVE_DOC_TYPES.surat_tugas.defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /surat\s*(?:tugas|perintah|ket(?:erangan)?\s*(?:be)?kerja|ke\s*kerja|pengalaman|kenaikan\s*pangkat)|\bsk\s*(?:kerja|pns|pppk|kepangkatan|kenaikan\s*pangkat|gol|3[ab]|i{1,3}[\s.]*[a-d]|iv[\s.]*[a-e])|\bketerangan\s*(?:be)?kerja\b|^sk$|\bst\b/i.test(
+        fnBase,
+      ),
+    nameReason: "Surat tugas / SK / surat keterangan kerja",
+    contentPattern:
+      /surat\s*tugas|surat\s*keterangan\s*kerja|kenaikan\s*pangkat|memutuskan\s*:|mengangkat\s*sdr/i,
+    contentReason: "Terdeteksi dari isi dokumen: surat tugas / SK kepegawaian",
+  },
+  portofolio: {
+    docType: "portofolio",
+    confidence: DRIVE_DOC_TYPES.portofolio.defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /portofolio|paklaring|jobdesc|laporan\s*kerja|pengalaman\s*lapangan/i.test(fnBase),
+    nameReason: "Dokumen portofolio / pengalaman kerja asesi",
+  },
+  pas_foto: {
+    docType: "pas_foto",
+    confidence: DRIVE_DOC_TYPES.pas_foto.defaultConfidence,
+    matchesName: ({ fnBase }) =>
+      /pas+\s*p?f?oto|foto\s*3x4|(?:^|\s)(?:photo|foto)(?:$|\s)|latar\s*merah|bg\s*merah|merah\s*batik|fococlipping/i.test(
+        fnBase,
+      ),
+    nameReason: "Pas foto asesi",
+  },
+  sertifikat_pelatihan: {
+    docType: "sertifikat_pelatihan",
+    confidence: DRIVE_DOC_TYPES.sertifikat_pelatihan.defaultConfidence,
+    matchesName: ({ fnBase }) => /sertifikat|pelatihan|pembinaan/i.test(fnBase),
+    nameReason: "Sertifikat pelatihan / pembinaan",
+  },
+  "04b_multiformat": {
+    docType: "04b",
+    confidence: DRIVE_DOC_TYPES["04b"].defaultConfidence,
+    matchesName: ({ fnLower, ppNorm }) =>
+      /\.(pptx?|pdf|docx?)$/i.test(fnLower) &&
+      isDitTaskContext(fnLower, ppNorm, { broadTaskTokens: false }),
+    nameReason: "Dokumen penugasan / proyek DIT (.pptx/.pdf/.docx)",
+    contentReason: "Terdeteksi dari isi dokumen dalam folder Tugas DIT",
+  },
+};
+
+const NAME_RULE_ORDER = [
+  "materi_pelatihan",
+  "ktp",
+  "apl01",
+  "apl02",
+  "04a",
+  "04b_explicit",
+  "06a",
+  "06b",
+  "06c",
+  "09",
+  "04b_slides",
+  "dit_form",
+  "ijazah",
+  "cv",
+  "surat_tugas",
+  "portofolio",
+  "pas_foto",
+  "sertifikat_pelatihan",
+  "04b_multiformat",
+] as const;
+
+const CONTENT_CODE_RULE_ORDER = [
+  "04a",
+  "04b_explicit",
+  "apl01",
+  "apl02",
+  "06c",
+  "06b",
+  "06a",
+  "09",
+] as const;
+
+const CONTENT_ADMIN_RULE_ORDER = ["cv", "ktp", "surat_tugas", "ijazah"] as const;
+
 /**
  * Classifies messy BNSP Drive filenames into normalized document types (M1.2).
  * Handles duplicate markers (1), -2, -v2 and double extensions (.jpg.jpeg).
@@ -51,163 +287,21 @@ export function classifyDriveFileName(
   parentPath = "",
 ): ClassificationResult {
   const fnLower = fileName.toLowerCase();
-  const fnBase = fnLower
-    .replace(/\.[a-z0-9]{2,5}(?:\.[a-z0-9]{2,5})?$/i, "")
-    .replace(/\(\d+\)|-v\d+|-\d+(?=$|\s)/g, "")
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const fnBase = normaliseFileTokens(fileName, true);
   const ppNorm = parentPath
     .toLowerCase()
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  // 1. Training materials & syllabus live in Materi folders or carry module prefixes
-  if (
-    /(?:^|\/)\s*materi(?:\s|$|\/)/i.test(ppNorm) ||
-    /^(?:cover\s+materi|silabus|tata\s*tertib|\d+(?:\s*&\s*\d+)?\.\s*ahli\s*k3|modul\b|materi\b|handout\b|bahan\s*ajar\b|\d+\.\s*pengantar\s*pelatihan\b)/i.test(
-      fnBase,
-    )
-  ) {
-    return {
-      docType: "materi_pelatihan",
-      confidence: 0.92,
-      reason: "Materi atau silabus pelatihan",
-    };
-  }
-
-  // 2. Identity & BNSP administrative forms (underscore-safe boundaries)
-  if (/(?:^|\s)ktpp?(?:$|\s)|kartu\s*tanda\s*penduduk|(?:^|\s)nik(?:$|\s)/i.test(fnBase)) {
-    return { docType: "ktp", confidence: 0.95, reason: "Dokumen identitas KTP" };
-  }
-  if (/apl[\s.]*0?1|permohonan\s*sertifikasi/i.test(fnBase)) {
-    return { docType: "apl01", confidence: 0.95, reason: "Formulir permohonan FR.APL.01" };
-  }
-  if (/apl[\s.]*0?2|asesmen\s*mandiri/i.test(fnBase)) {
-    return { docType: "apl02", confidence: 0.95, reason: "Formulir asesmen mandiri FR.APL.02" };
-  }
-  if (
-    /(?:^|\s)04a(?:$|\s)|ia[\s.]*04a|instruksi\s*terstruktur|daftar\s*instruksi|soal\s*dit|panduan\s*(?:tugas\s*)?dit/i.test(
-      fnBase,
-    )
-  ) {
-    return {
-      docType: "04a",
-      confidence: 0.92,
-      reason: "Daftar Instruksi Terstruktur FR.IA.04A",
-    };
-  }
-  if (/(?:^|\s)04b(?:$|\s)|ia[\s.]*04b|observasi\s*demonstrasi|presentasi/i.test(fnBase)) {
-    return {
-      docType: "04b",
-      confidence: 0.9,
-      reason: "Presentasi / Demonstrasi DIT FR.IA.04B",
-    };
-  }
-  if (/(?:^|\s)06a(?:$|\s)|ia[\s.]*06a/i.test(fnBase)) {
-    return { docType: "06a", confidence: 0.92, reason: "Soal tertulis FR.IA.06A" };
-  }
-  if (/(?:^|\s)06b(?:$|\s)|ia[\s.]*06b|(?:^|\s)kunci(?:$|\s)/i.test(fnBase)) {
-    return { docType: "06b", confidence: 0.92, reason: "Kunci jawaban FR.IA.06B" };
-  }
-  if (/(?:^|\s)06c(?:$|\s)|ia[\s.]*06c|(?:^|\s)jawaban(?:$|\s)/i.test(fnBase)) {
-    return { docType: "06c", confidence: 0.92, reason: "Lembar jawaban tertulis FR.IA.06C" };
-  }
-  if (/fr[\s.]*ia[\s.]*09|ia[\s.]*09|wawancara/i.test(fnBase)) {
-    return { docType: "09", confidence: 0.88, reason: "Formulir wawancara FR.IA.09" };
-  }
-
-  // 3. DIT presentation slides (.ppt/.pptx in Tugas DIT/Tugas folder or carrying DIT/Pekerjaan/Penugasan token)
-  if (
-    /\.pptx?$/i.test(fnLower) &&
-    (/tugas\s*dit|(?:^|\/)\s*tugas\s*(?:$|\/)/i.test(ppNorm) ||
-      /(?:^|\s)(?:dit|pekerjaan|penugasan|tugas)(?:$|\s)/i.test(fnBase))
-  ) {
-    return {
-      docType: "04b",
-      confidence: 0.88,
-      reason: "Salindia presentasi / penugasan DIT (.ppt/.pptx)",
-    };
-  }
-
-  // 4. Operational DIT worksheets requested by FR.IA.04A (.docx/.doc/.pdf/.xlsx/.pptx)
-  if (
-    !/\.zip$|\.rar$/i.test(fnLower) &&
-    /(?:form(?:ulir)?\s*(?:ibpr|hiradc|erp|work\s*permit|permit\s*kerja|izin\s*kerja|inspeksi|in[ve]*stigasi)|(?:^|\s)(?:ibpr|hiradc|erp)(?:$|\s)|work\s*permit|permit\s*kerja|izin\s*kerja|inspeksi\s*(?:p3k|apd)|in[ve]*stigasi(?:\s*kecelakaan)?|^[1-6][\s.]+form\b)/i.test(
-      fnBase,
-    )
-  ) {
-    return {
-      docType: "dit_form",
-      confidence: 0.9,
-      reason:
-        "Formulir pendukung tugas DIT FR.IA.04A (IBPR/HIRADC, ERP, Work Permit, Inspeksi, atau Investigasi)",
-    };
-  }
-
-  // 5. Academic & employment administrative documents (with typo & Roman-numeral support)
-  if (
-    /ijaz?ah|ijasah|ijajah|transkrip\s*nilai|sertifikat\s*kelulusan|surat\s*keterangan\s*(?:ll?ulus|kuliah|pendidikan)|\bsu?ket\s*(?:ll?ulus|s\s*[123])|\bs\s*[12]\b/i.test(
-      fnBase,
-    )
-  ) {
-    return {
-      docType: "ijazah",
-      confidence: 0.9,
-      reason: "Ijazah / surat keterangan pendidikan",
-    };
-  }
-  if (/(?:^|\s)cv(?:$|\s)|curr?iculum\s*vitae|daftar\s*riwayat\s*hidup/i.test(fnBase)) {
-    return {
-      docType: "cv",
-      confidence: 0.9,
-      reason: "Daftar riwayat hidup (CV)",
-    };
-  }
-  if (
-    /surat\s*(?:tugas|perintah|ket(?:erangan)?\s*(?:be)?kerja|ke\s*kerja|pengalaman|kenaikan\s*pangkat)|\bsk\s*(?:kerja|pns|pppk|kepangkatan|kenaikan\s*pangkat|gol|3[ab]|i{1,3}[\s.]*[a-d]|iv[\s.]*[a-e])|\bketerangan\s*(?:be)?kerja\b|^sk$|\bst\b/i.test(
-      fnBase,
-    )
-  ) {
-    return {
-      docType: "surat_tugas",
-      confidence: 0.9,
-      reason: "Surat tugas / SK / surat keterangan kerja",
-    };
-  }
-  if (/portofolio|paklaring|jobdesc|laporan\s*kerja|pengalaman\s*lapangan/i.test(fnBase)) {
-    return {
-      docType: "portofolio",
-      confidence: 0.85,
-      reason: "Dokumen portofolio / pengalaman kerja asesi",
-    };
-  }
-  if (
-    /pas+\s*p?f?oto|foto\s*3x4|(?:^|\s)(?:photo|foto)(?:$|\s)|latar\s*merah|bg\s*merah|merah\s*batik|fococlipping/i.test(
-      fnBase,
-    )
-  ) {
-    return { docType: "pas_foto", confidence: 0.88, reason: "Pas foto asesi" };
-  }
-  if (/sertifikat|pelatihan|pembinaan/i.test(fnBase)) {
-    return {
-      docType: "sertifikat_pelatihan",
-      confidence: 0.82,
-      reason: "Sertifikat pelatihan / pembinaan",
-    };
-  }
-
-  // 6. Multi-format DIT project submissions (.docx / .pdf / .pptx) under Tugas DIT / Tugas or carrying DIT token
-  if (
-    /tugas\s*dit|(?:^|\/)\s*tugas\s*(?:$|\/)/i.test(ppNorm) ||
-    /(?:^|\s)dit(?:$|\s)/i.test(fnBase)
-  ) {
-    if (/\.(pptx?|pdf|docx?)$/i.test(fnLower)) {
+  const ctx: NameMatchContext = { fnLower, fnBase, ppNorm };
+  for (const key of NAME_RULE_ORDER) {
+    const rule = UNIFIED_CLASSIFIER_RULES[key];
+    if (rule?.matchesName?.(ctx) && rule.nameReason) {
       return {
-        docType: "04b",
-        confidence: 0.85,
-        reason: "Dokumen penugasan / proyek DIT (.pptx/.pdf/.docx)",
+        docType: rule.docType,
+        confidence: rule.confidence,
+        reason: rule.nameReason,
       };
     }
   }
@@ -222,7 +316,7 @@ export function classifyDriveFileName(
 
   return {
     docType: "unknown",
-    confidence: 0.1,
+    confidence: DRIVE_DOC_TYPES.unknown.defaultConfidence,
     reason:
       "Nama berkas tidak mencerminkan jenis dokumen BNSP — gunakan Deteksi Isi & OCR atau pilih manual di Triage",
   };
@@ -241,136 +335,54 @@ export function classifyDocumentTextContent(
   if (norm.length < 15) return null;
 
   const lower = norm.toLowerCase();
-  const isPptOrTugas =
-    /\.pptx?$/i.test(fileName) || /tugas\s*dit|(?:^|\/)\s*tugas(?:\s|$|\/)/i.test(parentPath);
 
-  if (
-    /\bfr[\s._-]*ia[\s._-]*04a\b|daftar\s*instruksi\s*terstruktur|penjelasan\s*proyek\s*singkat/i.test(
-      lower,
-    )
-  ) {
-    return {
-      docType: "04a",
-      confidence: 0.91,
-      reason: "Terdeteksi dari isi dokumen: memuat judul/formulir FR.IA.04A",
-    };
+  for (const key of CONTENT_CODE_RULE_ORDER) {
+    const rule = UNIFIED_CLASSIFIER_RULES[key];
+    if (rule?.contentPattern?.test(lower) && rule.contentReason) {
+      return {
+        docType: rule.docType,
+        confidence: rule.confidence,
+        reason: rule.contentReason,
+      };
+    }
   }
-  if (/\bfr[\s._-]*ia[\s._-]*04b\b|penilaian\s*proyek\s*singkat/i.test(lower)) {
-    return {
-      docType: "04b",
-      confidence: 0.9,
-      reason: "Terdeteksi dari isi dokumen: memuat FR.IA.04B",
-    };
-  }
-  if (/\bfr[\s._-]*apl[\s._-]*01\b|permohonan\s*sertifikasi\s*kompetensi/i.test(lower)) {
-    return {
-      docType: "apl01",
-      confidence: 0.93,
-      reason: "Terdeteksi dari isi dokumen: formulir FR.APL.01",
-    };
-  }
-  if (/\bfr[\s._-]*apl[\s._-]*02\b|asesmen\s*mandiri/i.test(lower)) {
-    return {
-      docType: "apl02",
-      confidence: 0.93,
-      reason: "Terdeteksi dari isi dokumen: formulir FR.APL.02",
-    };
-  }
-  if (/\bfr[\s._-]*ia[\s._-]*06c\b|lembar\s*jawaban\s*tertulis/i.test(lower)) {
-    return {
-      docType: "06c",
-      confidence: 0.9,
-      reason: "Terdeteksi dari isi dokumen: lembar jawaban FR.IA.06C",
-    };
-  }
-  if (/\bfr[\s._-]*ia[\s._-]*06b\b|kunci\s*jawaban\s*pertanyaan\s*tertulis/i.test(lower)) {
-    return {
-      docType: "06b",
-      confidence: 0.9,
-      reason: "Terdeteksi dari isi dokumen: kunci jawaban FR.IA.06B",
-    };
-  }
-  if (/\bfr[\s._-]*ia[\s._-]*06a\b|daftar\s*pertanyaan\s*tertulis/i.test(lower)) {
-    return {
-      docType: "06a",
-      confidence: 0.9,
-      reason: "Terdeteksi dari isi dokumen: soal tertulis FR.IA.06A",
-    };
-  }
-  if (/\bfr[\s._-]*ia[\s._-]*09\b|daftar\s*pertanyaan\s*wawancara/i.test(lower)) {
-    return {
-      docType: "09",
-      confidence: 0.88,
-      reason: "Terdeteksi dari isi dokumen: formulir wawancara FR.IA.09",
-    };
-  }
-  if (
-    /identifikasi\s*bahaya|penilaian\s*risiko|\bibpr\b|\bhiradc\b|work\s*permit|izin\s*kerja|emergency\s*response|tanggap\s*darurat|inspeksi\s*p3k|investigasi\s*kecelakaan/i.test(
-      lower,
-    )
-  ) {
+
+  if (detectDitFormKind(lower, { isContent: true }) !== null) {
     if (/\.pptx?$/i.test(fileName)) {
       return {
         docType: "04b",
-        confidence: 0.89,
+        confidence: DRIVE_DOC_TYPES["04b"].defaultConfidence,
         reason: "Terdeteksi dari isi salindia: paparan tugas DIT K3",
       };
     }
+    const ditRule = UNIFIED_CLASSIFIER_RULES.dit_form!;
     return {
-      docType: "dit_form",
-      confidence: 0.88,
-      reason: "Terdeteksi dari isi dokumen: formulir kerja tugas DIT (IBPR/HIRADC/ERP/Work Permit/Inspeksi/Investigasi)",
+      docType: ditRule.docType,
+      confidence: ditRule.confidence,
+      reason: ditRule.contentReason!,
     };
   }
+
+  for (const key of CONTENT_ADMIN_RULE_ORDER) {
+    const rule = UNIFIED_CLASSIFIER_RULES[key];
+    if (rule?.contentPattern?.test(lower) && rule.contentReason) {
+      return {
+        docType: rule.docType,
+        confidence: rule.confidence,
+        reason: rule.contentReason,
+      };
+    }
+  }
+
   if (
-    /daftar\s*riwayat\s*hidup|curriculum\s*vitae|riwayat\s*pendidikan|pengalaman\s*kerja/i.test(
-      lower,
-    )
+    isDitTaskContext(fileName, parentPath, { broadTaskTokens: false }) &&
+    /\.(pptx?|pdf|docx?)$/i.test(fileName)
   ) {
+    const multiRule = UNIFIED_CLASSIFIER_RULES["04b_multiformat"]!;
     return {
-      docType: "cv",
-      confidence: 0.88,
-      reason: "Terdeteksi dari isi dokumen: riwayat hidup / CV",
-    };
-  }
-  if (
-    /kartu\s*tanda\s*penduduk|nik\s*:?\s*\d{12,16}|provinsi[\s\S]{0,60}kabupaten|gol\.?\s*darah/i.test(
-      lower,
-    )
-  ) {
-    return {
-      docType: "ktp",
-      confidence: 0.9,
-      reason: "Terdeteksi dari hasil OCR/teks: dokumen identitas KTP",
-    };
-  }
-  if (
-    /surat\s*tugas|surat\s*keterangan\s*kerja|kenaikan\s*pangkat|memutuskan\s*:|mengangkat\s*sdr/i.test(
-      lower,
-    )
-  ) {
-    return {
-      docType: "surat_tugas",
-      confidence: 0.88,
-      reason: "Terdeteksi dari isi dokumen: surat tugas / SK kepegawaian",
-    };
-  }
-  if (
-    /ijas?zah|surat\s*keterangan\s*(?:lulus|mahasiswa|kuliah)|transkrip\s*nilai|program\s*studi|magister|sarjana/i.test(
-      lower,
-    )
-  ) {
-    return {
-      docType: "ijazah",
-      confidence: 0.88,
-      reason: "Terdeteksi dari isi dokumen: ijazah / surat keterangan studi",
-    };
-  }
-  if (isPptOrTugas && /\.(pptx?|pdf|docx?)$/i.test(fileName)) {
-    return {
-      docType: "04b",
-      confidence: 0.84,
-      reason: "Terdeteksi dari isi dokumen dalam folder Tugas DIT",
+      docType: multiRule.docType,
+      confidence: multiRule.confidence,
+      reason: multiRule.contentReason!,
     };
   }
 
@@ -576,20 +588,25 @@ export async function crawlPublicDriveFolder(params: {
   return crawlPublicDriveFolderEmbedded(params.folderId, params.parentPath ?? "", 0);
 }
 
-const NON_CANDIDATE_FOLDER_RE =
-  /^(?:materi|pelatihan|persyaratan|tugas\s*dit|skema|muk|kelengkapan|dokumen\s*uji|kelompok(?:\s*pekerjaan)?|form(?:ulir)?|ibpr|hiradc|erp|work\s*permit|inspeksi|investigasi|arsip|revisi|final|template|online|onsite)\b|^(?:ba|docs|_docs_|asesmen|metode|k3|ak3u|lsp)$/i;
+const EXTRA_NON_CANDIDATE_FOLDER_RE =
+  /^(?:materi|pelatihan|persyaratan|tugas\s*dit|skema|muk|kelengkapan|dokumen\s*uji|kelompok(?:\s*pekerjaan)?|form(?:ulir)?|ibpr|hiradc|erp|work\s*permit|inspeksi|investigasi|arsip|template|online|onsite)\b|^(?:ba|docs|_docs_|asesmen|metode|lsp)$/i;
+
+const SHARED_NON_CANDIDATE_TOKEN_SET = new Set<string>(NON_CANDIDATE_SHARED_TOKENS);
+
+function isNonCandidateFolder(raw: string): boolean {
+  const lower = raw.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!lower) return true;
+  if (EXTRA_NON_CANDIDATE_FOLDER_RE.test(lower)) return true;
+  return SHARED_NON_CANDIDATE_TOKEN_SET.has(lower);
+}
 
 export interface CandidateInference {
   candidateName: string | null;
   isAuthoritativeRoster: boolean;
 }
 
-const FILE_EXT_STRIP_RE =
-  /(?:\.(?:pdf|docx?|pptx?|xlsx?|csv|txt|zip|rar|7z|jpe?g|png|webp|gif|bmp|md))+$/i;
-
 export function cleanCandidateLabel(raw: string): string {
-  return raw
-    .replace(FILE_EXT_STRIP_RE, "")
+  return stripKnownFileExtensions(raw)
     .replace(/^\d+[\s._-]+/, "")
     .replace(/[_]+/g, " ")
     .replace(/^(?:tugas\s*presentasi\s*dit|tugas\s*dit|tugas\s*\d+|tugas|dit|presentasi)(?:$|\s+)/i, "")
@@ -601,7 +618,7 @@ export function cleanCandidateLabel(raw: string): string {
 
 function isUsefulCandidateLabel(cleaned: string): boolean {
   if (cleaned.length < 2) return false;
-  if (NON_CANDIDATE_FOLDER_RE.test(cleaned)) return false;
+  if (isNonCandidateFolder(cleaned)) return false;
   if (/^\d+$/.test(cleaned)) return false;
   return true;
 }
@@ -627,7 +644,7 @@ export function inferCandidateFromDrivePath(
     const folder = folders[i] ?? "";
     if (/persyaratan|asesi|peserta|kandidat/i.test(folder)) {
       const next = folders[i + 1];
-      if (next && !NON_CANDIDATE_FOLDER_RE.test(next)) {
+      if (next && !isNonCandidateFolder(next)) {
         const cleaned = cleanCandidateLabel(next);
         if (isUsefulCandidateLabel(cleaned)) {
           return { candidateName: cleaned, isAuthoritativeRoster: true };
@@ -637,14 +654,14 @@ export function inferCandidateFromDrivePath(
 
     if (/tugas\s*dit/i.test(folder)) {
       const next = folders[i + 1];
-      if (next && !NON_CANDIDATE_FOLDER_RE.test(next)) {
+      if (next && !isNonCandidateFolder(next)) {
         const cleaned = cleanCandidateLabel(next);
         if (isUsefulCandidateLabel(cleaned)) {
           return { candidateName: cleaned, isAuthoritativeRoster: false };
         }
       }
       if (/\.(pptx|ppt|pdf|docx|doc|zip)$/i.test(fileName)) {
-        const base = fileName.replace(FILE_EXT_STRIP_RE, "");
+        const base = stripKnownFileExtensions(fileName);
         if (/^(?:tugas|dit)(?:$|[\s._-])/i.test(base)) {
           const withoutPart = base.split(/\s+-\s+pt\b/i)[0] ?? base;
           const cleaned = cleanCandidateLabel(withoutPart);
@@ -658,7 +675,7 @@ export function inferCandidateFromDrivePath(
 
   // Fallback: direct parent folder if not a generic structural category
   const immediateParent = folders[folders.length - 1] ?? "";
-  if (immediateParent && !NON_CANDIDATE_FOLDER_RE.test(immediateParent)) {
+  if (immediateParent && !isNonCandidateFolder(immediateParent)) {
     const cleaned = cleanCandidateLabel(immediateParent);
     if (isUsefulCandidateLabel(cleaned)) {
       return { candidateName: cleaned, isAuthoritativeRoster: false };

@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { hasDatabaseUrl, getDb } from "@/db";
+import { runRepositoryDualPath } from "@/db";
 import { appConfig } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type {
@@ -96,34 +96,38 @@ export async function findConfigWithSource<K extends ConfigKey>(
   key: K,
   options?: GetConfigOptions,
 ): Promise<ResolvedConfigRecord<K> | null> {
-  if (hasDatabaseUrl()) {
-    const db = getDb();
-    const conditions = [eq(appConfig.key, key)];
-    if (options?.scope) conditions.push(eq(appConfig.scope, options.scope));
+  return runRepositoryDualPath({
+    unscopedPublicRead: true,
+    label: "ConfigRepository.findConfigWithSource",
+    drizzle: async (db) => {
+      const conditions = [eq(appConfig.key, key)];
+      if (options?.scope) conditions.push(eq(appConfig.scope, options.scope));
 
-    const rows = await db
-      .select({
-        scope: appConfig.scope,
-        lspId: appConfig.lspId,
-        schemeId: appConfig.schemeId,
-        value: appConfig.value,
-      })
-      .from(appConfig)
-      .where(and(...conditions));
+      const rows = await db
+        .select({
+          scope: appConfig.scope,
+          lspId: appConfig.lspId,
+          schemeId: appConfig.schemeId,
+          value: appConfig.value,
+        })
+        .from(appConfig)
+        .where(and(...conditions));
 
-    return selectConfigByPrecedence<K>(rows, options);
-  }
+      return selectConfigByPrecedence<K>(rows, options);
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      let query = supabase
+        .from("app_config")
+        .select("scope, lsp_id, scheme_id, value")
+        .eq("key", key);
+      if (options?.scope) query = query.eq("scope", options.scope);
 
-  const supabase = await getSupabaseServerClient();
-  let query = supabase
-    .from("app_config")
-    .select("scope, lsp_id, scheme_id, value")
-    .eq("key", key);
-  if (options?.scope) query = query.eq("scope", options.scope);
-
-  const { data, error } = await query;
-  if (error || !data) return null;
-  return selectConfigByPrecedence<K>(data as ConfigRowLike[], options);
+      const { data, error } = await query;
+      if (error || !data) return null;
+      return selectConfigByPrecedence<K>(data as ConfigRowLike[], options);
+    },
+  });
 }
 
 export async function findConfigValue<K extends ConfigKey>(

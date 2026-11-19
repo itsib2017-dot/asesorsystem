@@ -9,11 +9,10 @@ import {
   listDecisionsForAssessee,
 } from "@/repositories/assessment.repository";
 import { checkDitCompletenessGate } from "@/services/dit";
-import { formatSchemeInstructionsText } from "@/services/drive-extract";
 import {
-  deduplicateFilesByLatestRevision,
-  pickLatestDriveFile,
-} from "@/services/drive-revisions";
+  formatSchemeInstructionsText,
+  selectDitInputFiles,
+} from "@/lib/forms/dit-inputs";
 import { Ia04bBlankoPreview } from "@/components/forms/ia04b-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import {
@@ -52,30 +51,15 @@ export default async function DitAnalysisPage({
     getAssesseeDecisionOverride(user.id, assesseeId),
   ]);
   const assesseeFiles = files.filter((f) => f.assesseeId === assesseeId);
-  const assessee04a = deduplicateFilesByLatestRevision(
-    assesseeFiles.filter((f) => f.docType === "04a"),
-  );
-  const sharedBatch04a =
-    assessee04a.length === 0
-      ? deduplicateFilesByLatestRevision(
-          files.filter((f) => !f.assesseeId && f.docType === "04a"),
-        )
-      : [];
-  const used04aFiles = assessee04a.length > 0 ? assessee04a : sharedBatch04a;
+  const {
+    assessee04a,
+    sharedBatch04a,
+    used04aFiles,
+    combinedDitFiles,
+    usedCvFile: fileCv,
+  } = selectDitInputFiles(assesseeFiles, files);
   const scheme04aFallback =
     used04aFiles.length === 0 ? formatSchemeInstructionsText(common.scheme) : "";
-
-  const used04bFiles = deduplicateFilesByLatestRevision(
-    assesseeFiles.filter((f) => f.docType === "04b"),
-  );
-  const usedDitFormFiles = deduplicateFilesByLatestRevision(
-    assesseeFiles.filter((f) => f.docType === "dit_form"),
-  );
-  const combinedDitFiles = [...used04bFiles, ...usedDitFormFiles];
-
-  const fileCv =
-    pickLatestDriveFile(assesseeFiles.filter((f) => f.docType === "cv")) ??
-    pickLatestDriveFile(assesseeFiles.filter((f) => f.docType === "portofolio"));
 
   const fr04aExtracted = used04aFiles
     .map((f) => f.extractedText?.trim())

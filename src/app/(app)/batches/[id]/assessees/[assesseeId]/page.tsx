@@ -107,12 +107,9 @@ export default async function AssesseeDetailPage({
     return {
       unitCode: u.unitCode,
       unitTitle: u.unitTitle,
-      aiRecommendation:
-        ((saved?.aiRecommendation ?? saved?.ai_recommendation) as "K" | "BK" | null | undefined) ??
-        u.aiRecommendation,
-      vatmReasoning:
-        ((saved?.vatmReasoning ?? saved?.vatm_reasoning) as string | null | undefined) ??
-        u.vatmReasoning,
+      // Single live UI truth: live computeVatmUnitRollup output avoids stale DB ai_recommendation drift
+      aiRecommendation: u.aiRecommendation,
+      vatmReasoning: u.vatmReasoning,
       decision: (saved?.decision as "K" | "BK" | null | undefined) ?? null,
       assessorNote:
         ((saved?.assessorNote ?? saved?.assessor_note) as string | null | undefined) ?? null,
@@ -130,6 +127,7 @@ export default async function AssesseeDetailPage({
     assessmentDate: common.assessmentDate,
     decisions: decisions as unknown as RawDecisionRow[],
     manualOverride: decisionOverride,
+    resolvedOverall,
     hasDit: Boolean(ditAnalysis),
     hasDitForms,
     hasWritten: Boolean(writtenGrading),

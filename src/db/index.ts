@@ -48,21 +48,40 @@ export async function withRlsTransaction<T>(
   });
 }
 
-export interface DualPathOptions<T> {
+export interface DualPathRlsOptions<T> {
   userId: string;
   label: string;
   drizzle: (tx: RlsTx) => Promise<T>;
   supabase: () => Promise<T>;
   fallbackOnError?: boolean;
+  unscopedPublicRead?: false;
 }
+
+export interface DualPathPublicReadOptions<T> {
+  userId?: undefined;
+  unscopedPublicRead: true;
+  label: string;
+  drizzle: (db: DrizzleDb) => Promise<T>;
+  supabase: () => Promise<T>;
+  fallbackOnError?: boolean;
+}
+
+export type DualPathOptions<T> = DualPathRlsOptions<T> | DualPathPublicReadOptions<T>;
 
 /**
  * Runs a Drizzle + RLS transaction when direct DB access is enabled, falling back cleanly
  * to the Supabase PostgREST path (which carries the caller's JWT cookies) on disabled/transient failures.
+ * System-wide public config reads must opt in explicitly via `unscopedPublicRead: true`.
  */
 export async function runRepositoryDualPath<T>(options: DualPathOptions<T>): Promise<T> {
   if (hasDatabaseUrl()) {
     try {
+      if (options.unscopedPublicRead) {
+        return await options.drizzle(getDb());
+      }
+      if (!options.userId) {
+        throw new Error(`AUTH_ERROR: Missing userId for RLS repository call (${options.label}).`);
+      }
       return await withRlsTransaction(options.userId, options.drizzle);
     } catch (err) {
       if (options.fallbackOnError === false) {

@@ -9,6 +9,10 @@ const { mockSupabaseFrom, mockHasDatabaseUrl } = vi.hoisted(() => ({
 vi.mock("@/db", () => ({
   hasDatabaseUrl: mockHasDatabaseUrl,
   getDb: vi.fn(),
+  runRepositoryDualPath: async (opts: {
+    drizzle: (db: unknown) => Promise<unknown>;
+    supabase: () => Promise<unknown>;
+  }) => (mockHasDatabaseUrl() ? opts.drizzle(vi.fn()) : opts.supabase()),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({

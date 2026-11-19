@@ -3,10 +3,14 @@ import type { SchemeRecord } from "@/repositories/schemes.repository";
 import {
   buildAk02Payload,
   buildIa04bPayload,
+  hasGenericFallbackKelompok,
   resolveSchemeBranding,
   resolveSchemeDocColumns,
   resolveSchemeKelompokPekerjaan,
+  resolveSchemeUnitsList,
 } from "../assessee-forms";
+import { formatSchemeInstructionsText } from "../dit-inputs";
+import { resolveUnitsForScheme } from "../sync-vatm-decisions";
 
 describe("D21 / R7 Scheme Manifest Portability", () => {
   const customScheme: SchemeRecord = {
@@ -99,5 +103,37 @@ describe("D21 / R7 Scheme Manifest Portability", () => {
       rightLogoUrl: "/logos/custom-lsp.png",
       rightLogoAlt: "LSP TIK Nusantara",
     });
+    expect(hasGenericFallbackKelompok(customScheme)).toBe(true);
+    expect(formatSchemeInstructionsText(customScheme)).toContain("fallback generik");
+  });
+
+  it("aligns resolveUnitsForScheme with resolveSchemeUnitsList when units are defined only under kelompokPekerjaan (M1)", () => {
+    const kpOnlyScheme: SchemeRecord = {
+      ...customScheme,
+      manifest: {
+        ...customScheme.manifest,
+        units: [],
+        kelompokPekerjaan: [
+          {
+            kpIndex: 1,
+            title: "KP Khusus",
+            units: [
+              { no: 1, code: "KP.001", title: "Menyusun Analisis K3" },
+              { no: 2, code: "KP.002", title: "Melakukan Audit Internal" },
+            ],
+            aspects: [],
+          },
+        ],
+      },
+    };
+
+    expect(hasGenericFallbackKelompok(kpOnlyScheme)).toBe(false);
+    expect(resolveUnitsForScheme(kpOnlyScheme)).toEqual(
+      resolveSchemeUnitsList(kpOnlyScheme),
+    );
+    expect(resolveUnitsForScheme(kpOnlyScheme)).toEqual([
+      { code: "KP.001", title: "Menyusun Analisis K3" },
+      { code: "KP.002", title: "Melakukan Audit Internal" },
+    ]);
   });
 });

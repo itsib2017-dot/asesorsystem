@@ -4,6 +4,7 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, RotateCcw, ShieldAlert, XCircle } from "lucide-react";
+import { formatOverallDecisionRuleSummary } from "@/lib/ak05/decision-rules";
 
 interface OverallDecisionOverrideProps {
   batchId: string;
@@ -115,9 +116,7 @@ export function OverallDecisionOverrideCard(props: OverallDecisionOverrideProps)
             </span>
           </div>
           <p className="text-xs text-slate-600 mt-1">
-            Aturan otomatis: apabila minimal <strong>1 unit kompetensi bertanda BK</strong>,
-            rekomendasi AK.02 &amp; AK.05 otomatis menjadi <strong>BK</strong>. Status K otomatis
-            hanya muncul bila seluruh {props.totalSchemeUnits} unit selesai dinilai K tanpa BK.
+            {formatOverallDecisionRuleSummary(props.totalSchemeUnits)}
           </p>
         </div>
 

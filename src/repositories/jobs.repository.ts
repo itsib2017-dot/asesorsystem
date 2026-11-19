@@ -173,6 +173,8 @@ export async function updateJobStatusRecord(params: {
   attempts?: number;
 }): Promise<void> {
   const now = new Date();
+  // Intentional explicit 3-tier fallback (Direct Drizzle RLS -> Supabase RLS REST -> owner-scoped Service Role)
+  // because Drizzle zero-row returns on background job retries must also fall through to REST/Admin.
   if (hasDatabaseUrl()) {
     try {
       const updated = await withRlsTransaction(params.userId, (tx) =>

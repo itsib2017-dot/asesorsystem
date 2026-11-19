@@ -1,7 +1,16 @@
+import { NON_CANDIDATE_SHARED_TOKENS } from "@/services/drive-doc-types";
+
 /**
  * Deterministic name normalisation and similarity scoring (ADR-0005).
  * KTP is ALWAYS the certificate-name authority (D6).
  * Normalisation is strictly for matching / flagging — never mutates display names.
+ *
+ * Division of similarity scorers (intentional — do not conflate thresholds):
+ * 1. `scoreCandidateNameMatch` / `findBestMatchingCandidate`: token-based scorer with
+ *    duplicate-char tolerance & substring collision guards (thresholds 0.78 / 0.90)
+ *    used for messy Drive folder names, filenames, and triage reassignment.
+ * 2. `computeNameSimilarity`: normalized Levenshtein edit-distance ratio used by
+ *    `name-jury.ts` against calibrated KTP vs APL.01 / Surat Tugas / Ijazah thresholds.
  */
 
 export function normalisePersonName(name: string): string {
@@ -16,22 +25,7 @@ export function normalisePersonName(name: string): string {
     .trim();
 }
 
-const GENERIC_NON_NAME_TOKENS = new Set([
-  "tugas",
-  "presentasi",
-  "dit",
-  "k3",
-  "ak3",
-  "ak3u",
-  "kelompok",
-  "pekerjaan",
-  "form",
-  "revisi",
-  "final",
-  "fiks",
-  "fix",
-  "pt",
-]);
+const GENERIC_NON_NAME_TOKENS = new Set<string>(NON_CANDIDATE_SHARED_TOKENS);
 
 function collapseRepeatChars(token: string): string {
   return token.replace(/([a-z])\1+/g, "$1");

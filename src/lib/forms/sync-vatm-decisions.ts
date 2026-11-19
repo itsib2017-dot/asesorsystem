@@ -5,7 +5,7 @@ import {
   upsertAiUnitRecommendations,
 } from "@/repositories/assessment.repository";
 import type { SchemeRecord } from "@/repositories/schemes.repository";
-import { getFallbackAk3uUnits } from "@/lib/forms/assessee-forms";
+import { resolveSchemeUnitsList } from "@/lib/forms/assessee-forms";
 import {
   computeVatmUnitRollup,
   type SchemeUnitRef,
@@ -13,11 +13,10 @@ import {
 } from "@/services/vatm-rollup";
 
 export function resolveUnitsForScheme(scheme?: SchemeRecord | null): SchemeUnitRef[] {
-  const manifestUnits = scheme?.manifest?.units;
-  if (Array.isArray(manifestUnits) && manifestUnits.length > 0) {
-    return manifestUnits;
-  }
-  return getFallbackAk3uUnits();
+  return resolveSchemeUnitsList(scheme).map((u) => ({
+    code: u.code ?? "",
+    title: u.title,
+  }));
 }
 
 export async function syncAssesseeVatmRecommendations(params: {

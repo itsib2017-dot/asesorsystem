@@ -1,5 +1,5 @@
 import { eq, desc, inArray } from "drizzle-orm";
-import { hasDatabaseUrl, isUuid, runRepositoryDualPath, withRlsTransaction } from "@/db";
+import { isUuid, runRepositoryDualPath } from "@/db";
 import {
   assessees,
   assesseeDecisionOverrides,
@@ -31,38 +31,28 @@ export interface AssesseeRecord {
   status: string;
 }
 
-export async function listAssesseesByBatch(
-  userId: string,
-  batchId: string,
-): Promise<AssesseeRecord[]> {
-  if (!isUuid(batchId)) return [];
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, (tx) =>
-      tx.select().from(assessees).where(eq(assessees.batchId, batchId)),
-    );
-    return rows.map((r) => ({
-      id: r.id,
-      lspId: r.lspId,
-      batchId: r.batchId,
-      assignedAssessorId: r.assignedAssessorId,
-      displayName: r.displayName,
-      pseudonym: r.pseudonym,
-      nikMasked: r.nikMasked,
-      ktpNameOcr: r.ktpNameOcr,
-      apl01Name: r.apl01Name,
-      suratTugasName: r.suratTugasName,
-      ijazahName: r.ijazahName,
-      certificateNameConfirmed: r.certificateNameConfirmed,
-      certificateNameConfirmedAt: r.certificateNameConfirmedAt?.toISOString() ?? null,
-      completenessStatus: r.completenessStatus,
-      status: r.status,
-    }));
-  }
+function mapDrizzleAssesseeRow(r: typeof assessees.$inferSelect): AssesseeRecord {
+  return {
+    id: r.id,
+    lspId: r.lspId,
+    batchId: r.batchId,
+    assignedAssessorId: r.assignedAssessorId,
+    displayName: r.displayName,
+    pseudonym: r.pseudonym,
+    nikMasked: r.nikMasked,
+    ktpNameOcr: r.ktpNameOcr,
+    apl01Name: r.apl01Name,
+    suratTugasName: r.suratTugasName,
+    ijazahName: r.ijazahName,
+    certificateNameConfirmed: r.certificateNameConfirmed,
+    certificateNameConfirmedAt: r.certificateNameConfirmedAt?.toISOString() ?? null,
+    completenessStatus: r.completenessStatus,
+    status: r.status,
+  };
+}
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase.from("assessees").select("*").eq("batch_id", batchId);
-
-  return (data ?? []).map((r) => ({
+function mapSupabaseAssesseeRow(r: Record<string, unknown>): AssesseeRecord {
+  return {
     id: r.id as string,
     lspId: r.lsp_id as string,
     batchId: r.batch_id as string,
@@ -78,7 +68,27 @@ export async function listAssesseesByBatch(
     certificateNameConfirmedAt: (r.certificate_name_confirmed_at as string | null) ?? null,
     completenessStatus: r.completeness_status as string,
     status: r.status as string,
-  }));
+  };
+}
+
+export async function listAssesseesByBatch(
+  userId: string,
+  batchId: string,
+): Promise<AssesseeRecord[]> {
+  if (!isUuid(batchId)) return [];
+  return runRepositoryDualPath({
+    userId,
+    label: "AssesseesRepository.listAssesseesByBatch",
+    drizzle: async (tx) => {
+      const rows = await tx.select().from(assessees).where(eq(assessees.batchId, batchId));
+      return rows.map(mapDrizzleAssesseeRow);
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase.from("assessees").select("*").eq("batch_id", batchId);
+      return (data ?? []).map((r) => mapSupabaseAssesseeRow(r as Record<string, unknown>));
+    },
+  });
 }
 
 export async function getAssesseeById(
@@ -86,52 +96,19 @@ export async function getAssesseeById(
   assesseeId: string,
 ): Promise<AssesseeRecord | null> {
   if (!isUuid(assesseeId)) return null;
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, (tx) =>
-      tx.select().from(assessees).where(eq(assessees.id, assesseeId)).limit(1),
-    );
-    const r = rows[0];
-    if (!r) return null;
-    return {
-      id: r.id,
-      lspId: r.lspId,
-      batchId: r.batchId,
-      assignedAssessorId: r.assignedAssessorId,
-      displayName: r.displayName,
-      pseudonym: r.pseudonym,
-      nikMasked: r.nikMasked,
-      ktpNameOcr: r.ktpNameOcr,
-      apl01Name: r.apl01Name,
-      suratTugasName: r.suratTugasName,
-      ijazahName: r.ijazahName,
-      certificateNameConfirmed: r.certificateNameConfirmed,
-      certificateNameConfirmedAt: r.certificateNameConfirmedAt?.toISOString() ?? null,
-      completenessStatus: r.completenessStatus,
-      status: r.status,
-    };
-  }
-
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase.from("assessees").select("*").eq("id", assesseeId).maybeSingle();
-  if (!data) return null;
-
-  return {
-    id: data.id as string,
-    lspId: data.lsp_id as string,
-    batchId: data.batch_id as string,
-    assignedAssessorId: (data.assigned_assessor_id as string | null) ?? null,
-    displayName: data.display_name as string,
-    pseudonym: (data.pseudonym as string | null) ?? null,
-    nikMasked: (data.nik_masked as string | null) ?? null,
-    ktpNameOcr: (data.ktp_name_ocr as string | null) ?? null,
-    apl01Name: (data.apl01_name as string | null) ?? null,
-    suratTugasName: (data.surat_tugas_name as string | null) ?? null,
-    ijazahName: (data.ijazah_name as string | null) ?? null,
-    certificateNameConfirmed: (data.certificate_name_confirmed as string | null) ?? null,
-    certificateNameConfirmedAt: (data.certificate_name_confirmed_at as string | null) ?? null,
-    completenessStatus: data.completeness_status as string,
-    status: data.status as string,
-  };
+  return runRepositoryDualPath({
+    userId,
+    label: "AssesseesRepository.getAssesseeById",
+    drizzle: async (tx) => {
+      const rows = await tx.select().from(assessees).where(eq(assessees.id, assesseeId)).limit(1);
+      return rows[0] ? mapDrizzleAssesseeRow(rows[0]) : null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase.from("assessees").select("*").eq("id", assesseeId).maybeSingle();
+      return data ? mapSupabaseAssesseeRow(data as Record<string, unknown>) : null;
+    },
+  });
 }
 
 export async function confirmCertificateName(params: {
@@ -140,10 +117,12 @@ export async function confirmCertificateName(params: {
   confirmedName: string;
   juryVerdictId?: string;
   overrideReason?: string;
-}) {
+}): Promise<void> {
   const now = new Date();
-  if (hasDatabaseUrl()) {
-    await withRlsTransaction(params.userId, async (tx) => {
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssesseesRepository.confirmCertificateName",
+    drizzle: async (tx) => {
       await tx
         .update(assessees)
         .set({
@@ -163,58 +142,61 @@ export async function confirmCertificateName(params: {
           })
           .where(eq(nameJuryVerdicts.id, params.juryVerdictId));
       }
-    });
-    return;
-  }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase
+        .from("assessees")
+        .update({
+          certificate_name_confirmed: params.confirmedName,
+          certificate_name_confirmed_by: params.userId,
+          certificate_name_confirmed_at: now.toISOString(),
+        })
+        .eq("id", params.assesseeId);
 
-  const supabase = await getSupabaseServerClient();
-  await supabase
-    .from("assessees")
-    .update({
-      certificate_name_confirmed: params.confirmedName,
-      certificate_name_confirmed_by: params.userId,
-      certificate_name_confirmed_at: now.toISOString(),
-    })
-    .eq("id", params.assesseeId);
-
-  if (params.juryVerdictId) {
-    await supabase
-      .from("name_jury_verdicts")
-      .update({
-        confirmed_by: params.userId,
-        confirmed_at: now.toISOString(),
-        override_reason: params.overrideReason ?? null,
-      })
-      .eq("id", params.juryVerdictId);
-  }
+      if (params.juryVerdictId) {
+        await supabase
+          .from("name_jury_verdicts")
+          .update({
+            confirmed_by: params.userId,
+            confirmed_at: now.toISOString(),
+            override_reason: params.overrideReason ?? null,
+          })
+          .eq("id", params.juryVerdictId);
+      }
+    },
+  });
 }
 
 export async function getLatestNameJuryVerdict(
   userId: string,
   assesseeId: string,
 ) {
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, (tx) =>
-      tx
+  return runRepositoryDualPath({
+    userId,
+    label: "AssesseesRepository.getLatestNameJuryVerdict",
+    drizzle: async (tx) => {
+      const rows = await tx
         .select()
         .from(nameJuryVerdicts)
         .where(eq(nameJuryVerdicts.assesseeId, assesseeId))
         .orderBy(desc(nameJuryVerdicts.createdAt))
-        .limit(1),
-    );
-    return rows[0] ?? null;
-  }
+        .limit(1);
+      return rows[0] ?? null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("name_jury_verdicts")
+        .select("*")
+        .eq("assessee_id", assesseeId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase
-    .from("name_jury_verdicts")
-    .select("*")
-    .eq("assessee_id", assesseeId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return data ?? null;
+      return data ?? null;
+    },
+  });
 }
 
 export async function saveNameJuryVerdictAndOcr(params: {
@@ -296,12 +278,13 @@ export async function upsertAssesseesForBatch(params: {
   lspId: string;
   batchId: string;
   names: string[];
+  existingPool?: AssesseeRecord[];
 }): Promise<AssesseeRecord[]> {
   if (!isUuid(params.batchId) || params.names.length === 0) {
-    return listAssesseesByBatch(params.userId, params.batchId);
+    return params.existingPool ?? listAssesseesByBatch(params.userId, params.batchId);
   }
 
-  const existing = await listAssesseesByBatch(params.userId, params.batchId);
+  const existing = params.existingPool ?? (await listAssesseesByBatch(params.userId, params.batchId));
   const pool = [...existing];
   const toInsert: Array<{ displayName: string; pseudonym: string }> = [];
 
@@ -337,8 +320,10 @@ export async function upsertAssesseesForBatch(params: {
     return existing;
   }
 
-  if (hasDatabaseUrl()) {
-    await withRlsTransaction(params.userId, async (tx) => {
+  await runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssesseesRepository.upsertAssessees",
+    drizzle: async (tx) => {
       await tx.insert(assessees).values(
         toInsert.map((item) => ({
           lspId: params.lspId,
@@ -351,27 +336,27 @@ export async function upsertAssesseesForBatch(params: {
           status: "pending",
         })),
       );
-    });
-    return listAssesseesByBatch(params.userId, params.batchId);
-  }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { error } = await supabase.from("assessees").insert(
+        toInsert.map((item) => ({
+          lsp_id: params.lspId,
+          batch_id: params.batchId,
+          assigned_assessor_id: params.userId,
+          display_name: item.displayName,
+          apl01_name: item.displayName,
+          pseudonym: item.pseudonym,
+          completeness_status: "incomplete",
+          status: "pending",
+        })),
+      );
 
-  const supabase = await getSupabaseServerClient();
-  const { error } = await supabase.from("assessees").insert(
-    toInsert.map((item) => ({
-      lsp_id: params.lspId,
-      batch_id: params.batchId,
-      assigned_assessor_id: params.userId,
-      display_name: item.displayName,
-      apl01_name: item.displayName,
-      pseudonym: item.pseudonym,
-      completeness_status: "incomplete",
-      status: "pending",
-    })),
-  );
-
-  if (error) {
-    console.warn("[AssesseesRepository Warning] insert assessees error:", error.message);
-  }
+      if (error) {
+        console.warn("[AssesseesRepository Warning] insert assessees error:", error.message);
+      }
+    },
+  });
 
   return listAssesseesByBatch(params.userId, params.batchId);
 }

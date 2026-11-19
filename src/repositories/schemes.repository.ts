@@ -1,11 +1,12 @@
 import { eq, asc } from "drizzle-orm";
-import { hasDatabaseUrl, withRlsTransaction } from "@/db";
+import { runRepositoryDualPath } from "@/db";
 import { schemes, schemeFormManifests } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export interface SchemeKelompokSpec {
   kpIndex: number;
   title: string;
+  isGenericFallback?: boolean;
   units: Array<{ no: number; code: string; title: string }>;
   aspects: Array<{
     kpIndex: number;
@@ -64,8 +65,10 @@ export interface SchemeRecord {
 }
 
 export async function listSchemes(userId: string, lspId?: string): Promise<SchemeRecord[]> {
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, async (tx) => {
+  return runRepositoryDualPath({
+    userId,
+    label: "SchemesRepository.listSchemes",
+    drizzle: async (tx) => {
       const schemeRows = lspId
         ? await tx.select().from(schemes).where(eq(schemes.lspId, lspId))
         : await tx.select().from(schemes);
@@ -96,33 +99,33 @@ export async function listSchemes(userId: string, lspId?: string): Promise<Schem
         });
       }
       return results;
-    });
-    return rows;
-  }
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      let query = supabase.from("schemes").select("*, scheme_form_manifests(*)");
+      if (lspId) query = query.eq("lsp_id", lspId);
+      const { data } = await query;
 
-  const supabase = await getSupabaseServerClient();
-  let query = supabase.from("schemes").select("*, scheme_form_manifests(*)");
-  if (lspId) query = query.eq("lsp_id", lspId);
-  const { data } = await query;
-
-  return (data ?? []).map((s) => ({
-    id: s.id as string,
-    lspId: s.lsp_id as string,
-    code: s.code as string,
-    name: s.name as string,
-    manifest: (s.manifest ?? {}) as SchemeManifestConfig,
-    version: Number(s.version ?? 1),
-    forms: Array.isArray(s.scheme_form_manifests)
-      ? s.scheme_form_manifests.map((f: Record<string, unknown>) => ({
-          id: String(f.id),
-          formKey: String(f.form_key),
-          filePatterns: Array.isArray(f.file_patterns) ? (f.file_patterns as string[]) : [],
-          required: Boolean(f.required),
-          instrumentRole: String(f.instrument_role),
-          sortOrder: Number(f.sort_order ?? 0),
-        }))
-      : [],
-  }));
+      return (data ?? []).map((s) => ({
+        id: s.id as string,
+        lspId: s.lsp_id as string,
+        code: s.code as string,
+        name: s.name as string,
+        manifest: (s.manifest ?? {}) as SchemeManifestConfig,
+        version: Number(s.version ?? 1),
+        forms: Array.isArray(s.scheme_form_manifests)
+          ? s.scheme_form_manifests.map((f: Record<string, unknown>) => ({
+              id: String(f.id),
+              formKey: String(f.form_key),
+              filePatterns: Array.isArray(f.file_patterns) ? (f.file_patterns as string[]) : [],
+              required: Boolean(f.required),
+              instrumentRole: String(f.instrument_role),
+              sortOrder: Number(f.sort_order ?? 0),
+            }))
+          : [],
+      }));
+    },
+  });
 }
 
 export async function createOrUpdateScheme(params: {
@@ -139,11 +142,11 @@ export async function createOrUpdateScheme(params: {
     sortOrder: number;
   }>;
 }): Promise<{ ok: true; schemeId: string } | { ok: false; error: string }> {
-  const supabase = await getSupabaseServerClient();
-
-  if (hasDatabaseUrl()) {
-    try {
-      const schemeId = await withRlsTransaction(params.userId, async (tx) => {
+  try {
+    return await runRepositoryDualPath({
+      userId: params.userId,
+      label: "SchemesRepository.createOrUpdateScheme",
+      drizzle: async (tx) => {
         const [inserted] = await tx
           .insert(schemes)
           .values({
@@ -175,47 +178,48 @@ export async function createOrUpdateScheme(params: {
             })),
           );
         }
-        return id;
-      });
-      return { ok: true, schemeId };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : "DB error" };
-    }
-  }
-
-  const { data: schemeRow, error } = await supabase
-    .from("schemes")
-    .upsert(
-      {
-        lsp_id: params.lspId,
-        code: params.code,
-        name: params.name,
-        manifest: params.manifest,
+        return { ok: true, schemeId: id } as const;
       },
-      { onConflict: "lsp_id,code" },
-    )
-    .select("id")
-    .single();
+      supabase: async () => {
+        const supabase = await getSupabaseServerClient();
+        const { data: schemeRow, error } = await supabase
+          .from("schemes")
+          .upsert(
+            {
+              lsp_id: params.lspId,
+              code: params.code,
+              name: params.name,
+              manifest: params.manifest,
+            },
+            { onConflict: "lsp_id,code" },
+          )
+          .select("id")
+          .single();
 
-  if (error || !schemeRow) {
-    return { ok: false, error: error?.message ?? "Failed to save scheme" };
+        if (error || !schemeRow) {
+          return { ok: false, error: error?.message ?? "Failed to save scheme" } as const;
+        }
+
+        const schemeId = schemeRow.id as string;
+        await supabase.from("scheme_form_manifests").delete().eq("scheme_id", schemeId);
+        if (params.forms.length > 0) {
+          await supabase.from("scheme_form_manifests").insert(
+            params.forms.map((f) => ({
+              lsp_id: params.lspId,
+              scheme_id: schemeId,
+              form_key: f.formKey,
+              file_patterns: f.filePatterns,
+              required: f.required,
+              instrument_role: f.instrumentRole,
+              sort_order: f.sortOrder,
+            })),
+          );
+        }
+
+        return { ok: true, schemeId } as const;
+      },
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "DB error" };
   }
-
-  const schemeId = schemeRow.id as string;
-  await supabase.from("scheme_form_manifests").delete().eq("scheme_id", schemeId);
-  if (params.forms.length > 0) {
-    await supabase.from("scheme_form_manifests").insert(
-      params.forms.map((f) => ({
-        lsp_id: params.lspId,
-        scheme_id: schemeId,
-        form_key: f.formKey,
-        file_patterns: f.filePatterns,
-        required: f.required,
-        instrument_role: f.instrumentRole,
-        sort_order: f.sortOrder,
-      })),
-    );
-  }
-
-  return { ok: true, schemeId };
 }

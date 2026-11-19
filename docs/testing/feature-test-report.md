@@ -1,6 +1,6 @@
 # Feature Test Report
 
-- **Date:** 2026-11-19 (Round 8 Audit Remediation)
+- **Date:** 2026-11-19 (Round 9 Complexity Audit Remediation)
 - **Environment:** Remote Supabase (`oiplhsmmfuqriaqrxjud`) + Local Node.js + Live Vercel (`https://assessor-zeta.vercel.app`)
 - **Authority:** `ground_rules_v5.md` (§Feature/Module Testing)
 
@@ -33,17 +33,18 @@
 | `src/services/__tests__/no-hardcoded-values.test.ts` | 2 tests (zero literal scheme counts, zero prohibited status) | **PASS** | `npm test` |
 | `src/lib/supabase/__tests__/middleware.test.ts` | 2 tests (fail-closed auth redirect; public route pass) | **PASS** | `npm test` |
 | `src/services/__tests__/drive.test.ts` | 8 tests (Drive crawl, `dit_form` 5 worksheets, multi-format `.pdf`/`.docx`/`.pptx` DIT, typos, underscore `DIT_Faradhila`, content classification) | **PASS** | `npm test` |
-| `src/services/__tests__/drive-revisions.test.ts` | 3 tests (ISO/DD-MM-YYYY/compact/Indonesian date extraction, newest revision priority, multi-part KP/form slot grouping) | **PASS** | `npm test` |
+| `src/services/__tests__/drive-revisions.test.ts` | 4 tests (ISO/DD-MM-YYYY/compact/Indonesian date extraction, newest revision priority, multi-part KP/form slot grouping, deterministic confidence/filename tie-break without text-length bias) | **PASS** | `npm test` |
 | `src/services/__tests__/extract-and-drive-download.test.ts` | 9 tests (OOXML/PDF extraction, SSRF checks, ZIP safe unpack + CRC repair + ZIP child download, multi-part DIT aggregation, content reclassification) | **PASS** | `npm test` |
 | `src/app/api/v1/dit/[assesseeId]/analyse/__tests__/route.test.ts` | 4 tests (UUID guard, completeness gate, scheme & batch DB `drive_files` resolution) | **PASS** | `npm test` |
 | `src/lib/ak05/__tests__/rollup.test.ts` | 6 tests (undecided neutral, partial-K undecided, >=1 BK auto-BK, manual assessor override/clear, DOCX/PDF export) | **PASS** | `npm test` |
 | `src/services/__tests__/vatm-rollup.test.ts` | 2 tests (VATM multi-channel rollup incl. `FR.IA.09` interview) | **PASS** | `npm test` |
 | `src/services/__tests__/official-forms-export.test.ts` | 7 tests (AK.02, IA.04B, IA.06C DOCX exports, neutral unassessed rendering, auto-BK, XML `pgMar`/`bodyPr` normalization, `dit_form` `proyek` flag) | **PASS** | `npm test` |
-| `src/worker/__tests__/worker.test.ts` | 8 tests (`extract_file`, `similarity_run`, `ocr_ktp`, inline run, job audit lifecycle, two-pass roster merge + ZIP unpack + duplicate pruning, newest `06C` revision) | **PASS** | `npm test` |
+| `src/worker/__tests__/worker.test.ts` | 9 tests (`extract_file` raw + cached `extractedText` reuse, `similarity_run`, `ocr_ktp`, inline run, job audit lifecycle, two-pass roster merge + ZIP unpack + duplicate pruning, newest `06C` revision) | **PASS** | `npm test` |
 | `src/lib/written/__tests__/ooxml-decrypt.test.ts` | 3 tests (CFB + MS-OFFCRYPTO Agile v4.4 missing/wrong/valid password) | **PASS** | `npm test` |
 | `src/lib/similarity/__tests__/load-batch-similarity.test.ts` | 2 tests (threshold provenance label, uncalibrated notice, per-assessee summaries) | **PASS** | `npm test` |
-| `src/lib/forms/__tests__/scheme-manifest-portability.test.ts` | 2 tests (Non-AK3U manifest units, KP, doc columns, branding) | **PASS** | `npm test` |
-| `src/db/__tests__/dual-path.test.ts` | 4 tests (`runRepositoryDualPath` REST bypass, Drizzle RLS tx, fallback, strict) | **PASS** | `npm test` |
+| `src/lib/forms/__tests__/scheme-manifest-portability.test.ts` | 3 tests (Non-AK3U manifest units, KP, `resolveUnitsForScheme` parity on `kelompokPekerjaan`-only manifests, `isGenericFallback` indicator, doc columns, branding) | **PASS** | `npm test` |
+| `src/lib/forms/__tests__/dit-inputs.test.ts` | 1 test (Shared `selectDitInputFiles` 04A/04B/`dit_form`/CV selector parity between DIT page & backend worker) | **PASS** | `npm test` |
+| `src/db/__tests__/dual-path.test.ts` | 5 tests (`runRepositoryDualPath` REST bypass, Drizzle RLS tx, fallback, strict, `unscopedPublicRead` & missing-userId `AUTH_ERROR` guard) | **PASS** | `npm test` |
 
 ---
 
@@ -52,7 +53,7 @@
 | Gate | Command | Result |
 | :--- | :--- | :--- |
 | TypeScript Strict | `npm run typecheck` | **PASS (0 errors)** |
-| ESLint Zero Warnings | `npm run lint` | **PASS (0 errors, 0 warnings)** |
-| Vitest Unit Suite | `npm test` | **PASS (24 files, 96/96 tests)** |
+| ESLint Zero Warnings | `npx eslint . --max-warnings 0` | **PASS (0 errors, 0 warnings)** |
+| Vitest Unit Suite | `npm test` | **PASS (25 files, 101/101 tests)** |
 | Production Build | `npm run build` | **PASS (36 app routes incl. Proxy Middleware)** |
-| Multi-LSP Postgres RLS | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS (36/36 tests on remote Supabase after `000010`)** |
+| Multi-LSP Postgres RLS | `supabase db query --remote --yes --file tests/rls-multi-lsp.test.sql` | **PASS (36/36 tests on remote Supabase after R5 repo migration)** |

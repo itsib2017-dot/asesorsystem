@@ -107,4 +107,29 @@ describe("runRepositoryDualPath & hasDatabaseUrl (T13)", () => {
       }),
     ).rejects.toThrow("unique violation");
   });
+
+  it("supports unscopedPublicRead for global config and rejects missing userId when RLS is required", async () => {
+    process.env.ENABLE_DIRECT_DB = "true";
+    process.env.DATABASE_URL = "postgresql://postgres:secret@localhost:5432/postgres";
+
+    const drizzlePublic = vi.fn().mockResolvedValue(["global-cfg"]);
+    const res = await runRepositoryDualPath({
+      unscopedPublicRead: true,
+      label: "ConfigRepo",
+      drizzle: drizzlePublic,
+      supabase: vi.fn(),
+    });
+    expect(res).toEqual(["global-cfg"]);
+    expect(mockTransaction).not.toHaveBeenCalled();
+
+    await expect(
+      runRepositoryDualPath({
+        userId: "",
+        label: "ProtectedRepo",
+        drizzle: vi.fn(),
+        supabase: vi.fn(),
+        fallbackOnError: false,
+      }),
+    ).rejects.toThrow("AUTH_ERROR");
+  });
 });

@@ -1,5 +1,5 @@
 import { desc, eq } from "drizzle-orm";
-import { hasDatabaseUrl, isUuid, runRepositoryDualPath, withRlsTransaction } from "@/db";
+import { isUuid, runRepositoryDualPath } from "@/db";
 import { assessees, batches, batchAssessors, driveFiles } from "@/db/schema";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -39,34 +39,25 @@ export interface DriveFileRecord {
   archiveEntryPath: string | null;
 }
 
-export async function listBatchesForUser(userId: string): Promise<BatchSummary[]> {
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, (tx) =>
-      tx.select().from(batches).orderBy(desc(batches.createdAt)),
-    );
-    return rows.map((r) => ({
-      id: r.id,
-      lspId: r.lspId,
-      schemeId: r.schemeId,
-      name: r.name,
-      status: r.status,
-      tukName: r.tukName,
-      tukType: r.tukType,
-      assessmentDate: r.assessmentDate,
-      driveFolderUrl: r.driveFolderUrl,
-      kelompokSheetUrl: r.kelompokSheetUrl,
-      createdBy: r.createdBy,
-      createdAt: r.createdAt.toISOString(),
-    }));
-  }
+function mapDrizzleBatchRow(r: typeof batches.$inferSelect): BatchSummary {
+  return {
+    id: r.id,
+    lspId: r.lspId,
+    schemeId: r.schemeId,
+    name: r.name,
+    status: r.status,
+    tukName: r.tukName,
+    tukType: r.tukType,
+    assessmentDate: r.assessmentDate,
+    driveFolderUrl: r.driveFolderUrl,
+    kelompokSheetUrl: r.kelompokSheetUrl,
+    createdBy: r.createdBy,
+    createdAt: r.createdAt.toISOString(),
+  };
+}
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase
-    .from("batches")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-  return (data ?? []).map((r) => ({
+function mapSupabaseBatchRow(r: Record<string, unknown>): BatchSummary {
+  return {
     id: r.id as string,
     lspId: r.lsp_id as string,
     schemeId: r.scheme_id as string,
@@ -79,50 +70,44 @@ export async function listBatchesForUser(userId: string): Promise<BatchSummary[]
     kelompokSheetUrl: (r.kelompok_sheet_url as string | null) ?? null,
     createdBy: r.created_by as string,
     createdAt: r.created_at as string,
-  }));
+  };
+}
+
+export async function listBatchesForUser(userId: string): Promise<BatchSummary[]> {
+  return runRepositoryDualPath({
+    userId,
+    label: "BatchesRepository.listBatchesForUser",
+    drizzle: async (tx) => {
+      const rows = await tx.select().from(batches).orderBy(desc(batches.createdAt));
+      return rows.map(mapDrizzleBatchRow);
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("batches")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      return (data ?? []).map((r) => mapSupabaseBatchRow(r as Record<string, unknown>));
+    },
+  });
 }
 
 export async function getBatchById(userId: string, batchId: string): Promise<BatchSummary | null> {
   if (!isUuid(batchId)) return null;
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, (tx) =>
-      tx.select().from(batches).where(eq(batches.id, batchId)).limit(1),
-    );
-    const r = rows[0];
-    if (!r) return null;
-    return {
-      id: r.id,
-      lspId: r.lspId,
-      schemeId: r.schemeId,
-      name: r.name,
-      status: r.status,
-      tukName: r.tukName,
-      tukType: r.tukType,
-      assessmentDate: r.assessmentDate,
-      driveFolderUrl: r.driveFolderUrl,
-      kelompokSheetUrl: r.kelompokSheetUrl,
-      createdBy: r.createdBy,
-      createdAt: r.createdAt.toISOString(),
-    };
-  }
-
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase.from("batches").select("*").eq("id", batchId).maybeSingle();
-  if (!data) return null;
-  return {
-    id: data.id as string,
-    lspId: data.lsp_id as string,
-    schemeId: data.scheme_id as string,
-    name: data.name as string,
-    status: data.status as string,
-    tukName: (data.tuk_name as string | null) ?? null,
-    tukType: (data.tuk_type as string | null) ?? null,
-    assessmentDate: (data.assessment_date as string | null) ?? null,
-    driveFolderUrl: (data.drive_folder_url as string | null) ?? null,
-    kelompokSheetUrl: (data.kelompok_sheet_url as string | null) ?? null,
-    createdBy: data.created_by as string,
-    createdAt: data.created_at as string,
-  };
+  return runRepositoryDualPath({
+    userId,
+    label: "BatchesRepository.getBatchById",
+    drizzle: async (tx) => {
+      const rows = await tx.select().from(batches).where(eq(batches.id, batchId)).limit(1);
+      return rows[0] ? mapDrizzleBatchRow(rows[0]) : null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase.from("batches").select("*").eq("id", batchId).maybeSingle();
+      return data ? mapSupabaseBatchRow(data as Record<string, unknown>) : null;
+    },
+  });
 }
 
 export async function createBatchRecord(params: {
@@ -135,9 +120,11 @@ export async function createBatchRecord(params: {
   driveFolderUrl?: string;
   kelompokSheetUrl?: string;
 }): Promise<{ ok: true; batchId: string } | { ok: false; error: string }> {
-  if (hasDatabaseUrl()) {
-    try {
-      const id = await withRlsTransaction(params.userId, async (tx) => {
+  try {
+    return await runRepositoryDualPath({
+      userId: params.userId,
+      label: "BatchesRepository.createBatchRecord",
+      drizzle: async (tx) => {
         const [row] = await tx
           .insert(batches)
           .values({
@@ -163,78 +150,68 @@ export async function createBatchRecord(params: {
           })
           .onConflictDoNothing();
 
-        return row.id;
-      });
-      return { ok: true, batchId: id };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : "DB error" };
-    }
+        return { ok: true, batchId: row.id } as const;
+      },
+      supabase: async () => {
+        const supabase = await getSupabaseServerClient();
+        const { data, error } = await supabase
+          .from("batches")
+          .insert({
+            lsp_id: params.lspId,
+            scheme_id: params.schemeId,
+            name: params.name,
+            tuk_name: params.tukName ?? null,
+            tuk_type: params.tukType ?? "sewaktu",
+            drive_folder_url: params.driveFolderUrl ?? null,
+            kelompok_sheet_url: params.kelompokSheetUrl ?? null,
+            created_by: params.userId,
+          })
+          .select("id")
+          .single();
+
+        if (error || !data) {
+          return { ok: false, error: error?.message ?? "Gagal membuat batch" } as const;
+        }
+
+        await supabase.from("batch_assessors").upsert({
+          batch_id: data.id,
+          lsp_id: params.lspId,
+          assessor_id: params.userId,
+        });
+
+        return { ok: true, batchId: data.id as string } as const;
+      },
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "DB error" };
   }
-
-  const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("batches")
-    .insert({
-      lsp_id: params.lspId,
-      scheme_id: params.schemeId,
-      name: params.name,
-      tuk_name: params.tukName ?? null,
-      tuk_type: params.tukType ?? "sewaktu",
-      drive_folder_url: params.driveFolderUrl ?? null,
-      kelompok_sheet_url: params.kelompokSheetUrl ?? null,
-      created_by: params.userId,
-    })
-    .select("id")
-    .single();
-
-  if (error || !data) {
-    return { ok: false, error: error?.message ?? "Gagal membuat batch" };
-  }
-
-  await supabase.from("batch_assessors").upsert({
-    batch_id: data.id,
-    lsp_id: params.lspId,
-    assessor_id: params.userId,
-  });
-
-  return { ok: true, batchId: data.id as string };
 }
 
-export async function listDriveFilesForBatch(
-  userId: string,
-  batchId: string,
-): Promise<DriveFileRecord[]> {
-  if (!isUuid(batchId)) return [];
-  if (hasDatabaseUrl()) {
-    const rows = await withRlsTransaction(userId, (tx) =>
-      tx.select().from(driveFiles).where(eq(driveFiles.batchId, batchId)),
-    );
-    return rows.map((r) => ({
-      id: r.id,
-      lspId: r.lspId,
-      batchId: r.batchId,
-      assesseeId: r.assesseeId,
-      driveFileId: r.driveFileId,
-      fileName: r.fileName,
-      mimeType: r.mimeType,
-      drivePath: r.drivePath,
-      docType: r.docType,
-      classificationConfidence: Number(r.classificationConfidence),
-      triageStatus: r.triageStatus as DriveFileRecord["triageStatus"],
-      triageReason: r.triageReason,
-      extractedText: r.extractedText,
-      extractionMethod: r.extractionMethod,
-      ocrConfidence: r.ocrConfidence ? Number(r.ocrConfidence) : null,
-      driveModifiedTime: r.driveModifiedTime?.toISOString() ?? null,
-      archiveParentId: r.archiveParentId ?? null,
-      archiveEntryPath: r.archiveEntryPath ?? null,
-    }));
-  }
+function mapDrizzleDriveFileRow(r: typeof driveFiles.$inferSelect): DriveFileRecord {
+  return {
+    id: r.id,
+    lspId: r.lspId,
+    batchId: r.batchId,
+    assesseeId: r.assesseeId,
+    driveFileId: r.driveFileId,
+    fileName: r.fileName,
+    mimeType: r.mimeType,
+    drivePath: r.drivePath,
+    docType: r.docType,
+    classificationConfidence: Number(r.classificationConfidence),
+    triageStatus: r.triageStatus as DriveFileRecord["triageStatus"],
+    triageReason: r.triageReason,
+    extractedText: r.extractedText,
+    extractionMethod: r.extractionMethod,
+    ocrConfidence: r.ocrConfidence ? Number(r.ocrConfidence) : null,
+    driveModifiedTime: r.driveModifiedTime?.toISOString() ?? null,
+    archiveParentId: r.archiveParentId ?? null,
+    archiveEntryPath: r.archiveEntryPath ?? null,
+  };
+}
 
-  const supabase = await getSupabaseServerClient();
-  const { data } = await supabase.from("drive_files").select("*").eq("batch_id", batchId);
-
-  return (data ?? []).map((r) => ({
+function mapSupabaseDriveFileRow(r: Record<string, unknown>): DriveFileRecord {
+  return {
     id: r.id as string,
     lspId: r.lsp_id as string,
     batchId: r.batch_id as string,
@@ -253,7 +230,51 @@ export async function listDriveFilesForBatch(
     driveModifiedTime: (r.drive_modified_time as string | null) ?? null,
     archiveParentId: (r.archive_parent_id as string | null) ?? null,
     archiveEntryPath: (r.archive_entry_path as string | null) ?? null,
-  }));
+  };
+}
+
+export async function getDriveFileById(
+  userId: string,
+  fileId: string,
+): Promise<DriveFileRecord | null> {
+  if (!isUuid(fileId)) return null;
+  return runRepositoryDualPath({
+    userId,
+    label: "BatchesRepository.getDriveFileById",
+    drizzle: async (tx) => {
+      const [row] = await tx.select().from(driveFiles).where(eq(driveFiles.id, fileId)).limit(1);
+      return row ? mapDrizzleDriveFileRow(row) : null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("drive_files")
+        .select("*")
+        .eq("id", fileId)
+        .maybeSingle();
+      return data ? mapSupabaseDriveFileRow(data as Record<string, unknown>) : null;
+    },
+  });
+}
+
+export async function listDriveFilesForBatch(
+  userId: string,
+  batchId: string,
+): Promise<DriveFileRecord[]> {
+  if (!isUuid(batchId)) return [];
+  return runRepositoryDualPath({
+    userId,
+    label: "BatchesRepository.listDriveFilesForBatch",
+    drizzle: async (tx) => {
+      const rows = await tx.select().from(driveFiles).where(eq(driveFiles.batchId, batchId));
+      return rows.map(mapDrizzleDriveFileRow);
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase.from("drive_files").select("*").eq("batch_id", batchId);
+      return (data ?? []).map((r) => mapSupabaseDriveFileRow(r as Record<string, unknown>));
+    },
+  });
 }
 
 export async function updateDriveFileTriage(params: {
@@ -263,10 +284,12 @@ export async function updateDriveFileTriage(params: {
   docType?: string;
   triageStatus: "assigned" | "not_needed" | "unmatched";
   triageReason?: string;
-}) {
-  if (hasDatabaseUrl()) {
-    await withRlsTransaction(params.userId, (tx) =>
-      tx
+}): Promise<void> {
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "BatchesRepository.updateDriveFileTriage",
+    drizzle: async (tx) => {
+      await tx
         .update(driveFiles)
         .set({
           assesseeId: params.assesseeId,
@@ -274,22 +297,25 @@ export async function updateDriveFileTriage(params: {
           triageStatus: params.triageStatus,
           triageReason: params.triageReason ?? null,
         })
-        .where(eq(driveFiles.id, params.fileId)),
-    );
-    return;
-  }
-
-  const supabase = await getSupabaseServerClient();
-  await supabase
-    .from("drive_files")
-    .update({
-      assessee_id: params.assesseeId,
-      ...(params.docType ? { doc_type: params.docType } : {}),
-      triage_status: params.triageStatus,
-      triage_reason: params.triageReason ?? null,
-    })
-    .eq("id", params.fileId);
+        .where(eq(driveFiles.id, params.fileId));
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      await supabase
+        .from("drive_files")
+        .update({
+          assessee_id: params.assesseeId,
+          ...(params.docType ? { doc_type: params.docType } : {}),
+          triage_status: params.triageStatus,
+          triage_reason: params.triageReason ?? null,
+        })
+        .eq("id", params.fileId);
+    },
+  });
 }
+
+const DRIVE_FILES_INSERT_CHUNK = 100;
+const DRIVE_FILES_UPDATE_CHUNK = 20;
 
 export async function upsertDriveFilesForBatch(params: {
   userId: string;
@@ -315,166 +341,176 @@ export async function upsertDriveFilesForBatch(params: {
 }): Promise<number> {
   if (params.files.length === 0) return 0;
 
-  if (hasDatabaseUrl()) {
-    try {
-      return await withRlsTransaction(params.userId, async (tx) => {
-        const existing = await tx
-          .select({ id: driveFiles.id, driveFileId: driveFiles.driveFileId })
-          .from(driveFiles)
-          .where(eq(driveFiles.batchId, params.batchId));
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "BatchesRepository.upsertDriveFiles",
+    drizzle: async (tx) => {
+      const existing = await tx
+        .select({ id: driveFiles.id, driveFileId: driveFiles.driveFileId })
+        .from(driveFiles)
+        .where(eq(driveFiles.batchId, params.batchId));
 
-        const existingMap = new Map(existing.map((r) => [r.driveFileId, r.id]));
-        let saved = 0;
+      const existingMap = new Map(existing.map((r) => [r.driveFileId, r.id]));
+      const toInsert: Array<typeof driveFiles.$inferInsert> = [];
+      const toUpdate: Array<{ id: string; setPayload: Partial<typeof driveFiles.$inferInsert> }> = [];
+      const now = new Date();
 
-        for (const f of params.files) {
-          const existingId = existingMap.get(f.driveFileId);
-          const resolvedStatus =
-            f.triageStatus ?? (f.assesseeId ? "assigned" : "unmatched");
-          const parsedModified =
-            f.driveModifiedTime && !Number.isNaN(Date.parse(f.driveModifiedTime))
-              ? new Date(f.driveModifiedTime)
-              : undefined;
-          if (existingId) {
-            await tx
-              .update(driveFiles)
-              .set({
-                fileName: f.fileName,
-                mimeType: f.mimeType,
-                drivePath: f.drivePath,
-                docType: f.docType,
-                classificationConfidence: f.confidence.toFixed(4),
-                ...(f.assesseeId !== undefined ? { assesseeId: f.assesseeId } : {}),
-                ...(f.assesseeId || f.triageStatus ? { triageStatus: resolvedStatus } : {}),
-                ...(f.triageReason !== undefined ? { triageReason: f.triageReason } : {}),
-                ...(f.extractedText !== undefined ? { extractedText: f.extractedText } : {}),
-                ...(f.extractionMethod !== undefined ? { extractionMethod: f.extractionMethod } : {}),
-                ...(f.ocrConfidence !== undefined && f.ocrConfidence !== null
-                  ? { ocrConfidence: f.ocrConfidence.toFixed(4) }
-                  : {}),
-                ...(parsedModified ? { driveModifiedTime: parsedModified } : {}),
-                ...(f.archiveParentId !== undefined ? { archiveParentId: f.archiveParentId } : {}),
-                ...(f.archiveEntryPath !== undefined ? { archiveEntryPath: f.archiveEntryPath } : {}),
-                updatedAt: new Date(),
-              })
-              .where(eq(driveFiles.id, existingId));
-          } else {
-            await tx.insert(driveFiles).values({
-              lspId: params.lspId,
-              batchId: params.batchId,
-              assesseeId: f.assesseeId ?? null,
-              driveFileId: f.driveFileId,
+      for (const f of params.files) {
+        const existingId = existingMap.get(f.driveFileId);
+        const resolvedStatus =
+          f.triageStatus ?? (f.assesseeId ? "assigned" : "unmatched");
+        const parsedModified =
+          f.driveModifiedTime && !Number.isNaN(Date.parse(f.driveModifiedTime))
+            ? new Date(f.driveModifiedTime)
+            : undefined;
+        if (existingId) {
+          toUpdate.push({
+            id: existingId,
+            setPayload: {
               fileName: f.fileName,
               mimeType: f.mimeType,
               drivePath: f.drivePath,
               docType: f.docType,
               classificationConfidence: f.confidence.toFixed(4),
-              triageStatus: resolvedStatus,
-              triageReason: f.triageReason ?? null,
-              extractedText: f.extractedText ?? null,
-              extractionMethod: f.extractionMethod ?? null,
-              ocrConfidence:
-                f.ocrConfidence != null ? f.ocrConfidence.toFixed(4) : null,
-              driveModifiedTime: parsedModified ?? null,
-              archiveParentId: f.archiveParentId ?? null,
-              archiveEntryPath: f.archiveEntryPath ?? null,
-            });
-          }
+              ...(f.assesseeId !== undefined ? { assesseeId: f.assesseeId } : {}),
+              ...(f.assesseeId || f.triageStatus ? { triageStatus: resolvedStatus } : {}),
+              ...(f.triageReason !== undefined ? { triageReason: f.triageReason } : {}),
+              ...(f.extractedText !== undefined ? { extractedText: f.extractedText } : {}),
+              ...(f.extractionMethod !== undefined ? { extractionMethod: f.extractionMethod } : {}),
+              ...(f.ocrConfidence !== undefined && f.ocrConfidence !== null
+                ? { ocrConfidence: f.ocrConfidence.toFixed(4) }
+                : {}),
+              ...(parsedModified ? { driveModifiedTime: parsedModified } : {}),
+              ...(f.archiveParentId !== undefined ? { archiveParentId: f.archiveParentId } : {}),
+              ...(f.archiveEntryPath !== undefined ? { archiveEntryPath: f.archiveEntryPath } : {}),
+              updatedAt: now,
+            },
+          });
+        } else {
+          toInsert.push({
+            lspId: params.lspId,
+            batchId: params.batchId,
+            assesseeId: f.assesseeId ?? null,
+            driveFileId: f.driveFileId,
+            fileName: f.fileName,
+            mimeType: f.mimeType,
+            drivePath: f.drivePath,
+            docType: f.docType,
+            classificationConfidence: f.confidence.toFixed(4),
+            triageStatus: resolvedStatus,
+            triageReason: f.triageReason ?? null,
+            extractedText: f.extractedText ?? null,
+            extractionMethod: f.extractionMethod ?? null,
+            ocrConfidence:
+              f.ocrConfidence != null ? f.ocrConfidence.toFixed(4) : null,
+            driveModifiedTime: parsedModified ?? null,
+            archiveParentId: f.archiveParentId ?? null,
+            archiveEntryPath: f.archiveEntryPath ?? null,
+          });
+        }
+      }
+
+      let saved = 0;
+      for (let i = 0; i < toInsert.length; i += DRIVE_FILES_INSERT_CHUNK) {
+        const chunk = toInsert.slice(i, i + DRIVE_FILES_INSERT_CHUNK);
+        await tx.insert(driveFiles).values(chunk);
+        saved += chunk.length;
+      }
+
+      for (let i = 0; i < toUpdate.length; i += DRIVE_FILES_UPDATE_CHUNK) {
+        const chunk = toUpdate.slice(i, i + DRIVE_FILES_UPDATE_CHUNK);
+        for (const item of chunk) {
+          await tx.update(driveFiles).set(item.setPayload).where(eq(driveFiles.id, item.id));
           saved++;
         }
+      }
 
-        return saved;
-      });
-    } catch (err) {
-      console.warn(
-        "[BatchesRepository Warning] Direct DB upsertDriveFiles fallback to Supabase REST:",
-        err instanceof Error ? err.message : "unknown",
+      return saved;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data: existingRows } = await supabase
+        .from("drive_files")
+        .select("id, drive_file_id")
+        .eq("batch_id", params.batchId);
+
+      const existingMap = new Map<string, string>(
+        (existingRows ?? []).map((r) => [String(r.drive_file_id), String(r.id)]),
       );
-    }
-  }
 
-  const supabase = await getSupabaseServerClient();
-  const { data: existingRows } = await supabase
-    .from("drive_files")
-    .select("id, drive_file_id")
-    .eq("batch_id", params.batchId);
+      const toInsert: Array<Record<string, unknown>> = [];
+      const toUpdate: Array<{ id: string; payload: Record<string, unknown> }> = [];
+      const nowIso = new Date().toISOString();
 
-  const existingMap = new Map<string, string>(
-    (existingRows ?? []).map((r) => [String(r.drive_file_id), String(r.id)]),
-  );
+      for (const f of params.files) {
+        const existingId = existingMap.get(f.driveFileId);
+        const resolvedStatus = f.triageStatus ?? (f.assesseeId ? "assigned" : "unmatched");
+        const hasModified =
+          Boolean(f.driveModifiedTime) && !Number.isNaN(Date.parse(String(f.driveModifiedTime)));
+        if (existingId) {
+          toUpdate.push({
+            id: existingId,
+            payload: {
+              file_name: f.fileName,
+              mime_type: f.mimeType,
+              drive_path: f.drivePath,
+              doc_type: f.docType,
+              classification_confidence: f.confidence,
+              ...(f.assesseeId !== undefined ? { assessee_id: f.assesseeId } : {}),
+              ...(f.assesseeId || f.triageStatus ? { triage_status: resolvedStatus } : {}),
+              ...(f.triageReason !== undefined ? { triage_reason: f.triageReason } : {}),
+              ...(f.extractedText !== undefined ? { extracted_text: f.extractedText } : {}),
+              ...(f.extractionMethod !== undefined ? { extraction_method: f.extractionMethod } : {}),
+              ...(f.ocrConfidence !== undefined ? { ocr_confidence: f.ocrConfidence } : {}),
+              ...(hasModified ? { drive_modified_time: f.driveModifiedTime } : {}),
+              ...(f.archiveParentId !== undefined ? { archive_parent_id: f.archiveParentId } : {}),
+              ...(f.archiveEntryPath !== undefined ? { archive_entry_path: f.archiveEntryPath } : {}),
+              updated_at: nowIso,
+            },
+          });
+        } else {
+          toInsert.push({
+            lsp_id: params.lspId,
+            batch_id: params.batchId,
+            assessee_id: f.assesseeId ?? null,
+            drive_file_id: f.driveFileId,
+            file_name: f.fileName,
+            mime_type: f.mimeType,
+            drive_path: f.drivePath,
+            doc_type: f.docType,
+            classification_confidence: f.confidence,
+            triage_status: resolvedStatus,
+            triage_reason: f.triageReason ?? null,
+            extracted_text: f.extractedText ?? null,
+            extraction_method: f.extractionMethod ?? null,
+            ocr_confidence: f.ocrConfidence ?? null,
+            drive_modified_time: hasModified ? f.driveModifiedTime : null,
+            archive_parent_id: f.archiveParentId ?? null,
+            archive_entry_path: f.archiveEntryPath ?? null,
+          });
+        }
+      }
 
-  const toInsert: Array<Record<string, unknown>> = [];
-  const toUpdate: Array<{ id: string; payload: Record<string, unknown> }> = [];
-  const nowIso = new Date().toISOString();
+      let saved = 0;
+      for (let i = 0; i < toInsert.length; i += DRIVE_FILES_INSERT_CHUNK) {
+        const chunk = toInsert.slice(i, i + DRIVE_FILES_INSERT_CHUNK);
+        const { error } = await supabase.from("drive_files").insert(chunk);
+        if (!error) saved += chunk.length;
+      }
 
-  for (const f of params.files) {
-    const existingId = existingMap.get(f.driveFileId);
-    const resolvedStatus = f.triageStatus ?? (f.assesseeId ? "assigned" : "unmatched");
-    const hasModified =
-      Boolean(f.driveModifiedTime) && !Number.isNaN(Date.parse(String(f.driveModifiedTime)));
-    if (existingId) {
-      toUpdate.push({
-        id: existingId,
-        payload: {
-          file_name: f.fileName,
-          mime_type: f.mimeType,
-          drive_path: f.drivePath,
-          doc_type: f.docType,
-          classification_confidence: f.confidence,
-          ...(f.assesseeId !== undefined ? { assessee_id: f.assesseeId } : {}),
-          ...(f.assesseeId || f.triageStatus ? { triage_status: resolvedStatus } : {}),
-          ...(f.triageReason !== undefined ? { triage_reason: f.triageReason } : {}),
-          ...(f.extractedText !== undefined ? { extracted_text: f.extractedText } : {}),
-          ...(f.extractionMethod !== undefined ? { extraction_method: f.extractionMethod } : {}),
-          ...(f.ocrConfidence !== undefined ? { ocr_confidence: f.ocrConfidence } : {}),
-          ...(hasModified ? { drive_modified_time: f.driveModifiedTime } : {}),
-          ...(f.archiveParentId !== undefined ? { archive_parent_id: f.archiveParentId } : {}),
-          ...(f.archiveEntryPath !== undefined ? { archive_entry_path: f.archiveEntryPath } : {}),
-          updated_at: nowIso,
-        },
-      });
-    } else {
-      toInsert.push({
-        lsp_id: params.lspId,
-        batch_id: params.batchId,
-        assessee_id: f.assesseeId ?? null,
-        drive_file_id: f.driveFileId,
-        file_name: f.fileName,
-        mime_type: f.mimeType,
-        drive_path: f.drivePath,
-        doc_type: f.docType,
-        classification_confidence: f.confidence,
-        triage_status: resolvedStatus,
-        triage_reason: f.triageReason ?? null,
-        extracted_text: f.extractedText ?? null,
-        extraction_method: f.extractionMethod ?? null,
-        ocr_confidence: f.ocrConfidence ?? null,
-        drive_modified_time: hasModified ? f.driveModifiedTime : null,
-        archive_parent_id: f.archiveParentId ?? null,
-        archive_entry_path: f.archiveEntryPath ?? null,
-      });
-    }
-  }
+      for (let i = 0; i < toUpdate.length; i += DRIVE_FILES_UPDATE_CHUNK) {
+        const chunk = toUpdate.slice(i, i + DRIVE_FILES_UPDATE_CHUNK);
+        const results = await Promise.all(
+          chunk.map((item) =>
+            supabase.from("drive_files").update(item.payload).eq("id", item.id),
+          ),
+        );
+        saved += results.filter((r) => !r.error).length;
+      }
 
-  let saved = 0;
-  const INSERT_CHUNK = 100;
-  for (let i = 0; i < toInsert.length; i += INSERT_CHUNK) {
-    const chunk = toInsert.slice(i, i + INSERT_CHUNK);
-    const { error } = await supabase.from("drive_files").insert(chunk);
-    if (!error) saved += chunk.length;
-  }
-
-  const UPDATE_CONCURRENCY = 20;
-  for (let i = 0; i < toUpdate.length; i += UPDATE_CONCURRENCY) {
-    const chunk = toUpdate.slice(i, i + UPDATE_CONCURRENCY);
-    const results = await Promise.all(
-      chunk.map((item) =>
-        supabase.from("drive_files").update(item.payload).eq("id", item.id),
-      ),
-    );
-    saved += results.filter((r) => !r.error).length;
-  }
-
-  return saved;
+      return saved;
+    },
+  });
 }
 
 export async function updateDriveFileExtraction(params: {
