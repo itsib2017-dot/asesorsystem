@@ -255,7 +255,7 @@ function mapDrizzleDriveFileRow(r: typeof driveFiles.$inferSelect): DriveFileRec
     driveFileId: r.driveFileId,
     fileName: r.fileName,
     mimeType: r.mimeType,
-    drivePath: r.drivePath,
+    drivePath: r.drivePath ?? "",
     docType: r.docType,
     classificationConfidence: Number(r.classificationConfidence),
     triageStatus: r.triageStatus as DriveFileRecord["triageStatus"],

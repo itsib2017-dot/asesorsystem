@@ -4,14 +4,20 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getUser } from "@/lib/auth/get-session";
 import { requireLspRole } from "@/lib/auth/get-role";
-import { confirmCertificateName, getAssesseeById } from "@/repositories/assessees.repository";
-import { getBatchById } from "@/repositories/batches.repository";
+import { getConfig } from "@/lib/config/get-config";
+import { decryptSecret } from "@/lib/crypto/encryption";
+import { confirmCertificateName, getAssesseeById, saveNameJuryVerdictAndOcr } from "@/repositories/assessees.repository";
+import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
+import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
 import {
   upsertAssesseeDecisionOverride,
   upsertUnitDecision,
 } from "@/repositories/assessment.repository";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { downloadPublicDriveFileBuffer } from "@/services/drive-extract";
+import { runNameJury } from "@/services/name-jury";
+import Tesseract from "tesseract.js";
 
 export async function confirmCertificateNameAction(formData: FormData) {
   const user = await getUser();
@@ -52,6 +58,185 @@ export async function confirmCertificateNameAction(formData: FormData) {
 
   revalidatePath(`/batches`);
   return { ok: true, message: `Nama sertifikat dikonfirmasi: ${confirmedName}` };
+}
+
+const ocrKtpActionSchema = z.object({
+  assesseeId: z.string().uuid("ID asesi tidak valid."),
+  batchId: z.string().uuid("ID batch tidak valid."),
+});
+
+/**
+ * Jalankan OCR KTP lokal (Tesseract) untuk satu asesi.
+ * Hanya membaca berkas KTP dari Drive, tidak mengirim gambar KTP ke LLM (UU PDP).
+ * Hasil teks + confidence disimpan per asesi dan name jury dijalankan berdasarkan teks OCR.
+ */
+export async function runOcrKtpAction(formData: FormData): Promise<{
+  ok: boolean;
+  message?: string;
+  error?: string;
+  ktpNameOcr?: string;
+  ocrConfidence?: number | null;
+  verdict?: string | null;
+}> {
+  const user = await getUser();
+  if (!user) {
+    return { ok: false, error: "Unauthorized: Silakan masuk terlebih dahulu." };
+  }
+
+  const parsed = ocrKtpActionSchema.safeParse({
+    assesseeId: String(formData.get("assesseeId") ?? "").trim(),
+    batchId: String(formData.get("batchId") ?? "").trim(),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: "Parameter OCR KTP tidak valid." };
+  }
+  const { assesseeId, batchId } = parsed.data;
+
+  const [batch, assessee] = await Promise.all([
+    getBatchById(user.id, batchId),
+    getAssesseeById(user.id, assesseeId),
+  ]);
+  if (!batch || !assessee || assessee.batchId !== batch.id) {
+    return { ok: false, error: "Asesi atau batch tidak ditemukan atau akses ditolak." };
+  }
+
+  const roleCheck = await requireLspRole(batch.lspId, user.id, ["lsp_admin", "assessor"]);
+  if (!roleCheck.allowed) {
+    return { ok: false, error: "Forbidden: Hanya Asesor atau LSP Admin yang dapat menjalankan OCR KTP." };
+  }
+
+  const files = await listDriveFilesForBatch(user.id, batchId);
+  const ktpFile = files.find((f) => f.assesseeId === assesseeId && f.docType === "ktp");
+  if (!ktpFile) {
+    return { ok: false, error: "Berkas KTP tidak ditemukan untuk asesi ini di batch." };
+  }
+
+  // Resolusi kunci API Google Drive (server-side saja, tidak bocor ke klien).
+  let driveApiKey: string | undefined;
+  try {
+    const stored = await getLatestProviderConfigForAssessor(user.id);
+    if (stored?.googleDriveApiKeyEncrypted) {
+      driveApiKey = decryptSecret(stored.googleDriveApiKeyEncrypted) || undefined;
+    }
+  } catch {
+    driveApiKey = undefined;
+  }
+
+  let imageBuffer: Buffer;
+  try {
+    imageBuffer = await downloadPublicDriveFileBuffer({
+      driveFileId: ktpFile.driveFileId,
+      apiKey: driveApiKey,
+      maxBytes: 15 * 1024 * 1024,
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Gagal mengunduh berkas KTP dari Drive.",
+    };
+  }
+
+  // OCR lokal dengan Tesseract (bahasa Indonesia, fallback English).
+  let ocrText = "";
+  let ocrConfidence = 0;
+  try {
+    const result = await Tesseract.recognize(imageBuffer, "ind");
+    ocrText = (result.data?.text ?? "").trim();
+    ocrConfidence = Number(result.data?.confidence ?? 0);
+  } catch {
+    try {
+      const result = await Tesseract.recognize(imageBuffer, "eng");
+      ocrText = (result.data?.text ?? "").trim();
+      ocrConfidence = Number(result.data?.confidence ?? 0);
+    } catch (err2) {
+      return {
+        ok: false,
+        error: err2 instanceof Error ? err2.message : "OCR KTP gagal dijalankan.",
+      };
+    }
+  }
+
+  if (!ocrText) {
+    return {
+      ok: false,
+      error: "Tidak ada teks yang dapat dibaca dari berkas KTP. Pastikan berkas KTP jelas dan terbaca.",
+    };
+  }
+
+  // Jalankan name jury berdasarkan teks OCR (bukan teks yang dipasok manual).
+  const thresholds =
+    (await getConfig("name_jury.thresholds", { lspId: assessee.lspId })) ?? undefined;
+  const llmConfig = await (async () => {
+    const stored = await getLatestProviderConfigForAssessor(user.id);
+    if (!stored) return undefined;
+    return {
+      provider: stored.provider,
+      apiKey: decryptSecret(stored.encryptedApiKey),
+      baseUrl: stored.baseUrl,
+      gatewayToken: stored.encryptedGatewayToken ? decryptSecret(stored.encryptedGatewayToken) : null,
+      model: stored.model,
+      temperature: stored.temperature,
+      maxTokens: stored.maxTokens,
+    };
+  })();
+
+  const jury = await runNameJury({
+    nameKtpOcr: ocrText,
+    nameApl01: assessee.apl01Name ?? assessee.displayName,
+    nameSuratTugas: assessee.suratTugasName ?? "",
+    nameIjazah: assessee.ijazahName ?? "",
+    ocrConfidence,
+    ocrConfidenceFloor: 0.75,
+    thresholds,
+    llmConfig,
+    correlationId: `ocr-ktp-${assesseeId}`,
+  });
+
+  await saveNameJuryVerdictAndOcr({
+    userId: user.id,
+    lspId: assessee.lspId,
+    assesseeId: assessee.id,
+    ktpNameOcr: ocrText || undefined,
+    verdict: jury.result.verdict,
+    proposedCertificateName: jury.result.proposed_certificate_name,
+    reasoning: jury.result.reasoning,
+    evidence: jury.result.evidence,
+    ocrConfidence: jury.result.ocr_confidence,
+    model: llmConfig ? `${llmConfig.provider}/${llmConfig.model}` : "deterministic-rule-30",
+    promptVersion: jury.promptVersion,
+  });
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        lsp_id: assessee.lspId,
+        actor_id: user.id,
+        action: "identity.ocr.ktp",
+        resource: "assessees",
+        resource_id: assesseeId,
+        after_summary: {
+          batchId,
+          fileName: ktpFile.fileName,
+          ktpNameOcr: ocrText,
+          ocrConfidence,
+          verdict: jury.result.verdict,
+        },
+      },
+      supabase,
+    );
+  } catch {
+    // non-fatal audit error
+  }
+
+  revalidatePath(`/batches/${batchId}/assessees/${assesseeId}`);
+  return {
+    ok: true,
+    message: `OCR KTP selesai. Teks terdeteksi, confidence ${Math.round((ocrConfidence ?? 0) * 100)}%, veredik: ${jury.result.verdict}.`,
+    ktpNameOcr: ocrText,
+    ocrConfidence: jury.result.ocr_confidence ?? null,
+    verdict: jury.result.verdict,
+  };
 }
 
 export async function saveUnitDecisionAction(formData: FormData) {

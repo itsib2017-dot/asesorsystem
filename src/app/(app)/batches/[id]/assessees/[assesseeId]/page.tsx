@@ -13,6 +13,7 @@ import {
 } from "@/repositories/assessment.repository";
 import { listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { NameJuryCard } from "@/components/identity/name-jury-card";
+import { OcrKtpTrigger } from "./ocr-ktp-trigger";
 import { DecisionToggle } from "@/components/ak05/decision-toggle";
 import { Ak02BlankoPreview } from "@/components/forms/ak02-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
@@ -203,6 +204,7 @@ export default async function AssesseeDetailPage({
         confirmedName={assessee.certificateNameConfirmed}
         onConfirmAction={confirmCertificateNameAction}
       />
+      <OcrKtpTrigger assesseeId={assessee.id} batchId={batchId} />
 
       {/* FR.AK.02 Per-Unit K / BK Decisions */}
       <div className="glass-card rounded-2xl p-6 space-y-4">

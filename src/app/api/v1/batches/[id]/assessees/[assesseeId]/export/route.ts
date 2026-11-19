@@ -16,6 +16,7 @@ import {
 } from "@/repositories/assessment.repository";
 import {
   generateAk02Docx,
+  generateIa04aDocx,
   generateIa04bDocx,
   generateIa06cDocx,
   resolveSchemeTemplateBuffer,
@@ -24,16 +25,18 @@ import {
 } from "@/services/export";
 import {
   buildAk02Payload,
+  buildIa04aPayload,
   buildIa04bPayload,
   buildIa06cPayload,
   extractSchemeMeta,
   type RawDecisionRow,
 } from "@/lib/forms/assessee-forms";
 
-type AssesseeFormType = "ak02" | "ia04b" | "ia06";
+type AssesseeFormType = "ak02" | "ia04a" | "ia04b" | "ia06";
 
 const FORM_FILENAMES: Record<AssesseeFormType, string> = {
   ak02: "FR-AK-02",
+  ia04a: "FR-IA-04A",
   ia04b: "FR-IA-04B",
   ia06: "FR-IA-06C",
 };
@@ -51,8 +54,8 @@ export async function GET(
   const form = (url.searchParams.get("form") || "ak02") as AssesseeFormType;
   const format = (url.searchParams.get("format") || "docx") as ExportFormat;
 
-  if (!["ak02", "ia04b", "ia06"].includes(form)) {
-    return apiError("VALIDATION_ERROR", "Parameter form tidak valid (ak02, ia04b, ia06).");
+  if (!["ak02", "ia04a", "ia04b", "ia06"].includes(form)) {
+    return apiError("VALIDATION_ERROR", "Parameter form tidak valid (ak02, ia04a, ia04b, ia06).");
   }
 
   const check = validateExportFormat(form, format);
@@ -198,6 +201,26 @@ export async function GET(
         manualOverride: decisionOverride,
         signaturePngBytes: signatureBytes,
         signatureMimeType,
+      }),
+      templateBuffer,
+    });
+  } else if (form === "ia04a") {
+    const templateBuffer = await resolveSchemeTemplateBuffer({
+      scheme,
+      formKeys: ["ia04a", "04a", "fr.ia.04a", "fria04a"],
+      defaultAk3uFileName: "FR.IA.04A.DIT.docx",
+      downloadFromStorage,
+    });
+    docxBuf = await generateIa04aDocx({
+      ...buildIa04aPayload({
+        schemeTitle,
+        schemeNumber,
+        tukType: batch.tukType,
+        assessorName,
+        assessorRegNo,
+        assesseeName: assessee.certificateNameConfirmed,
+        assessmentDate,
+        ditAnalysis: ditAnalysis as Record<string, unknown> | null,
       }),
       templateBuffer,
     });

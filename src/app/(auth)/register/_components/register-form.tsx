@@ -141,7 +141,7 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
             htmlFor="password"
             className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5"
           >
-            Password (min. 8 karakter)
+            Password (min. 12 karakter + kompleksitas)
           </label>
           <div className="relative">
             <input
@@ -150,17 +150,17 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
               type={showPassword ? "text" : "password"}
               autoComplete="new-password"
               required
-              minLength={8}
+              minLength={12}
               onInput={(e) => e.currentTarget.setCustomValidity("")}
               onInvalid={(e) => {
                 const t = e.currentTarget;
                 if (t.validity.valueMissing) {
-                  t.setCustomValidity("Harap buat password minimal 8 karakter.");
+                  t.setCustomValidity("Harap buat password minimal 12 karakter.");
                 } else if (t.validity.tooShort) {
-                  t.setCustomValidity("Password minimal terdiri dari 8 karakter.");
+                  t.setCustomValidity("Password minimal terdiri dari 12 karakter.");
                 }
               }}
-              placeholder="••••••••"
+              placeholder="••••••••••••"
               aria-invalid={Boolean(state?.fieldErrors?.password)}
               className="w-full px-4 py-2.5 pr-11 rounded-lg bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             />
@@ -174,6 +174,10 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
+          <p className="text-[10px] text-slate-400 mt-1">
+            Minimal 12 karakter, huruf besar &amp; kecil, angka, dan karakter spesial. Hindari
+            kata sandi umum.
+          </p>
           {state?.fieldErrors?.password && (
             <p role="alert" className="text-xs text-red-400 mt-1">
               {state.fieldErrors.password[0]}
@@ -194,16 +198,16 @@ export function RegisterForm({ supabaseConfigured }: RegisterFormProps) {
             type={showPassword ? "text" : "password"}
             autoComplete="new-password"
             required
-            minLength={8}
+            minLength={12}
             onInput={(e) => e.currentTarget.setCustomValidity("")}
             onInvalid={(e) => {
               if (e.currentTarget.validity.valueMissing) {
                 e.currentTarget.setCustomValidity("Harap ulangi password Anda.");
               } else if (e.currentTarget.validity.tooShort) {
-                e.currentTarget.setCustomValidity("Konfirmasi password minimal 8 karakter.");
+                e.currentTarget.setCustomValidity("Konfirmasi password minimal 12 karakter.");
               }
             }}
-            placeholder="••••••••"
+            placeholder="••••••••••••"
             aria-invalid={Boolean(state?.fieldErrors?.confirmPassword)}
             className="w-full px-4 py-2.5 rounded-lg bg-slate-800/80 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />

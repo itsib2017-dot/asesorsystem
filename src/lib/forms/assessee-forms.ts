@@ -1,6 +1,7 @@
 import type {
   Ak02EvidenceType,
   Ak02ExportPayload,
+  Ia04aExportPayload,
   Ia04bExportPayload,
   Ia06cExportPayload,
 } from "@/services/export";
@@ -16,7 +17,7 @@ import {
   type OverallDecisionOverrideLike,
   type ResolvedOverallDecision,
 } from "@/lib/ak05/decision-rules";
-import { readField, readStringField } from "@/lib/utils/record-fields";
+import { readArrayField, readField, readStringField } from "@/lib/utils/record-fields";
 
 export const AK3U_OFFICIAL_UNITS = [
   "Merancang Strategi Pengendalian Risiko K3 di Tempat Kerja",
@@ -588,6 +589,54 @@ export function buildIa04bPayload(params: {
     overallRecommendation,
     signaturePngBytes: params.signaturePngBytes,
     signatureMimeType: params.signatureMimeType,
+  };
+}
+
+export function buildIa04aPayload(params: {
+  schemeTitle: string;
+  schemeNumber: string;
+  tukType?: string | null;
+  assessorName: string;
+  assessorRegNo: string;
+  assesseeName: string;
+  assessmentDate: string;
+  ditAnalysis?: Record<string, unknown> | null;
+}): Ia04aExportPayload {
+  const readinessRaw = params.ditAnalysis
+    ? readField<{ recommendation?: string }>(params.ditAnalysis, "readiness", "readiness")
+    : undefined;
+  const questionBankRaw = readArrayField(
+    params.ditAnalysis,
+    "questionBank",
+    "question_bank",
+  );
+  const rawOutput = readField<{ frIa04aText?: string }>(
+    params.ditAnalysis,
+    "rawOutput",
+    "raw_output",
+  );
+
+  const modelAnswers = Array.isArray(questionBankRaw)
+    ? questionBankRaw.map((q) => ({
+        no: readStringField(q, "no", "no") || String(q.no ?? ""),
+        question: readStringField(q, "question", "question"),
+        keyPoints: Array.isArray(q.modelAnswerKeyPoints)
+          ? q.modelAnswerKeyPoints.map((p: unknown) => String(p ?? ""))
+          : [],
+      }))
+    : [];
+
+  return {
+    schemeTitle: params.schemeTitle,
+    schemeNumber: params.schemeNumber,
+    tukType: normalizeTukType(params.tukType),
+    assessorName: params.assessorName,
+    assessorRegNo: params.assessorRegNo,
+    assesseeName: params.assesseeName,
+    assessmentDate: params.assessmentDate,
+    ditExtractedText: rawOutput?.frIa04aText ?? undefined,
+    modelAnswers,
+    readiness: readinessRaw?.recommendation ?? null,
   };
 }
 

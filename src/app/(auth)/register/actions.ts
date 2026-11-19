@@ -17,14 +17,63 @@ const registerSchema = z
     email: z.string().trim().email({ message: "Alamat email tidak valid." }),
     password: z
       .string()
-      .min(8, { message: "Password minimal 8 karakter." })
-      .max(128, { message: "Password maksimal 128 karakter." }),
+      .min(12, { message: "Password minimal 12 karakter." })
+      .max(128, { message: "Password maksimal 128 karakter." })
+      .regex(/[a-z]/, { message: "Mengandung huruf kecil (a-z)." })
+      .regex(/[A-Z]/, { message: "Mengandung huruf besar (A-Z)." })
+      .regex(/[0-9]/, { message: "Mengandung angka (0-9)." })
+      .regex(/[^A-Za-z0-9]/, { message: "Mengandung karakter spesial (contoh: !@#$)." })
+      .refine(
+        (pw) => !COMMON_WEAK_PASSWORDS.has(pw.toLowerCase()),
+        {
+          message:
+            "Password terlalu umum atau kemungkinan telah bocor. Buat kombinasi yang lebih sulit ditebak.",
+        },
+      ),
     confirmPassword: z.string(),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: "Konfirmasi password tidak cocok.",
     path: ["confirmPassword"],
   });
+
+/**
+ * Daftar kata sandi lemah / umum yang diblokir secara lokal (pendekatan
+ * "blocked leaked passwords" tanpa panggilan eksternal ke layanan pelanggaran
+ * data, karena integrasi luar memerlukan persiapan terpisah). Dikosongkan
+ * huruf sebelum dibandingkan.
+ */
+const COMMON_WEAK_PASSWORDS = new Set([
+  "password",
+  "password123",
+  "password12!",
+  "12345678",
+  "123456789",
+  "1234567890",
+  "qwerty",
+  "qwerty123",
+  "abc123",
+  "admin",
+  "admin123",
+  "letmein",
+  "welcome",
+  "monkey",
+  "dragon",
+  "master",
+  "login",
+  "princess",
+  "football",
+  "superman",
+  "batman",
+  "trustno1",
+  "iloveyou",
+  "sunshine",
+  "charlie",
+  "zaq1zaq1",
+  "123456a",
+  "asekom2026",
+  "asesorkompetensi",
+]);
 
 export type RegisterState = {
   error?: string;

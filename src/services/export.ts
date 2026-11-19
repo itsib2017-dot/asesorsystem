@@ -24,7 +24,7 @@ import type {
   SchemeRecord,
 } from "@/repositories/schemes.repository";
 
-export type DocumentType = "ak05" | "ak02" | "ia04b" | "ia06" | "dit_pack" | "similarity";
+export type DocumentType = "ak05" | "ak02" | "ia04b" | "ia04a" | "ia06" | "dit_pack" | "similarity";
 export type ExportFormat = "pdf" | "docx" | "xlsx";
 
 /**
@@ -151,6 +151,24 @@ export interface Ia06cExportPayload {
   feedbackDetail?: string;
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
+  templateBuffer?: Buffer;
+}
+
+export interface Ia04aExportPayload {
+  schemeTitle: string;
+  schemeNumber: string;
+  tukType: "sewaktu" | "tempat_kerja" | "mandiri";
+  assessorName: string;
+  assessorRegNo: string;
+  assesseeName: string;
+  assessmentDate: string;
+  ditExtractedText?: string | null;
+  modelAnswers: Array<{
+    no: number | string;
+    question: string;
+    keyPoints: string[];
+  }>;
+  readiness?: string | null;
   templateBuffer?: Buffer;
 }
 
@@ -690,6 +708,116 @@ async function loadDocxTemplateAndSig(params: {
   }
   const sig = await embedSignatureInZip(zip, params.signatureBytes, params.signatureMime);
   return { zip, docXml, tableSpans, ...sig };
+}
+
+/**
+ * Generates FR.IA.04A (Instruksi DIT) DOCX. Builds a clean structured document
+ * from the DIT analysis output (instruksi teks + jawaban model per soal) using
+ * the `docx` library, since the official blanko template is a filled sample
+ * without replaceable placeholder tokens.
+ */
+export async function generateIa04aDocx(payload: Ia04aExportPayload): Promise<Buffer> {
+  const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
+  const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
+
+  const children = [];
+
+  children.push(
+    new Paragraph({
+      text: "Lembar Instruksi Tugas Terstruktur (DIT) — FR.IA.04A",
+      heading: HeadingLevel.TITLE,
+      alignment: "center",
+      spacing: { after: 200 },
+    }),
+    new Paragraph({
+      text: `${displaySchemeTitle} (${payload.schemeNumber})`,
+      alignment: "center",
+      spacing: { after: 40 },
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: "LSP / TUK: ", bold: true }),
+        new TextRun({ text: `${payload.assessorName} (${payload.tukType})` }),
+      ],
+      spacing: { after: 40 },
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Asesi: ", bold: true }),
+        new TextRun({ text: payload.assesseeName }),
+      ],
+      spacing: { after: 40 },
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Tanggal Asesmen: ", bold: true }),
+        new TextRun({ text: displayDate }),
+      ],
+      spacing: { after: 40 },
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Nomor Skema: ", bold: true }),
+        new TextRun({ text: payload.schemeNumber }),
+      ],
+      spacing: { after: 40 },
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Kesiapan (Readiness): ", bold: true }),
+        new TextRun({ text: payload.readiness ?? "-" }),
+      ],
+      spacing: { after: 100 },
+    }),
+    new Paragraph({
+      text: "Bahan Instruksi (Ekstraksi FR.IA.04A)",
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 200, after: 80 },
+    }),
+    ...(payload.ditExtractedText
+      ? payload.ditExtractedText.split(/\n+/).map(
+          (line) => new Paragraph({ text: line, spacing: { after: 60 } }),
+        )
+      : [new Paragraph({ text: "Tidak ada teks instruksi yang tersedia.", spacing: { after: 60 } })]),
+    new Paragraph({
+      text: "Jawaban Model (untuk Asesor)",
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 200, after: 80 },
+    }),
+    ...payload.modelAnswers.map(
+      (qa) =>
+        new Paragraph({
+          children: [
+            new TextRun({ text: `Soal ${qa.no}. `, bold: true }),
+            new TextRun({ text: qa.question }),
+          ],
+          spacing: { before: 120, after: 40 },
+        }),
+    ),
+    ...payload.modelAnswers.flatMap((qa) =>
+      qa.keyPoints.map(
+        (pt, i) =>
+          new Paragraph({
+            text: `   ${i + 1}. ${pt}`,
+            bullet: { level: 0 },
+            spacing: { after: 40 },
+          }),
+      ),
+    ),
+  );
+
+  const doc = new Document({
+    creator: "AsesorKompetensi",
+    title: `FR.IA.04A - Instruksi DIT - ${payload.assesseeName}`,
+    sections: [
+      {
+        properties: {},
+        children,
+      },
+    ],
+  });
+
+  return Packer.toBuffer(doc);
 }
 
 const AK02_EVIDENCE_COLUMNS: Ak02EvidenceType[] = [
