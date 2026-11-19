@@ -18,6 +18,7 @@ import {
   generateAk02Docx,
   generateIa04bDocx,
   generateIa06cDocx,
+  resolveSchemeTemplateBuffer,
   validateExportFormat,
   type ExportFormat,
 } from "@/services/export";
@@ -137,10 +138,25 @@ export async function GET(
     signature.mimeType === "image/jpeg" ? ("image/jpeg" as const) : ("image/png" as const);
   const rawDecisions = decisions as unknown as RawDecisionRow[];
 
+  const downloadFromStorage = async (storagePath: string) => {
+    if (!storagePath.startsWith(`${batch.lspId}/`)) return undefined;
+    const { data: tplBlob } = await supabase.storage
+      .from("scheme-blankos")
+      .download(storagePath);
+    return tplBlob ? Buffer.from(await tplBlob.arrayBuffer()) : undefined;
+  };
+
   let docxBuf: Buffer;
   if (form === "ak02") {
-    docxBuf = await generateAk02Docx(
-      buildAk02Payload({
+    const templateBuffer = await resolveSchemeTemplateBuffer({
+      scheme,
+      formKeys: ["ak02", "fr.ak.02", "frak02"],
+      instrumentRoles: ["keputusan"],
+      defaultAk3uFileName: "FR.AK.02.REKAMAN_ASESMEN.docx",
+      downloadFromStorage,
+    });
+    docxBuf = await generateAk02Docx({
+      ...buildAk02Payload({
         scheme,
         schemeTitle,
         schemeNumber,
@@ -157,10 +173,18 @@ export async function GET(
         signaturePngBytes: signatureBytes,
         signatureMimeType,
       }),
-    );
+      templateBuffer,
+    });
   } else if (form === "ia04b") {
-    docxBuf = await generateIa04bDocx(
-      buildIa04bPayload({
+    const templateBuffer = await resolveSchemeTemplateBuffer({
+      scheme,
+      formKeys: ["04b", "ia04b", "fr.ia.04b", "fria04b"],
+      instrumentRoles: ["presentation"],
+      defaultAk3uFileName: "FR.IA.04B.PENILAIAN_PROYEK_SINGKAT.docx",
+      downloadFromStorage,
+    });
+    docxBuf = await generateIa04bDocx({
+      ...buildIa04bPayload({
         scheme,
         schemeTitle,
         schemeNumber,
@@ -175,10 +199,19 @@ export async function GET(
         signaturePngBytes: signatureBytes,
         signatureMimeType,
       }),
-    );
+      templateBuffer,
+    });
   } else {
-    docxBuf = await generateIa06cDocx(
-      buildIa06cPayload({
+    const templateBuffer = await resolveSchemeTemplateBuffer({
+      scheme,
+      formKeys: ["06c", "ia06c", "ia06", "fr.ia.06c"],
+      instrumentRoles: ["written_jawaban"],
+      defaultAk3uFileName: "FR.IA.06C.LEMBAR_JAWABAN_TERTULIS.docx",
+      downloadFromStorage,
+    });
+    docxBuf = await generateIa06cDocx({
+      ...buildIa06cPayload({
+        scheme,
         schemeTitle,
         schemeNumber,
         tukType: batch.tukType,
@@ -190,7 +223,8 @@ export async function GET(
         signaturePngBytes: signatureBytes,
         signatureMimeType,
       }),
-    );
+      templateBuffer,
+    });
   }
 
   await writeAuditLog(

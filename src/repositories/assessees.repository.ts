@@ -405,6 +405,147 @@ export async function updateAssesseeDisplayName(params: {
 }
 
 /**
+ * Deletes a single unconfirmed assessee from a batch after verifying it carries no linked
+ * files, decisions, gradings, or interview assessments, and its certificate name is not
+ * confirmed. Never removes confirmed names or records with data dependencies.
+ */
+export async function deleteAssesseeForBatch(params: {
+  userId: string;
+  assesseeId: string;
+  batchId: string;
+}): Promise<{ ok: true; displayName: string } | { ok: false; error: string }> {
+  if (!isUuid(params.assesseeId) || !isUuid(params.batchId)) {
+    return { ok: false, error: "ID asesi atau batch tidak valid." };
+  }
+
+  const assessee = await getAssesseeById(params.userId, params.assesseeId);
+  if (!assessee) {
+    return { ok: false, error: "Asesi tidak ditemukan." };
+  }
+  if (assessee.batchId !== params.batchId) {
+    return { ok: false, error: "Asesi tidak termasuk dalam batch ini." };
+  }
+  if (assessee.certificateNameConfirmed) {
+    return {
+      ok: false,
+      error: "Tidak dapat menghapus asesi yang nama sertifikatnya sudah dikonfirmasi.",
+    };
+  }
+
+  const displayName = assessee.displayName;
+
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssesseesRepository.deleteAssesseeForBatch",
+    drizzle: async (tx) => {
+      const [files, decs, dits, writtens, interviews, overrides] = await Promise.all([
+        tx
+          .select({ assesseeId: driveFiles.assesseeId })
+          .from(driveFiles)
+          .where(eq(driveFiles.batchId, params.batchId)),
+        tx
+          .select({ assesseeId: decisions.assesseeId })
+          .from(decisions)
+          .where(eq(decisions.assesseeId, params.assesseeId)),
+        tx
+          .select({ assesseeId: ditAnalyses.assesseeId })
+          .from(ditAnalyses)
+          .where(eq(ditAnalyses.assesseeId, params.assesseeId)),
+        tx
+          .select({ assesseeId: writtenGradings.assesseeId })
+          .from(writtenGradings)
+          .where(eq(writtenGradings.assesseeId, params.assesseeId)),
+        tx
+          .select({ assesseeId: interviewAssessments.assesseeId })
+          .from(interviewAssessments)
+          .where(eq(interviewAssessments.assesseeId, params.assesseeId)),
+        tx
+          .select({ assesseeId: assesseeDecisionOverrides.assesseeId })
+          .from(assesseeDecisionOverrides)
+          .where(eq(assesseeDecisionOverrides.assesseeId, params.assesseeId)),
+      ]);
+
+      const hasLinks =
+        files.some((r) => r.assesseeId === params.assesseeId) ||
+        decs.some((r) => r.assesseeId === params.assesseeId) ||
+        dits.some((r) => r.assesseeId === params.assesseeId) ||
+        writtens.some((r) => r.assesseeId === params.assesseeId) ||
+        interviews.some((r) => r.assesseeId === params.assesseeId) ||
+        overrides.some((r) => r.assesseeId === params.assesseeId);
+
+      if (hasLinks) {
+        return {
+          ok: false,
+          error: "Asesi tidak dapat dihapus karena sudah memiliki berkas, keputusan, atau penilaian yang tercatat.",
+        };
+      }
+
+      await tx.delete(assessees).where(eq(assessees.id, params.assesseeId));
+      return { ok: true, displayName };
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+
+      const [filesRes, decsRes, ditsRes, writtensRes, interviewsRes, overridesRes] =
+        await Promise.all([
+          supabase.from("drive_files").select("assessee_id").eq("batch_id", params.batchId),
+          supabase
+            .from("decisions")
+            .select("assessee_id")
+            .eq("assessee_id", params.assesseeId),
+          supabase
+            .from("dit_analyses")
+            .select("assessee_id")
+            .eq("assessee_id", params.assesseeId),
+          supabase
+            .from("written_gradings")
+            .select("assessee_id")
+            .eq("assessee_id", params.assesseeId),
+          supabase
+            .from("interview_assessments")
+            .select("assessee_id")
+            .eq("assessee_id", params.assesseeId),
+          supabase
+            .from("assessee_decision_overrides")
+            .select("assessee_id")
+            .eq("assessee_id", params.assesseeId),
+        ]);
+
+      const files = filesRes.data ?? [];
+      const decs = decsRes.data ?? [];
+      const dits = ditsRes.data ?? [];
+      const writtens = writtensRes.data ?? [];
+      const interviews = interviewsRes.data ?? [];
+      const overrides = overridesRes.data ?? [];
+
+      const hasLinks =
+        files.some((r) => String(r.assessee_id) === params.assesseeId) ||
+        decs.some((r) => String(r.assessee_id) === params.assesseeId) ||
+        dits.some((r) => String(r.assessee_id) === params.assesseeId) ||
+        writtens.some((r) => String(r.assessee_id) === params.assesseeId) ||
+        interviews.some((r) => String(r.assessee_id) === params.assesseeId) ||
+        overrides.some((r) => String(r.assessee_id) === params.assesseeId);
+
+      if (hasLinks) {
+        return {
+          ok: false,
+          error: "Asesi tidak dapat dihapus karena sudah memiliki berkas, keputusan, atau penilaian yang tercatat.",
+        };
+      }
+
+      const { error } = await supabase
+        .from("assessees")
+        .delete()
+        .eq("id", params.assesseeId);
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+      return { ok: true, displayName };
+    },
+  });
+}
+
+/**
  * Safely removes zero-file unconfirmed duplicate/folder-named assessee records after files
  * have been reassigned to canonical assessees (never removes confirmed names or records
  * carrying decisions, AI runs, written gradings, or interview assessments).

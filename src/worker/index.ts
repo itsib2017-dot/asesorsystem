@@ -40,9 +40,14 @@ import {
   crawlPublicDriveFolder,
   extractCandidateNamesFromDocumentText,
   extractDriveFolderId,
+  extractGoogleSheetId,
+  explainNameInference,
   hasTaskOrFolderPrefix,
   inferCandidateFromDrivePath,
+  parseKelompokAsesiCsv,
+  resolveSchemeFormDocType,
   type ClassifiedDriveFile,
+  type SchemeFormClassifierEntry,
 } from "@/services/drive";
 import {
   compareDriveFileFreshnessDesc,
@@ -170,7 +175,31 @@ async function requireLlmConfig(userId: string): Promise<RuntimeLlmConfig> {
 
 const MAX_ZIP_ARCHIVES_PER_SCAN = 5;
 const MAX_CONTENT_INSPECT_PER_SCAN = 12;
+
+function normalizeName(raw: string): string {
+  return raw.trim().replace(/\s+/g, " ");
+}
 const BATCH_MASTER_INSTRUMENT_TYPES = new Set(["04a", "06a", "06b", "09"]);
+const BATCH_MASTER_INSTRUMENT_ROLES = new Set([
+  "dit",
+  "written_soal",
+  "written_kunci",
+  "interview",
+  "mapa",
+]);
+
+function buildBatchMasterInstrumentSet(
+  schemeForms?: SchemeFormClassifierEntry[],
+): Set<string> {
+  const result = new Set<string>(BATCH_MASTER_INSTRUMENT_TYPES);
+  for (const f of schemeForms ?? []) {
+    if (BATCH_MASTER_INSTRUMENT_ROLES.has(f.instrumentRole)) {
+      result.add(resolveSchemeFormDocType(f));
+      result.add(f.formKey.toLowerCase());
+    }
+  }
+  return result;
+}
 
 interface ScanCandidateFile extends ClassifiedDriveFile {
   triageStatus?: DriveTriageStatus;
@@ -196,9 +225,11 @@ function formatUnextractableZipReason(rawError: string): string {
 async function expandZipArchivesForScan(
   discovered: ClassifiedDriveFile[],
   apiKey: string | undefined,
+  schemeForms?: SchemeFormClassifierEntry[],
 ): Promise<{ items: ScanCandidateFile[]; unpackedZipCount: number }> {
   const output: ScanCandidateFile[] = [];
   let unpackedZipCount = 0;
+  const masterTypes = buildBatchMasterInstrumentSet(schemeForms);
 
   for (const file of discovered) {
     const isZip =
@@ -240,7 +271,7 @@ async function expandZipArchivesForScan(
           entry,
           syntheticPath,
           parentPath,
-          cls: classifyDriveFileName(entry.fileName, parentPath),
+          cls: classifyDriveFileName(entry.fileName, parentPath, schemeForms),
         };
       });
 
@@ -286,6 +317,7 @@ async function expandZipArchivesForScan(
                   extractedText,
                   entry.fileName,
                   parentPath,
+                  schemeForms,
                 );
                 if (byText && cls.docType === "unknown") {
                   cls = byText;
@@ -315,7 +347,7 @@ async function expandZipArchivesForScan(
               entryReason = `Kandidat 06B dari arsip MUK ${file.fileName} — tidak diaktifkan otomatis tanpa verifikasi asesor`;
             }
           } else {
-            entryReason = BATCH_MASTER_INSTRUMENT_TYPES.has(cls.docType)
+            entryReason = masterTypes.has(cls.docType)
               ? `Instrumen master batch (${cls.docType}) dari arsip MUK ${file.fileName}`
               : `Blanko template (${cls.docType}) dari arsip MUK master ${file.fileName}`;
           }
@@ -360,6 +392,9 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
   if (!batch) {
     throw new Error(`NOT_FOUND: Batch ${batchId} tidak ditemukan.`);
   }
+  const scheme = await resolveSchemeForBatch(userId, batch);
+  const schemeForms = scheme?.forms;
+  const masterTypes = buildBatchMasterInstrumentSet(schemeForms);
 
   if (Array.isArray(job.payload.files)) {
     const classified = job.payload.files
@@ -367,7 +402,7 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
       .map((item, idx) => {
         const fileName = String(item.fileName ?? `file-${idx + 1}`);
         const drivePath = String(item.drivePath ?? fileName);
-        const cls = classifyDriveFileName(fileName, drivePath);
+        const cls = classifyDriveFileName(fileName, drivePath, schemeForms);
         return {
           driveFileId: String(item.driveFileId ?? `manual-${idx + 1}`),
           fileName,
@@ -413,6 +448,7 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     crawlPublicDriveFolder({
       folderId,
       apiKey: driveApiKey || undefined,
+      schemeForms,
     }),
     listDriveFilesForBatch(userId, batch.id),
     listAssesseesByBatch(userId, batch.id),
@@ -423,6 +459,7 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
   const { items: expandedFiles } = await expandZipArchivesForScan(
     discovered,
     driveApiKey || undefined,
+    schemeForms,
   );
 
   await enrichFilesByContent({
@@ -431,6 +468,7 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     maxInspect: MAX_CONTENT_INSPECT_PER_SCAN,
     persistUpdates: false,
     reassignAssessee: false,
+    schemeForms,
     cachedTextLookup: (file) => existingByDriveId.get(file.driveFileId)?.extractedText,
   });
 
@@ -445,13 +483,30 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
         const names = extractCandidateNamesFromDocumentText("surat_tugas", file.extractedText);
         suratTugasRoster.push(...names);
       } else if (!candidateName && file.docType === "apl01") {
-        const extractedName = extractCandidateNamesFromDocumentText(
+        const extractedNames = extractCandidateNamesFromDocumentText(
           "apl01",
           file.extractedText,
-        )[0];
+        );
+        const extractedName = extractedNames[0];
         if (extractedName) {
           candidateName = extractedName;
           isAuthoritativeRoster = true;
+        } else {
+          logEvent("warn", {
+            correlation_id: job.id,
+            user_id: userId,
+            action: "drive_scan.apl01_name_not_found",
+            resource: "drive_files",
+            outcome: "denied",
+            meta: {
+              batchId,
+              driveFileId: file.driveFileId,
+              fileName: file.fileName,
+              drivePath: file.drivePath,
+              docType: file.docType,
+              reason: "APL.01 teks terdieksi tetapi pola nama tidak cocok — lihat triage untuk alasan",
+            },
+          });
         }
       }
     }
@@ -573,6 +628,73 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     }
   }
 
+  // Connect Sheet Kelompok Asesi import: read kelompokSheetUrl from batch,
+  // fetch CSV export, parse, and upsert any names not already in the roster.
+  if (batch.kelompokSheetUrl) {
+    try {
+      const sheetId = extractGoogleSheetId(batch.kelompokSheetUrl);
+      if (sheetId) {
+        const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
+        const sheetRes = await fetch(csvUrl, {
+          headers: {
+            "User-Agent": "AsesorKompetensi/1.4 (+https://assessor-zeta.vercel.app)",
+          },
+          signal: AbortSignal.timeout(30000),
+        });
+        if (sheetRes.ok) {
+          const csvText = await sheetRes.text();
+          const sheetGroups = parseKelompokAsesiCsv(csvText);
+          const sheetNames: string[] = sheetGroups.flatMap((g: { assesseeNames: string[] }) => g.assesseeNames);
+          const currentPool = upsertedRecords.length > 0 ? upsertedRecords : existingAssesseesBefore;
+          const newSheetNames = sheetNames.filter(
+            (name: string) =>
+              !currentPool.some(
+                (a) => normalizeName(a.displayName).toLowerCase() === normalizeName(name).toLowerCase(),
+              ),
+          );
+          if (newSheetNames.length > 0) {
+            upsertedRecords = await upsertAssesseesForBatch({
+              userId,
+              lspId: batch.lspId,
+              batchId: batch.id,
+              names: newSheetNames,
+              existingPool: currentPool,
+            });
+            try {
+              const supabase = await getSupabaseServerClient();
+              await writeAuditLog(
+                {
+                  lsp_id: batch.lspId,
+                  actor_id: userId,
+                  action: "batch.roster.import",
+                  resource: "batches",
+                  resource_id: batch.id,
+                  after_summary: {
+                    batchId: batch.id,
+                    jobId: job.id,
+                    source: "kelompok_sheet_url",
+                    sheetId,
+                    importedCount: newSheetNames.length,
+                    totalNames: sheetNames.length,
+                    groups: sheetGroups.map((g: { groupName: string; assesseeNames: string[] }) => ({
+                      group: g.groupName,
+                      count: g.assesseeNames.length,
+                    })),
+                  },
+                },
+                supabase,
+              );
+            } catch {
+              // Non-fatal outside Next.js request scope.
+            }
+          }
+        }
+      }
+    } catch {
+      // Sheet import is best-effort; scan must not fail because of it.
+    }
+  }
+
   const assesseePool = upsertedRecords.length > 0 ? upsertedRecords : existingAssesseesBefore;
   const matchTargets = assesseePool.filter((a) => !staleDuplicateIds.has(a.id));
   const poolMatchCache = new Map<string, (typeof matchTargets)[number] | null>();
@@ -639,7 +761,7 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
         : null;
 
     const isBatchMasterInstrument =
-      !keepManualAssessee && BATCH_MASTER_INSTRUMENT_TYPES.has(file.docType);
+      !keepManualAssessee && masterTypes.has(file.docType);
 
     const status: DriveTriageStatus =
       isNonAssesseeDoc || isBatchMasterInstrument
@@ -662,7 +784,8 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
             `Instrumen master tingkat batch (${file.docType}) — tidak perlu dipetakan ke asesi`)
         : candidateName
           ? `Kandidat "${candidateName}" belum cocok dengan peserta otoritatif — petakan manual di Triage (${file.classificationReason ?? file.docType})`
-          : (file.classificationReason ?? "Berkas belum dipetakan ke asesi"),
+          : explainNameInference(file.drivePath) ??
+              (file.classificationReason ?? "Berkas belum dipetakan ke asesi"),
       driveModifiedTime: file.modifiedTime ?? null,
       archiveEntryPath: file.archiveEntryPath ?? null,
       ...(file.extractedText ? { extractedText: file.extractedText } : {}),

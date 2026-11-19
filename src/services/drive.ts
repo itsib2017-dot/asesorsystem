@@ -27,6 +27,78 @@ export interface ClassificationResult {
   reason: string;
 }
 
+export interface SchemeFormClassifierEntry {
+  formKey: string;
+  formName?: string;
+  filePatterns: string[];
+  instrumentRole: string;
+  sortOrder: number;
+}
+
+function escapeRegExp(raw: string): string {
+  return raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function resolveSchemeFormDocType(form: SchemeFormClassifierEntry): string {
+  const cleanedKey = form.formKey
+    .trim()
+    .toLowerCase()
+    .replace(/^fr[\s._-]*/i, "")
+    .replace(/^ia[\s._-]*/i, "")
+    .replace(/[._-]+/g, "");
+  if (
+    cleanedKey === "04a" ||
+    cleanedKey === "04b" ||
+    cleanedKey === "06a" ||
+    cleanedKey === "06b" ||
+    cleanedKey === "06c" ||
+    cleanedKey === "09" ||
+    cleanedKey === "apl01" ||
+    cleanedKey === "apl02" ||
+    cleanedKey === "ak01" ||
+    cleanedKey === "ak02" ||
+    cleanedKey === "ak05"
+  ) {
+    return cleanedKey;
+  }
+  return form.formKey.trim().toLowerCase();
+}
+
+function matchSchemeFormsByName(
+  ctx: NameMatchContext,
+  schemeForms?: SchemeFormClassifierEntry[],
+): ClassificationResult | null {
+  if (!Array.isArray(schemeForms) || schemeForms.length === 0) return null;
+  const fnNorm = ctx.fnBase.replace(/\./g, " ").replace(/\s+/g, " ").trim();
+  const ordered = [...schemeForms].sort((a, b) => a.sortOrder - b.sortOrder);
+
+  for (const form of ordered) {
+    for (const rawPattern of form.filePatterns ?? []) {
+      const patNorm = rawPattern
+        .toLowerCase()
+        .replace(/[._-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!patNorm) continue;
+
+      const boundaryRe = new RegExp(`(?:^|\\s|/)${escapeRegExp(patNorm)}(?:$|\\s|/)`, "i");
+      const matchesFile = boundaryRe.test(fnNorm);
+      const matchesFolder =
+        (patNorm.includes(" ") || patNorm.length >= 6) && boundaryRe.test(ctx.ppNorm);
+
+      if (matchesFile || matchesFolder) {
+        return {
+          docType: resolveSchemeFormDocType(form),
+          confidence: 0.94,
+          reason: `Cocok dengan pola manifes skema (${form.formKey}: "${rawPattern}")`,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 const DRIVE_FOLDER_ID_REGEX = /\/folders\/([a-zA-Z0-9_-]+)/;
 const SHEET_ID_REGEX = /\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/;
 
@@ -292,9 +364,19 @@ const CONTENT_ADMIN_RULE_ORDER = ["cv", "ktp", "surat_tugas", "ijazah"] as const
  * like "Persyaratan Pelatihan" never override individual assessee documents, and
  * separates instructional "Materi" handouts from trainee forms/certificates.
  */
+const PRIORITY_IDENTITY_AND_MATERIAL_RULES = [
+  "materi_pelatihan",
+  "ktp",
+  "ijazah",
+  "cv",
+  "surat_tugas",
+  "pas_foto",
+] as const;
+
 export function classifyDriveFileName(
   fileName: string,
   parentPath = "",
+  schemeForms?: SchemeFormClassifierEntry[],
 ): ClassificationResult {
   const fnLower = fileName.toLowerCase();
   const fnBase = normaliseFileTokens(fileName, true);
@@ -305,6 +387,25 @@ export function classifyDriveFileName(
     .trim();
 
   const ctx: NameMatchContext = { fnLower, fnBase, ppNorm };
+
+  if (schemeForms && schemeForms.length > 0) {
+    for (const key of PRIORITY_IDENTITY_AND_MATERIAL_RULES) {
+      const rule = UNIFIED_CLASSIFIER_RULES[key];
+      if (rule?.matchesName?.(ctx) && rule.nameReason) {
+        return {
+          docType: rule.docType,
+          confidence: rule.confidence,
+          reason: rule.nameReason,
+        };
+      }
+    }
+
+    const byScheme = matchSchemeFormsByName(ctx, schemeForms);
+    if (byScheme) {
+      return byScheme;
+    }
+  }
+
   for (const key of NAME_RULE_ORDER) {
     const rule = UNIFIED_CLASSIFIER_RULES[key];
     if (rule?.matchesName?.(ctx) && rule.nameReason) {
@@ -340,11 +441,34 @@ export function classifyDocumentTextContent(
   rawText: string,
   fileName: string,
   parentPath = "",
+  schemeForms?: SchemeFormClassifierEntry[],
 ): ClassificationResult | null {
   const norm = rawText.replace(/\s+/g, " ").trim();
   if (norm.length < 15) return null;
 
   const lower = norm.toLowerCase();
+
+  if (Array.isArray(schemeForms) && schemeForms.length > 0) {
+    const ordered = [...schemeForms].sort((a, b) => a.sortOrder - b.sortOrder);
+    for (const form of ordered) {
+      for (const rawPattern of form.filePatterns ?? []) {
+        const patNorm = rawPattern
+          .toLowerCase()
+          .replace(/[._-]+/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (patNorm.length < 4) continue;
+        const re = new RegExp(`\\b${escapeRegExp(patNorm)}\\b`, "i");
+        if (re.test(lower)) {
+          return {
+            docType: resolveSchemeFormDocType(form),
+            confidence: 0.91,
+            reason: `Terdeteksi dari isi dokumen sesuai manifes skema (${form.formKey}: "${rawPattern}")`,
+          };
+        }
+      }
+    }
+  }
 
   for (const key of CONTENT_CODE_RULE_ORDER) {
     const rule = UNIFIED_CLASSIFIER_RULES[key];
@@ -403,15 +527,25 @@ export function classifyDocumentTextContent(
  * Extracts clean participant display names from FR.APL.01 / Surat Tugas text when present
  * (adapted from MUK helper — exposes names only, never unmasked NIK/phone).
  */
+/**
+ * Known APL.01 name label patterns observed across BNSP blanko variants.
+ * The owner's APL.01 may use a label other than "Nama lengkap:". All patterns
+ * are server-side only; never log the full matched value if it contains PII
+ * beyond the name itself (NIK/KTP are deliberately excluded from the capture group).
+ */
+const APL01_NAME_LABEL_RE =
+  /(?:Nama\s*(?:lengkap|peserta|asesi)?|Nama\s*Agan|Nama\s*yang\s*Daftar|Peserta\s*(?:dengan\s*Nama)?)\s*:?\s*([A-Za-z][A-Za-z\s.,'()-]{2,80})/gi;
+
 export function extractCandidateNamesFromDocumentText(
   docType: string,
   text: string,
 ): string[] {
   const names: string[] = [];
   if (docType === "apl01") {
-    const m = text.match(/Nama\s*lengkap\s*:?\s*([A-Za-z][A-Za-z\s.,'()-]{2,80})/i);
-    const val = m?.[1]?.split(/\r?\n|No\.?\s*KTP|NIK|Tempat/i)[0]?.trim();
-    if (val && val.length >= 3) names.push(val);
+    for (const m of text.matchAll(APL01_NAME_LABEL_RE)) {
+      const val = m[1]?.split(/\r?\n|No\.?\s*KTP|NIK|Tempat/i)[0]?.trim();
+      if (val && val.length >= 3) names.push(val);
+    }
   }
   if (docType === "surat_tugas") {
     const afterList = text.split(/DAFTAR\s+PESERTA/i).pop() ?? "";
@@ -446,6 +580,7 @@ export async function crawlPublicDriveFolderEmbedded(
   folderId: string,
   parentPath = "",
   depth = 0,
+  schemeForms?: SchemeFormClassifierEntry[],
 ): Promise<ClassifiedDriveFile[]> {
   if (depth > 4) return [];
 
@@ -488,7 +623,11 @@ export async function crawlPublicDriveFolderEmbedded(
     if (href.includes("/drive/folders/")) {
       subfolders.push({ id: entryId, path: currentPath });
     } else {
-      const { docType, confidence, reason } = classifyDriveFileName(name, parentPath);
+      const { docType, confidence, reason } = classifyDriveFileName(
+        name,
+        parentPath,
+        schemeForms,
+      );
       files.push({
         driveFileId: entryId,
         fileName: name,
@@ -507,7 +646,9 @@ export async function crawlPublicDriveFolderEmbedded(
   for (let i = 0; i < subfolders.length; i += CONCURRENCY) {
     const chunk = subfolders.slice(i, i + CONCURRENCY);
     const nestedLists = await Promise.all(
-      chunk.map((sf) => crawlPublicDriveFolderEmbedded(sf.id, sf.path, depth + 1)),
+      chunk.map((sf) =>
+        crawlPublicDriveFolderEmbedded(sf.id, sf.path, depth + 1, schemeForms),
+      ),
     );
     for (const nested of nestedLists) {
       files.push(...nested);
@@ -521,6 +662,7 @@ async function crawlPublicDriveFolderApi(params: {
   folderId: string;
   apiKey: string;
   parentPath?: string;
+  schemeForms?: SchemeFormClassifierEntry[];
 }): Promise<ClassifiedDriveFile[]> {
   const results: ClassifiedDriveFile[] = [];
   let pageToken: string | undefined;
@@ -554,10 +696,15 @@ async function crawlPublicDriveFolderApi(params: {
           folderId: f.id,
           apiKey: params.apiKey,
           parentPath: currentPath,
+          schemeForms: params.schemeForms,
         });
         results.push(...nested);
       } else {
-        const { docType, confidence, reason } = classifyDriveFileName(f.name, params.parentPath);
+        const { docType, confidence, reason } = classifyDriveFileName(
+          f.name,
+          params.parentPath,
+          params.schemeForms,
+        );
         results.push({
           driveFileId: f.id,
           fileName: f.name,
@@ -581,6 +728,7 @@ export async function crawlPublicDriveFolder(params: {
   folderId: string;
   apiKey?: string;
   parentPath?: string;
+  schemeForms?: SchemeFormClassifierEntry[];
 }): Promise<ClassifiedDriveFile[]> {
   const key = params.apiKey?.trim();
   if (key) {
@@ -589,13 +737,19 @@ export async function crawlPublicDriveFolder(params: {
         folderId: params.folderId,
         apiKey: key,
         parentPath: params.parentPath,
+        schemeForms: params.schemeForms,
       });
     } catch {
       // Fall through to keyless public HTML listing when key is restricted/invalid
     }
   }
 
-  return crawlPublicDriveFolderEmbedded(params.folderId, params.parentPath ?? "", 0);
+  return crawlPublicDriveFolderEmbedded(
+    params.folderId,
+    params.parentPath ?? "",
+    0,
+    params.schemeForms,
+  );
 }
 
 const EXTRA_NON_CANDIDATE_FOLDER_RE =
@@ -610,6 +764,79 @@ const TASK_OR_FOLDER_NAME_PREFIX_RE =
 const SHARED_NON_CANDIDATE_TOKEN_SET = new Set<string>(NON_CANDIDATE_SHARED_TOKENS);
 
 /**
+ * Known status/suffix catatan that pollute real person folder names (e.g.
+ * "Budi Santoso - Kurang Sertifikat Pelatihan"). Stripped before the structural
+ * folder filter so a person-named folder is not discarded merely because its
+ * status suffix contains a structural word like "pelatihan".
+ */
+const STATUS_SUFFIX_RE =
+  /\s*(?:-\s*)?(?:kurang\s+(?:sertifikat\s+pelatihan|sertifikat|berkas|dokumen|persyaratan|lengkap)|sertifikat\s+pelatihan|belum\s+lengkap|belum\s+terverifikasi|belum\s+diverifikasi)\s*$/i;
+
+function cleanStatusSuffixes(raw: string): string {
+  return raw.replace(STATUS_SUFFIX_RE, "").trim();
+}
+
+/**
+ * Explains why no assessee candidate name could be inferred from a Drive path,
+ * so triage can show a transparent reason per file instead of a blank roster.
+ */
+export function explainNameInference(drivePath: string): string | null {
+  const segments = drivePath.split("/").map((s) => s.trim()).filter(Boolean);
+  if (segments.length <= 1) {
+    return "Jalur Drive tidak memuat folder induk — tidak ada konteks nama yang dapat diinferensi.";
+  }
+  const folders = segments.slice(0, -1);
+  const immediateParent = folders[folders.length - 1] ?? "";
+
+  for (let i = 0; i < folders.length; i++) {
+    const folder = folders[i] ?? "";
+    if (/persyaratan|asesi|peserta|kandidat/i.test(folder)) {
+      const next = folders[i + 1];
+      if (!next) {
+        return "Folder otoritatif (Persyaratan/Asesi/Peserta/Kandidat) kosong — tidak ada nama di dalamnya.";
+      }
+      if (isNonCandidateFolder(next)) {
+        return `Entri di bawah folder otoritatif ("${next}" ) terdeteksi sebagai folder struktural, bukan nama orang.`;
+      }
+      const cleaned = cleanCandidateLabel(next);
+      if (!isUsefulCandidateLabel(cleaned)) {
+        return `Entri di bawah folder otoritatif ("${next}" ) tidak merupakan nama orang yang valid.`;
+      }
+      return null; // candidate found
+    }
+    if (/tugas\s*dit/i.test(folder)) {
+      const next = folders[i + 1];
+      if (!next) {
+        return "Folder Tugas DIT kosong — tidak ada nama asesi yang dapat diinferensi.";
+      }
+      const cleaned = cleanCandidateLabel(next);
+      if (!isUsefulCandidateLabel(cleaned)) {
+        return `Entri di bawah Tugas DIT ("${next}" ) bukan nama orang (mungkin judul tugas atau kelompok).`;
+      }
+      return null; // candidate found
+    }
+  }
+
+  if (
+    immediateParent &&
+    !isNonCandidateFolder(immediateParent) &&
+    !hasTaskOrFolderPrefix(immediateParent)
+  ) {
+    const cleaned = cleanCandidateLabel(immediateParent);
+    if (isUsefulCandidateLabel(cleaned)) {
+      return null; // candidate found
+    }
+    return `Folder induk ("${immediateParent}" ) tidak menghasilkan nama orang yang valid.`;
+  }
+
+  if (immediateParent) {
+    return `Folder induk ("${immediateParent}" ) dianggap struktural dan diabaikan — nama asesi tidak terdeteksi dari jalur Drive.`;
+  }
+
+  return "Tidak ada folder induk yang dapat dijadikan sumber nama asesi.";
+}
+
+/**
  * Returns true when an assessee display name still carries a raw folder/task prefix
  * (e.g. `TUGAS SUANGI`, `DIT LUMIKA`, `Kelompok 1`) rather than a clean person name.
  */
@@ -620,11 +847,22 @@ export function hasTaskOrFolderPrefix(raw: string): boolean {
 }
 
 function isNonCandidateFolder(raw: string): boolean {
-  const lower = raw.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  const cleaned = cleanStatusSuffixes(raw);
+  const lower = cleaned.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   if (!lower) return true;
+  // Exact/start-anchored structural folder names (e.g. "Materi", "Persyaratan", "Tugas DIT").
   if (EXTRA_NON_CANDIDATE_FOLDER_RE.test(lower)) return true;
-  if (STRUCTURAL_FOLDER_CONTAINS_RE.test(lower)) return true;
-  return SHARED_NON_CANDIDATE_TOKEN_SET.has(lower);
+  // Shared single-token folders (e.g. "umum", "lsp", "draft").
+  if (SHARED_NON_CANDIDATE_TOKEN_SET.has(lower)) return true;
+  // Contains-structural: only reject when the ENTIRE cleaned name is structural,
+  // i.e. removing structural tokens leaves nothing person-like. A person folder
+  // with a status suffix ("Budi - Kurang Sertifikat Pelatihan") is NOT structural.
+  if (STRUCTURAL_FOLDER_CONTAINS_RE.test(lower)) {
+    const rest = lower.replace(STRUCTURAL_FOLDER_CONTAINS_RE, " ").replace(/\s+/g, " ").trim();
+    if (!rest || rest.length < 2) return true;
+    return false;
+  }
+  return false;
 }
 
 export interface CandidateInference {
@@ -640,6 +878,7 @@ export function cleanCandidateLabel(raw: string): string {
     .replace(/^[\s._-]+/, "")
     .replace(/\(\d+\)$/g, "")
     .replace(/(?:\s+|[-._]+)(?:v\d+|rev\s*\d*|final|k3|ak3u|bnsp)$/i, "")
+    .replace(STATUS_SUFFIX_RE, "")
     .replace(/\s+/g, " ")
     .trim();
 }

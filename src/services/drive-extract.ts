@@ -13,6 +13,7 @@ import type { SchemeRecord } from "@/repositories/schemes.repository";
 import {
   classifyDocumentTextContent,
   extractCandidateNamesFromDocumentText,
+  type SchemeFormClassifierEntry,
 } from "@/services/drive";
 import {
   EXTRACTABLE_TEXT_EXT_RE,
@@ -431,6 +432,7 @@ export async function enrichFilesByContent<T extends ContentEnrichableFile>(para
   reassignAssessee?: boolean;
   persistUpdates?: boolean;
   assessees?: Array<{ id: string; displayName: string }>;
+  schemeForms?: SchemeFormClassifierEntry[];
   cachedTextLookup?: (file: T) => string | null | undefined;
 }): Promise<{ inspected: number; reclassified: number; reassigned: number }> {
   const maxInspect = params.maxInspect ?? 12;
@@ -448,7 +450,12 @@ export async function enrichFilesByContent<T extends ContentEnrichableFile>(para
     parentPath: string,
     currentConf: number,
   ) => {
-    const contentCls = classifyDocumentTextContent(text, file.fileName, parentPath);
+    const contentCls = classifyDocumentTextContent(
+      text,
+      file.fileName,
+      parentPath,
+      params.schemeForms,
+    );
     const shouldUpgradeType =
       Boolean(contentCls) &&
       (Boolean(params.persistUpdates) ||
@@ -606,6 +613,7 @@ export async function reclassifyBatchFilesByContent(params: {
   assessees: Array<{ id: string; displayName: string }>;
   apiKey?: string;
   maxInspect?: number;
+  schemeForms?: SchemeFormClassifierEntry[];
 }): Promise<{ inspected: number; reclassified: number; reassigned: number }> {
   return enrichFilesByContent({
     files: params.files,
@@ -616,5 +624,6 @@ export async function reclassifyBatchFilesByContent(params: {
     reassignAssessee: true,
     persistUpdates: true,
     assessees: params.assessees,
+    schemeForms: params.schemeForms,
   });
 }

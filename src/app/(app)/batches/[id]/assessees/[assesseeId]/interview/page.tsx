@@ -4,6 +4,7 @@ import { FileText, MessageSquare } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { decryptSecret } from "@/lib/crypto/encryption";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
+import { resolveSchemeInterviewQuestions } from "@/lib/forms/assessee-forms";
 import { resolveUnitsForScheme } from "@/lib/forms/sync-vatm-decisions";
 import { getLatestInterviewAssessment } from "@/repositories/assessment.repository";
 import { listDriveFilesForBatch } from "@/repositories/batches.repository";
@@ -99,14 +100,31 @@ export default async function InterviewPage({
   }
 
   const schemeUnits = resolveUnitsForScheme(common.scheme);
+  const manifestInterviewQuestions = resolveSchemeInterviewQuestions(common.scheme);
 
   const savedQuestions = Array.isArray(latestInterview?.questions)
     ? (latestInterview.questions as InterviewQuestionItem[])
     : null;
+  const parsed09Questions = extracted09Text.trim()
+    ? parseQuestionsFromText(extracted09Text, schemeUnits)
+    : [];
+  const manifestFallbackQuestions: InterviewQuestionItem[] = manifestInterviewQuestions.map(
+    (q, idx) => ({
+      no: q.no || idx + 1,
+      question: q.question,
+      answerSummary: "",
+      achieved: null,
+      unitCode: q.unitCode || schemeUnits[idx]?.code,
+    }),
+  );
   const initialQuestions =
     savedQuestions && savedQuestions.length > 0
       ? savedQuestions
-      : parseQuestionsFromText(extracted09Text, schemeUnits);
+      : parsed09Questions.length > 0 && extracted09Text.trim().length > 0
+        ? parsed09Questions
+        : manifestFallbackQuestions.length > 0
+          ? manifestFallbackQuestions
+          : parseQuestionsFromText("", schemeUnits);
 
   const savedUnits = Array.isArray(
     latestInterview?.vatm_unit_recommendations ?? latestInterview?.vatmUnitRecommendations,

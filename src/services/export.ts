@@ -19,6 +19,10 @@ import {
   formatAk05SchemeTitle,
 } from "@/lib/ak05/format";
 import { AK05_LAYOUT } from "@/lib/ak05/layout";
+import type {
+  SchemeKelompokSpec,
+  SchemeRecord,
+} from "@/repositories/schemes.repository";
 
 export type DocumentType = "ak05" | "ak02" | "ia04b" | "ia06" | "dit_pack" | "similarity";
 export type ExportFormat = "pdf" | "docx" | "xlsx";
@@ -76,6 +80,7 @@ export interface Ak05ExportPayload {
   notesImprovement: string;
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
+  templateBuffer?: Buffer;
 }
 
 export type Ak02EvidenceType =
@@ -108,9 +113,11 @@ export interface Ak02ExportPayload {
   assessorComment?: string;
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
+  templateBuffer?: Buffer;
 }
 
 export interface Ia04bExportPayload {
+  schemeCode?: string;
   schemeTitle: string;
   schemeNumber: string;
   tukType: "sewaktu" | "tempat_kerja" | "mandiri";
@@ -118,10 +125,12 @@ export interface Ia04bExportPayload {
   assessorRegNo: string;
   assesseeName: string;
   assessmentDate: string;
+  kelompokPekerjaan?: SchemeKelompokSpec[];
   itemAchievedFlags: Array<boolean | null>;
   overallRecommendation: "K" | "BK" | null;
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
+  templateBuffer?: Buffer;
 }
 
 export interface Ia06cExportPayload {
@@ -142,10 +151,84 @@ export interface Ia06cExportPayload {
   feedbackDetail?: string;
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
+  templateBuffer?: Buffer;
 }
 
 function loadAk3uTemplateBuffer(fileName: string): Buffer {
-  return fs.readFileSync(path.join(process.cwd(), "src", "templates", "ak3u", fileName));
+  const safeBase = path.basename(fileName);
+  return fs.readFileSync(path.join(process.cwd(), "src", "templates", "ak3u", safeBase));
+}
+
+/**
+ * Resolves the active `.docx` blanko template buffer for a (scheme, form) pair from the
+ * scheme's `scheme_form_manifests` registry (Supabase Storage `scheme-blankos` or `builtin://ak3u/`),
+ * falling back to the base BNSP template structure when no custom upload exists yet.
+ */
+export async function resolveSchemeTemplateBuffer(params: {
+  scheme?: SchemeRecord | null;
+  formKeys: string[];
+  instrumentRoles?: string[];
+  defaultAk3uFileName: string;
+  downloadFromStorage?: (storagePath: string) => Promise<Buffer | undefined>;
+}): Promise<Buffer> {
+  const forms = params.scheme?.forms ?? [];
+  const keySet = new Set(params.formKeys.map((k) => k.trim().toLowerCase()));
+  const roleSet = new Set((params.instrumentRoles ?? []).map((r) => r.trim().toLowerCase()));
+
+  const matched =
+    forms.find(
+      (f) =>
+        keySet.has(f.formKey.trim().toLowerCase()) &&
+        Boolean(f.templateStoragePath),
+    ) ??
+    forms.find(
+      (f) =>
+        roleSet.has(f.instrumentRole.trim().toLowerCase()) &&
+        Boolean(f.templateStoragePath),
+    );
+
+  const storagePath = matched?.templateStoragePath?.trim();
+  if (storagePath) {
+    if (storagePath.startsWith("builtin://")) {
+      const rel = storagePath.slice("builtin://".length);
+      const parts = rel.split("/").filter(Boolean);
+      const folder = path.basename(parts[0] ?? "ak3u");
+      const builtinName = path.basename(parts[1] ?? parts[0] ?? "");
+      try {
+        return fs.readFileSync(
+          path.join(process.cwd(), "src", "templates", folder, builtinName),
+        );
+      } catch {
+        // Fall through to defaultAk3uFileName
+      }
+    } else if (params.downloadFromStorage) {
+      try {
+        const downloaded = await params.downloadFromStorage(storagePath);
+        if (downloaded && downloaded.length > 0) {
+          return downloaded;
+        }
+      } catch {
+        // Fall through to default template buffer
+      }
+    }
+  }
+
+  return loadAk3uTemplateBuffer(params.defaultAk3uFileName);
+}
+
+function applyPlaceholderTokens(
+  xml: string,
+  tokens: Record<string, string | undefined>,
+): string {
+  let result = xml;
+  for (const [key, val] of Object.entries(tokens)) {
+    if (val === undefined) continue;
+    const token = `{{${key}}}`;
+    if (result.includes(token)) {
+      result = result.split(token).join(escapeXml(val));
+    }
+  }
+  return result;
 }
 
 function detectSignatureImageType(
@@ -569,12 +652,15 @@ export function normalizeBlankoXmlForExport(params: {
 
 async function loadDocxTemplateAndSig(params: {
   fileName: string;
+  templateBuffer?: Buffer;
   label: string;
   expectedTables: number;
+  allowFlexibleTableCount?: boolean;
   signatureBytes?: Buffer;
   signatureMime?: "image/png" | "image/jpeg";
 }) {
-  const zip = await JSZip.loadAsync(loadAk3uTemplateBuffer(params.fileName));
+  const rawBuffer = params.templateBuffer ?? loadAk3uTemplateBuffer(params.fileName);
+  const zip = await JSZip.loadAsync(rawBuffer);
   const docFile = zip.file("word/document.xml");
   if (!docFile) {
     throw new Error(`TEMPLATE_ERROR: word/document.xml tidak ditemukan di blanko ${params.label}.`);
@@ -597,7 +683,7 @@ async function loadDocxTemplateAndSig(params: {
   );
 
   const tableSpans = findTopLevelTags(docXml, "w:tbl");
-  if (tableSpans.length < params.expectedTables) {
+  if (!params.allowFlexibleTableCount && tableSpans.length < params.expectedTables) {
     throw new Error(
       `TEMPLATE_ERROR: Blanko ${params.label} tidak valid (ditemukan ${tableSpans.length} tabel, diharapkan ${params.expectedTables}).`,
     );
@@ -624,14 +710,34 @@ const AK02_EVIDENCE_COLUMNS: Ak02EvidenceType[] = [
 export async function generateAk05Docx(payload: Ak05ExportPayload): Promise<Buffer> {
   const { zip, docXml, tableSpans, hasEmbeddedSig, sigExt } = await loadDocxTemplateAndSig({
     fileName: "FR.AK.05.LAPORAN_ASESMEN.docx",
+    templateBuffer: payload.templateBuffer,
     label: "FR.AK.05",
     expectedTables: 5,
+    allowFlexibleTableCount: Boolean(payload.templateBuffer),
     signatureBytes: payload.signaturePngBytes,
     signatureMime: payload.signatureMimeType,
   });
 
   const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
   const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
+
+  if (tableSpans.length < 5) {
+    const tokenized = applyPlaceholderTokens(docXml, {
+      SCHEME_CODE: payload.schemeCode,
+      SCHEME_TITLE: displaySchemeTitle,
+      SCHEME_NUMBER: payload.schemeNumber,
+      TUK_NAME: payload.tukName ?? "-",
+      TUK_TYPE: payload.tukType,
+      ASSESSOR_NAME: payload.assessorName,
+      ASSESSOR_REG_NO: payload.assessorRegNo,
+      ASSESSMENT_DATE: displayDate,
+      NOTES_POSITIVE_NEGATIVE: payload.notesPositiveNegative || "-",
+      NOTES_REJECTION: payload.notesRejection || "-",
+      NOTES_IMPROVEMENT: payload.notesImprovement || "-",
+    });
+    zip.file("word/document.xml", tokenized);
+    return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  }
 
   // Table 1: Metadata (Judul, Nomor, TUK, Nama Asesor, Tanggal)
   const t1Span = tableSpans[1]!;
@@ -751,8 +857,10 @@ export async function generateAk05Docx(payload: Ak05ExportPayload): Promise<Buff
 export async function generateAk02Docx(payload: Ak02ExportPayload): Promise<Buffer> {
   const { zip, docXml, tableSpans, hasEmbeddedSig, sigExt } = await loadDocxTemplateAndSig({
     fileName: "FR.AK.02.REKAMAN_ASESMEN.docx",
+    templateBuffer: payload.templateBuffer,
     label: "FR.AK.02",
     expectedTables: 4,
+    allowFlexibleTableCount: Boolean(payload.templateBuffer),
     signatureBytes: payload.signaturePngBytes,
     signatureMime: payload.signatureMimeType,
   });
@@ -760,6 +868,23 @@ export async function generateAk02Docx(payload: Ak02ExportPayload): Promise<Buff
   const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
   const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
   const displayEndDate = formatAk05DateIndonesia(payload.endDate ?? payload.assessmentDate);
+
+  if (tableSpans.length < 4) {
+    const tokenized = applyPlaceholderTokens(docXml, {
+      SCHEME_TITLE: displaySchemeTitle,
+      SCHEME_NUMBER: payload.schemeNumber,
+      TUK_TYPE: payload.tukType,
+      ASSESSOR_NAME: payload.assessorName,
+      ASSESSOR_REG_NO: payload.assessorRegNo,
+      ASSESSEE_NAME: payload.assesseeName,
+      ASSESSMENT_DATE: displayDate,
+      RECOMMENDATION: payload.overallRecommendation ?? "-",
+      FOLLOW_UP_NOTE: payload.followUpNote || "-",
+      ASSESSOR_COMMENT: payload.assessorComment || "-",
+    });
+    zip.file("word/document.xml", tokenized);
+    return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  }
 
   // Table 1: Header metadata
   const t1Span = tableSpans[1]!;
@@ -792,49 +917,112 @@ export async function generateAk02Docx(payload: Ak02ExportPayload): Promise<Buff
     }),
   );
 
-  // Table 2: Evidence matrix (r1..r13 units) + r14 Rekomendasi + r15/r16 notes
+  const isDefaultAk3uUnits =
+    payload.unitDecisions.length === 13 &&
+    payload.unitDecisions[0]?.unitTitle ===
+      "Merancang Strategi Pengendalian Risiko K3 di Tempat Kerja";
+
+  // Table 2: Evidence matrix (dynamic units + Rekomendasi + Tindak lanjut + Komentar)
   const t2Span = tableSpans[2]!;
-  const updatedT2 = mutateTableRows(docXml.slice(t2Span.start, t2Span.end), (rows) =>
-    rows.map((rowXml, rIdx) => {
-      if (rIdx >= 1 && rIdx <= 13) {
-        const unit = payload.unitDecisions[rIdx - 1];
-        const evidenceSet = new Set(unit?.evidenceTypes ?? []);
-        return mutateRowCells(rowXml, (cXml, cIdx) => {
-          if (cIdx >= 1 && cIdx <= 7) {
-            const evKey = AK02_EVIDENCE_COLUMNS[cIdx - 1];
-            return replaceCellRuns(
-              cXml,
-              makeTextRun(evKey && evidenceSet.has(evKey) ? "☑" : ""),
-            );
-          }
-          return cXml;
-        });
-      }
-      if (rIdx === 14) {
+  const updatedT2 = mutateTableRows(docXml.slice(t2Span.start, t2Span.end), (rows) => {
+    if (isDefaultAk3uUnits && rows.length === 17) {
+      return rows.map((rowXml, rIdx) => {
+        if (rIdx >= 1 && rIdx <= 13) {
+          const unit = payload.unitDecisions[rIdx - 1];
+          const evidenceSet = new Set(unit?.evidenceTypes ?? []);
+          return mutateRowCells(rowXml, (cXml, cIdx) => {
+            if (cIdx >= 1 && cIdx <= 7) {
+              const evKey = AK02_EVIDENCE_COLUMNS[cIdx - 1];
+              return replaceCellRuns(
+                cXml,
+                makeTextRun(evKey && evidenceSet.has(evKey) ? "☑" : ""),
+              );
+            }
+            return cXml;
+          });
+        }
+        if (rIdx === 14) {
+          const isK = payload.overallRecommendation === "K";
+          const isBk = payload.overallRecommendation === "BK";
+          return mutateSdtCheckboxes(rowXml, [isK, isBk]);
+        }
+        if (rIdx === 15) {
+          return mutateRowCells(rowXml, (cXml, cIdx) =>
+            cIdx === 1
+              ? replaceCellRuns(cXml, makeTextRun(payload.followUpNote || "-"))
+              : cXml,
+          );
+        }
+        if (rIdx === 16) {
+          return mutateRowCells(rowXml, (cXml, cIdx) =>
+            cIdx === 1
+              ? replaceCellRuns(
+                  cXml,
+                  makeTextRun(payload.assessorComment || "-"),
+                )
+              : cXml,
+          );
+        }
+        return rowXml;
+      });
+    }
+
+    const headerRow = rows[0] ?? "";
+    const footerStart = Math.max(1, rows.length - 3);
+    const unitTplRows = rows.slice(1, footerStart);
+    const footerRows = rows.slice(footerStart);
+    const cloneUnitTpl = (
+      unitTplRows[unitTplRows.length - 1] ??
+      unitTplRows[0] ??
+      ""
+    ).replace(/\s+w14:(?:paraId|textId)="[^"]*"/g, "");
+
+    const dynamicUnitRows = payload.unitDecisions.map((unit, idx) => {
+      const baseRow = unitTplRows[idx] ?? cloneUnitTpl;
+      const evidenceSet = new Set(unit.evidenceTypes ?? []);
+      const unitLabel = unit.unitCode
+        ? `${idx + 1}. ${unit.unitCode} — ${unit.unitTitle}`
+        : `${idx + 1}. ${unit.unitTitle}`;
+      return mutateRowCells(baseRow, (cXml, cIdx) => {
+        if (cIdx === 0) {
+          return replaceCellRuns(cXml, makeTextRun(unitLabel));
+        }
+        if (cIdx >= 1 && cIdx <= 7) {
+          const evKey = AK02_EVIDENCE_COLUMNS[cIdx - 1];
+          return replaceCellRuns(
+            cXml,
+            makeTextRun(evKey && evidenceSet.has(evKey) ? "☑" : ""),
+          );
+        }
+        return cXml;
+      });
+    });
+
+    const updatedFooterRows = footerRows.map((rowXml, fIdx) => {
+      if (fIdx === 0) {
         const isK = payload.overallRecommendation === "K";
         const isBk = payload.overallRecommendation === "BK";
         return mutateSdtCheckboxes(rowXml, [isK, isBk]);
       }
-      if (rIdx === 15) {
+      if (fIdx === 1) {
         return mutateRowCells(rowXml, (cXml, cIdx) =>
           cIdx === 1
             ? replaceCellRuns(cXml, makeTextRun(payload.followUpNote || "-"))
             : cXml,
         );
       }
-      if (rIdx === 16) {
+      if (fIdx === 2) {
         return mutateRowCells(rowXml, (cXml, cIdx) =>
           cIdx === 1
-            ? replaceCellRuns(
-                cXml,
-                makeTextRun(payload.assessorComment || "-"),
-              )
+            ? replaceCellRuns(cXml, makeTextRun(payload.assessorComment || "-"))
             : cXml,
         );
       }
       return rowXml;
-    }),
-  );
+    });
+
+    return [headerRow, ...dynamicUnitRows, ...updatedFooterRows];
+  });
 
   // Table 3: Signature block (Asesi + Asesor)
   const t3Span = tableSpans[3]!;
@@ -850,11 +1038,25 @@ export async function generateAk02Docx(payload: Ak02ExportPayload): Promise<Buff
     }),
   );
 
-  const nextDocXml = applyTableReplacements(docXml, [
-    { span: t3Span, xml: updatedT3 },
-    { span: t2Span, xml: updatedT2 },
-    { span: t1Span, xml: updatedT1 },
-  ]);
+  const nextDocXml = applyPlaceholderTokens(
+    applyTableReplacements(docXml, [
+      { span: t3Span, xml: updatedT3 },
+      { span: t2Span, xml: updatedT2 },
+      { span: t1Span, xml: updatedT1 },
+    ]),
+    {
+      SCHEME_TITLE: displaySchemeTitle,
+      SCHEME_NUMBER: payload.schemeNumber,
+      TUK_TYPE: payload.tukType,
+      ASSESSOR_NAME: payload.assessorName,
+      ASSESSOR_REG_NO: payload.assessorRegNo,
+      ASSESSEE_NAME: payload.assesseeName,
+      ASSESSMENT_DATE: displayDate,
+      RECOMMENDATION: payload.overallRecommendation ?? "-",
+      FOLLOW_UP_NOTE: payload.followUpNote || "-",
+      ASSESSOR_COMMENT: payload.assessorComment || "-",
+    },
+  );
 
   zip.file("word/document.xml", nextDocXml);
   return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
@@ -868,8 +1070,10 @@ export async function generateAk02Docx(payload: Ak02ExportPayload): Promise<Buff
 export async function generateIa04bDocx(payload: Ia04bExportPayload): Promise<Buffer> {
   const { zip, docXml, tableSpans, hasEmbeddedSig, sigExt } = await loadDocxTemplateAndSig({
     fileName: "FR.IA.04B.PENILAIAN_PROYEK_SINGKAT.docx",
+    templateBuffer: payload.templateBuffer,
     label: "FR.IA.04B",
     expectedTables: 13,
+    allowFlexibleTableCount: Boolean(payload.templateBuffer),
     signatureBytes: payload.signaturePngBytes,
     signatureMime: payload.signatureMimeType,
   });
@@ -877,6 +1081,34 @@ export async function generateIa04bDocx(payload: Ia04bExportPayload): Promise<Bu
   const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
   const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
   const replacements: Array<{ span: XmlSpan; xml: string }> = [];
+
+  if (tableSpans.length < 13) {
+    const checkboxFlags: boolean[] = [];
+    for (const rawFlag of payload.itemAchievedFlags) {
+      const achieved =
+        rawFlag === undefined
+          ? payload.overallRecommendation === "K"
+            ? true
+            : payload.overallRecommendation === "BK"
+              ? false
+              : null
+          : rawFlag;
+      checkboxFlags.push(achieved === true, achieved === false);
+    }
+    const withChecks = mutateSdtCheckboxes(docXml, checkboxFlags);
+    const tokenized = applyPlaceholderTokens(withChecks, {
+      SCHEME_TITLE: displaySchemeTitle,
+      SCHEME_NUMBER: payload.schemeNumber,
+      TUK_TYPE: payload.tukType,
+      ASSESSOR_NAME: payload.assessorName,
+      ASSESSOR_REG_NO: payload.assessorRegNo,
+      ASSESSEE_NAME: payload.assesseeName,
+      ASSESSMENT_DATE: displayDate,
+      RECOMMENDATION: payload.overallRecommendation ?? "-",
+    });
+    zip.file("word/document.xml", tokenized);
+    return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  }
 
   // Table 1: Metadata
   const t1Span = tableSpans[1]!;
@@ -905,27 +1137,126 @@ export async function generateIa04bDocx(payload: Ia04bExportPayload): Promise<Bu
   );
   replacements.push({ span: t1Span, xml: updatedT1 });
 
-  // Tables 4, 6, 8, 10: 13 aspect rows (5 + 3 + 3 + 2), starting at r2 in each table
+  const isCustomKelompok =
+    Boolean(payload.kelompokPekerjaan && payload.kelompokPekerjaan.length > 0) &&
+    ((Boolean(payload.schemeCode) && payload.schemeCode!.trim().toUpperCase() !== "AK3U") ||
+      payload.kelompokPekerjaan!.length !== 4 ||
+      payload.kelompokPekerjaan![0]?.units[0]?.code !== "M.71KKK01.001.1");
+
+  // Tables 3..10: 4 Kelompok Pekerjaan pairs ([3,4], [5,6], [7,8], [9,10])
   let itemCursor = 0;
-  for (const tblIdx of [4, 6, 8, 10]) {
-    const span = tableSpans[tblIdx]!;
-    const updatedAspectTbl = mutateTableRows(docXml.slice(span.start, span.end), (rows) =>
-      rows.map((rowXml, rIdx) => {
-        if (rIdx < 2) return rowXml;
-        const rawFlag = payload.itemAchievedFlags[itemCursor];
-        const achieved =
-          rawFlag === undefined
-            ? payload.overallRecommendation === "K"
-              ? true
-              : payload.overallRecommendation === "BK"
-                ? false
-                : null
-            : rawFlag;
-        itemCursor += 1;
-        return mutateSdtCheckboxes(rowXml, [achieved === true, achieved === false]);
-      }),
-    );
-    replacements.push({ span, xml: updatedAspectTbl });
+  if (!isCustomKelompok) {
+    for (const tblIdx of [4, 6, 8, 10]) {
+      const span = tableSpans[tblIdx]!;
+      const updatedAspectTbl = mutateTableRows(docXml.slice(span.start, span.end), (rows) =>
+        rows.map((rowXml, rIdx) => {
+          if (rIdx < 2) return rowXml;
+          const rawFlag = payload.itemAchievedFlags[itemCursor];
+          const achieved =
+            rawFlag === undefined
+              ? payload.overallRecommendation === "K"
+                ? true
+                : payload.overallRecommendation === "BK"
+                  ? false
+                  : null
+              : rawFlag;
+          itemCursor += 1;
+          return mutateSdtCheckboxes(rowXml, [achieved === true, achieved === false]);
+        }),
+      );
+      replacements.push({ span, xml: updatedAspectTbl });
+    }
+  } else {
+    const kpList = payload.kelompokPekerjaan ?? [];
+    for (let kpPairIdx = 0; kpPairIdx < 4; kpPairIdx++) {
+      const unitTblSpan = tableSpans[3 + kpPairIdx * 2]!;
+      const aspectTblSpan = tableSpans[4 + kpPairIdx * 2]!;
+      const kp = kpList[kpPairIdx];
+
+      if (!kp) {
+        replacements.push({ span: unitTblSpan, xml: "<w:p/>" });
+        replacements.push({ span: aspectTblSpan, xml: "<w:p/>" });
+        continue;
+      }
+
+      const updatedUnitTbl = mutateTableRows(
+        docXml.slice(unitTblSpan.start, unitTblSpan.end),
+        (rows) => {
+          const headerRow = mutateRowCells(rows[0] ?? "", (cXml, cIdx) =>
+            cIdx === 0 ? replaceCellRuns(cXml, makeTextRun(kp.title, { bold: true })) : cXml,
+          );
+          const bodyTemplates = rows.slice(1);
+          const cloneRow = (
+            bodyTemplates[bodyTemplates.length - 1] ??
+            bodyTemplates[0] ??
+            ""
+          ).replace(/\s+w14:(?:paraId|textId)="[^"]*"/g, "");
+          const unitRows = kp.units.map((u, uIdx) => {
+            const tpl = bodyTemplates[uIdx] ?? cloneRow;
+            const cellCount = findTopLevelTags(tpl, "w:tc").length;
+            return mutateRowCells(tpl, (cXml, cIdx) => {
+              if (cIdx === cellCount - 3) return replaceCellRuns(cXml, makeTextRun(`${u.no}.`));
+              if (cIdx === cellCount - 2) return replaceCellRuns(cXml, makeTextRun(u.code));
+              if (cIdx === cellCount - 1) return replaceCellRuns(cXml, makeTextRun(u.title));
+              return cXml;
+            });
+          });
+          return [headerRow, ...unitRows];
+        },
+      );
+      replacements.push({ span: unitTblSpan, xml: updatedUnitTbl });
+
+      const updatedAspectTbl = mutateTableRows(
+        docXml.slice(aspectTblSpan.start, aspectTblSpan.end),
+        (rows) => {
+          const headerRows = rows.slice(0, 2);
+          const bodyTemplates = rows.slice(2);
+          const cloneBase = (
+            bodyTemplates[bodyTemplates.length - 1] ??
+            bodyTemplates[0] ??
+            ""
+          ).replace(/\s+w14:(?:paraId|textId)="[^"]*"/g, "");
+
+          const aspectRows = kp.aspects.map((asp, aIdx) => {
+            let rowTpl = bodyTemplates[aIdx];
+            if (!rowTpl) {
+              let sdtSeed = 820000 + kpPairIdx * 1000 + aIdx * 10;
+              rowTpl = cloneBase.replace(
+                /<w:id w:val="[^"]*"\/>/g,
+                () => `<w:id w:val="${sdtSeed++}"/>`,
+              );
+            }
+            const rawFlag = payload.itemAchievedFlags[itemCursor];
+            const achieved =
+              rawFlag === undefined
+                ? payload.overallRecommendation === "K"
+                  ? true
+                  : payload.overallRecommendation === "BK"
+                    ? false
+                    : null
+                : rawFlag;
+            itemCursor += 1;
+
+            const withText = mutateRowCells(rowTpl, (cXml, cIdx) => {
+              if (cIdx === 0) return replaceCellRuns(cXml, makeTextRun(`${asp.no}.`));
+              if (cIdx === 1) return replaceCellRuns(cXml, makeTextRun(asp.lingkup));
+              if (cIdx === 2) {
+                return replaceCellRuns(
+                  cXml,
+                  `${makeTextRun("Pertanyaan: ", { bold: true })}${makeTextRun(asp.question)}`,
+                );
+              }
+              if (cIdx === 3) return replaceCellRuns(cXml, makeTextRun(asp.kukRef));
+              return cXml;
+            });
+            return mutateSdtCheckboxes(withText, [achieved === true, achieved === false]);
+          });
+
+          return [...headerRows, ...aspectRows];
+        },
+      );
+      replacements.push({ span: aspectTblSpan, xml: updatedAspectTbl });
+    }
   }
 
   // Table 11: Recommendation + Asesi/Asesor signature block (offset = 1 below r0)
@@ -974,14 +1305,30 @@ export async function generateIa04bDocx(payload: Ia04bExportPayload): Promise<Bu
 export async function generateIa06cDocx(payload: Ia06cExportPayload): Promise<Buffer> {
   const { zip, docXml, tableSpans, hasEmbeddedSig, sigExt } = await loadDocxTemplateAndSig({
     fileName: "FR.IA.06C.LEMBAR_JAWABAN_TERTULIS.docx",
+    templateBuffer: payload.templateBuffer,
     label: "FR.IA.06C",
     expectedTables: 5,
+    allowFlexibleTableCount: Boolean(payload.templateBuffer),
     signatureBytes: payload.signaturePngBytes,
     signatureMime: payload.signatureMimeType,
   });
 
   const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
   const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
+
+  if (tableSpans.length < 5) {
+    const tokenized = applyPlaceholderTokens(docXml, {
+      SCHEME_TITLE: displaySchemeTitle,
+      SCHEME_NUMBER: payload.schemeNumber,
+      TUK_TYPE: payload.tukType,
+      ASSESSOR_NAME: payload.assessorName,
+      ASSESSOR_REG_NO: payload.assessorRegNo,
+      ASSESSEE_NAME: payload.assesseeName,
+      ASSESSMENT_DATE: displayDate,
+    });
+    zip.file("word/document.xml", tokenized);
+    return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  }
 
   // Table 1: Metadata (Judul, Nomor, TUK, Nama Asesor, Nama Asesi, Tanggal, Waktu)
   const t1Span = tableSpans[1]!;
@@ -1025,7 +1372,7 @@ export async function generateIa06cDocx(payload: Ia06cExportPayload): Promise<Bu
       /\s+w14:(?:paraId|textId)="[^"]*"/g,
       "",
     );
-    const totalRows = Math.max(bodyTemplates.length, payload.answers.length);
+    const totalRows = payload.answers.length > 0 ? payload.answers.length : bodyTemplates.length;
     const filledRows: string[] = [];
 
     for (let idx = 0; idx < totalRows; idx++) {
@@ -1273,11 +1620,16 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
   let logoLeft: PDFImage | undefined;
   let logoRight: PDFImage | undefined;
   try {
-    const zip = await JSZip.loadAsync(loadAk3uTemplateBuffer("FR.AK.05.LAPORAN_ASESMEN.docx"));
+    const zip = await JSZip.loadAsync(
+      payload.templateBuffer ?? loadAk3uTemplateBuffer("FR.AK.05.LAPORAN_ASESMEN.docx"),
+    );
     const img1 = await zip.file("word/media/image1.png")?.async("nodebuffer");
     const img2 = await zip.file("word/media/image2.png")?.async("nodebuffer");
+    const isDefaultAk3u = !payload.schemeCode || payload.schemeCode.trim().toUpperCase() === "AK3U";
     if (img1) logoLeft = await pdfDoc.embedPng(img1);
-    if (img2) logoRight = await pdfDoc.embedPng(img2);
+    if (img2 && (Boolean(payload.templateBuffer) || isDefaultAk3u)) {
+      logoRight = await pdfDoc.embedPng(img2);
+    }
   } catch {
     // Render cleanly even if header images cannot be read
   }

@@ -3,6 +3,7 @@ import { apiError } from "@/lib/errors";
 import {
   generateAk05Docx,
   generateAk05Pdf,
+  resolveSchemeTemplateBuffer,
   validateExportFormat,
   type ExportFormat,
 } from "@/services/export";
@@ -92,6 +93,21 @@ export async function GET(
   const { schemeTitle, schemeNumber } = extractSchemeMeta(scheme);
   const schemeUnits = resolveSchemeUnitsList(scheme);
 
+  const templateBuffer = await resolveSchemeTemplateBuffer({
+    scheme,
+    formKeys: ["ak05", "fr.ak.05", "frak05"],
+    instrumentRoles: ["laporan"],
+    defaultAk3uFileName: "FR.AK.05.LAPORAN_ASESMEN.docx",
+    downloadFromStorage: async (storagePath) => {
+      if (!storagePath.startsWith(`${batch.lspId}/`)) return undefined;
+      const supabase = await getSupabaseServerClient();
+      const { data: tplBlob } = await supabase.storage
+        .from("scheme-blankos")
+        .download(storagePath);
+      return tplBlob ? Buffer.from(await tplBlob.arrayBuffer()) : undefined;
+    },
+  });
+
   const rollupRows = await resolveAk05BatchRows(user.id, batchId, assessees, {
     totalSchemeUnits: schemeUnits.length,
   });
@@ -119,6 +135,7 @@ export async function GET(
     signaturePngBytes: signatureBytes,
     signatureMimeType:
       signature.mimeType === "image/jpeg" ? ("image/jpeg" as const) : ("image/png" as const),
+    templateBuffer,
   };
 
   if (format === "pdf") {

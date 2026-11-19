@@ -17,3 +17,4 @@
 | `signatures` | `is_active`, `superseded_by` | Append new version; never overwrite old | Past documents remain byte-identical |
 | `batches (active_master_key_*)` | `version int` (`touch_row()`) | Explicit pointer `active_master_key_file_id` + server-side `validateMasterKey06bContent` | Prevents MUK blanko / encrypted files from auto-activating or outranking assessor working keys |
 | `batch_roster_notes` | Append-only (`SELECT, INSERT` only) | Separate from `audit_log`; honest `source_kind` & `source_label` required | Preserves immutable system `audit_log` while recording retroactive/out-of-band roster notes |
+| `assessees` (roster CRUD) | `version int` (`touch_row()`) | Reject stale version + prompt refresh; delete only if unconfirmed + zero linked files/decisions/gradings | Server-side optimistic check in `upsertAssesseesForBatch` / `updateAssesseeDisplayName` / delete guard |

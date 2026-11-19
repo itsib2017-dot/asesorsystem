@@ -6,8 +6,10 @@ import type {
 } from "@/services/export";
 import type {
   SchemeBrandingConfig,
+  SchemeInterviewQuestionSpec,
   SchemeKelompokSpec,
   SchemeRecord,
+  SchemeWrittenQuestionSpec,
 } from "@/repositories/schemes.repository";
 import {
   resolveAssesseeOverallDecision,
@@ -233,6 +235,10 @@ export const DEFAULT_DOC_COLUMNS = [
   "06C",
 ] as const;
 
+export function isAk3uScheme(scheme?: SchemeRecord | null): boolean {
+  return Boolean(scheme?.code && scheme.code.trim().toUpperCase() === "AK3U");
+}
+
 export function getFallbackAk3uUnits(): Array<{ code: string; title: string }> {
   return IA04B_KELOMPOK_PEKERJAAN.flatMap((kp) =>
     kp.units.map((u) => ({ code: u.code, title: u.title })),
@@ -250,7 +256,10 @@ export function resolveSchemeUnitsList(
   if (Array.isArray(kps) && kps.length > 0) {
     return kps.flatMap((kp) => kp.units.map((u) => ({ code: u.code, title: u.title })));
   }
-  return getFallbackAk3uUnits();
+  if (!scheme || isAk3uScheme(scheme)) {
+    return getFallbackAk3uUnits();
+  }
+  return [];
 }
 
 export function resolveSchemeKelompokPekerjaan(
@@ -262,6 +271,9 @@ export function resolveSchemeKelompokPekerjaan(
   }
   const units = scheme?.manifest?.units;
   if (Array.isArray(units) && units.length > 0) {
+    if (isAk3uScheme(scheme) && units.length === 13) {
+      return IA04B_KELOMPOK_PEKERJAAN;
+    }
     return [
       {
         kpIndex: 1,
@@ -280,7 +292,24 @@ export function resolveSchemeKelompokPekerjaan(
       },
     ];
   }
-  return IA04B_KELOMPOK_PEKERJAAN;
+  if (!scheme || isAk3uScheme(scheme)) {
+    return IA04B_KELOMPOK_PEKERJAAN;
+  }
+  return [];
+}
+
+export function resolveSchemeWrittenQuestions(
+  scheme?: SchemeRecord | null,
+): SchemeWrittenQuestionSpec[] {
+  const configured = scheme?.manifest?.writtenQuestions;
+  return Array.isArray(configured) ? configured : [];
+}
+
+export function resolveSchemeInterviewQuestions(
+  scheme?: SchemeRecord | null,
+): SchemeInterviewQuestionSpec[] {
+  const configured = scheme?.manifest?.interviewQuestions;
+  return Array.isArray(configured) ? configured : [];
 }
 
 export function hasGenericFallbackKelompok(scheme?: SchemeRecord | null): boolean {
@@ -296,11 +325,17 @@ export function resolveSchemeDocColumns(scheme?: SchemeRecord | null): string[] 
 }
 
 export function resolveSchemeBranding(scheme?: SchemeRecord | null): SchemeBrandingConfig {
+  const branding = scheme?.manifest?.branding;
+  const allowAk3uLogoFallback = !scheme || isAk3uScheme(scheme);
   return {
-    leftLogoUrl: scheme?.manifest?.branding?.leftLogoUrl || "/templates/ak3u/bnsp-logo.png",
-    leftLogoAlt: scheme?.manifest?.branding?.leftLogoAlt || "BNSP",
-    rightLogoUrl: scheme?.manifest?.branding?.rightLogoUrl || "/templates/ak3u/lsp-logo.png",
-    rightLogoAlt: scheme?.manifest?.branding?.rightLogoAlt || "LSP Logo",
+    leftLogoUrl:
+      branding?.leftLogoUrl ||
+      (allowAk3uLogoFallback ? "/templates/ak3u/bnsp-logo.png" : undefined),
+    leftLogoAlt: branding?.leftLogoAlt || "BNSP",
+    rightLogoUrl:
+      branding?.rightLogoUrl ||
+      (allowAk3uLogoFallback ? "/templates/ak3u/lsp-logo.png" : undefined),
+    rightLogoAlt: branding?.rightLogoAlt || (scheme ? `${scheme.code} — LSP` : "LSP Logo"),
   };
 }
 
@@ -369,9 +404,7 @@ export function buildAk02Payload(params: {
     (d) => d.decision === "K" || d.decision === "BK",
   );
 
-  const targetUnits = params.scheme
-    ? resolveSchemeUnitsList(params.scheme)
-    : AK3U_OFFICIAL_UNITS.map((title) => ({ code: undefined, title }));
+  const targetUnits = resolveSchemeUnitsList(params.scheme);
 
   const unitDecisions = targetUnits.map((unitRef) => {
     const lowerOfficial = unitRef.title.toLowerCase();
@@ -465,10 +498,9 @@ export function buildIa04bPayload(params: {
   signaturePngBytes?: Buffer;
   signatureMimeType?: "image/png" | "image/jpeg";
 }): Ia04bExportPayload {
-  const flatAspects = resolveSchemeKelompokPekerjaan(params.scheme).flatMap((kp) => kp.aspects);
-  const targetUnits = params.scheme
-    ? resolveSchemeUnitsList(params.scheme)
-    : AK3U_OFFICIAL_UNITS.map((title) => ({ code: undefined, title }));
+  const kelompokPekerjaan = resolveSchemeKelompokPekerjaan(params.scheme);
+  const flatAspects = kelompokPekerjaan.flatMap((kp) => kp.aspects);
+  const targetUnits = resolveSchemeUnitsList(params.scheme);
   const matrixRaw = params.ditAnalysis
     ? readField<Array<{ focusPoint?: string; status?: string }>>(
         params.ditAnalysis,
@@ -543,6 +575,7 @@ export function buildIa04bPayload(params: {
   }
 
   return {
+    schemeCode: params.scheme?.code,
     schemeTitle: params.schemeTitle,
     schemeNumber: params.schemeNumber,
     tukType: normalizeTukType(params.tukType),
@@ -550,6 +583,7 @@ export function buildIa04bPayload(params: {
     assessorRegNo: params.assessorRegNo,
     assesseeName: params.assesseeName,
     assessmentDate: params.assessmentDate,
+    kelompokPekerjaan,
     itemAchievedFlags: resolvedFlags,
     overallRecommendation,
     signaturePngBytes: params.signaturePngBytes,
@@ -558,6 +592,7 @@ export function buildIa04bPayload(params: {
 }
 
 export function buildIa06cPayload(params: {
+  scheme?: SchemeRecord | null;
   schemeTitle: string;
   schemeNumber: string;
   tukType?: string | null;
@@ -591,7 +626,14 @@ export function buildIa06cPayload(params: {
     : [];
 
   const sorted = [...itemVerdicts].sort((a, b) => a.questionNo - b.questionNo);
-  const answers = Array.from({ length: Math.max(13, sorted.length) }).map((_, idx) => {
+  const configuredCount = Math.max(
+    params.scheme?.manifest?.questionCounts?.written06aCount ?? 0,
+    params.scheme?.manifest?.writtenQuestions?.length ?? 0,
+  );
+  const slotCount = params.scheme
+    ? Math.max(configuredCount || sorted.length || 1, sorted.length)
+    : Math.max(13, sorted.length);
+  const answers = Array.from({ length: slotCount }).map((_, idx) => {
     const item = sorted.find((v) => v.questionNo === idx + 1) ?? sorted[idx];
     if (!item) {
       return {

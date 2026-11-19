@@ -12,3 +12,4 @@
 | **Redis / Upstash** | Use later | Trigger: when concurrent batch jobs or rate-limit counters exceed single-region Postgres throughput (`p95 > 500ms`). |
 | **Message Queue (pg-boss / Postgres `jobs`)** | Use now | ADR-0004 approved: Drive scan, Tesseract OCR, grading, similarity, and export run async via `public.jobs`. |
 | **CDN / Edge Cache** | Assets only | Authenticated assessor routes and PII never cached at edge. |
+| **Roster / triage list cache** | Use now (TanStack Query) | `staleTime` per query type; invalidated on roster mutation (`batch.roster.*`). Never cache permissioned data in shared cache. |

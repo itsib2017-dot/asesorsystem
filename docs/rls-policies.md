@@ -1,7 +1,7 @@
 # F4 Companion — Row Level Security (RLS) Policy Table
 
 - **Database:** Supabase PostgreSQL (`oiplhsmmfuqriaqrxjud`)
-- **Verification Evidence:** `tests/rls-multi-lsp.test.sql` (40/40 PASS)
+- **Verification Evidence:** `tests/rls-multi-lsp.test.sql` (42/42 PASS)
 - **Report Reference:** `docs/testing/feature-test-report.md`
 
 ---
@@ -42,6 +42,10 @@
 | `assessee_decision_overrides`| `ado_update` | UPDATE | authenticated | `lsp_admin` OR assigned `assessor` on batch (`tuk_admin` blocked) |
 | `batch_roster_notes`| `brn_select` | SELECT | authenticated | `lsp_admin`/`tuk_admin` of LSP OR assigned assessor (`auth_on_batch`) |
 | `batch_roster_notes`| `brn_insert` | INSERT | authenticated | `lsp_admin`/`tuk_admin` of LSP OR assigned assessor (`auth_on_batch`) and `recorded_by = auth.uid()` (append-only: no UPDATE/DELETE) |
+| `scheme_form_manifests`| `sfm_select` | SELECT | authenticated | Member of LSP (`private.auth_is_member(lsp_id)`) |
+| `scheme_form_manifests`| `sfm_write` | ALL | authenticated | `lsp_admin` of that LSP (`private.auth_has_role(lsp_id, array['lsp_admin']::public.app_role[])`) |
+| `storage.objects` (`scheme-blankos`) | `scheme_blankos_bucket_select` | SELECT | authenticated | `bucket_id = 'scheme-blankos'` AND member of LSP (`split_part(name, '/', 1)::uuid`) |
+| `storage.objects` (`scheme-blankos`) | `scheme_blankos_bucket_insert/update/delete` | INSERT/UPDATE/DELETE | authenticated | `bucket_id = 'scheme-blankos'` AND `lsp_admin` of LSP (`split_part(name, '/', 1)::uuid`) |
 
 ---
 

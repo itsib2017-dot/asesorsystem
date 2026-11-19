@@ -21,7 +21,7 @@ export function Ia06cBlankoPreview(props: {
   const { payload } = props;
   const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
   const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
-  const totalSlots = Math.max(13, payload.answers.length);
+  const totalSlots = payload.answers.length > 0 ? payload.answers.length : 13;
 
   return (
     <div className="space-y-4">

@@ -8,7 +8,10 @@ import { pickLatestDriveFile } from "@/services/drive-revisions";
 import { resolveBatchActiveMasterKey } from "@/lib/written/master-key";
 import { Ia06cBlankoPreview } from "@/components/forms/ia06c-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
-import { buildIa06cPayload } from "@/lib/forms/assessee-forms";
+import {
+  buildIa06cPayload,
+  resolveSchemeWrittenQuestions,
+} from "@/lib/forms/assessee-forms";
 import { WrittenKeyForm } from "./_components/written-key-form";
 
 export const metadata = {
@@ -39,6 +42,7 @@ export default async function WrittenGradingPage({
   ]);
 
   const ia06cPayload = buildIa06cPayload({
+    scheme: common.scheme,
     schemeTitle: common.schemeTitle,
     schemeNumber: common.schemeNumber,
     tukType: common.batch.tukType,
@@ -67,6 +71,7 @@ export default async function WrittenGradingPage({
   const plagiarism = (grading?.plagiarism_report ?? grading?.plagiarismReport) as
     | { status?: string; reasoning?: string }
     | undefined;
+  const schemeWrittenQuestions = resolveSchemeWrittenQuestions(common.scheme);
 
   return (
     <div className="space-y-6">
@@ -118,6 +123,28 @@ export default async function WrittenGradingPage({
           initialStudentAnswerText={studentAnswerFile?.extractedText ?? ""}
         />
       </div>
+
+      {/* Scheme Manifest 06A Questions (D17/D21) */}
+      {schemeWrittenQuestions.length > 0 && (
+        <details className="glass-card rounded-2xl p-5 text-xs space-y-2">
+          <summary className="cursor-pointer font-semibold text-slate-900">
+            Bank Soal Tertulis Skema FR.IA.06A ({schemeWrittenQuestions.length} butir dari manifes{" "}
+            {common.scheme?.code})
+          </summary>
+          <ol className="list-decimal pl-5 pt-2 space-y-1.5 text-slate-700">
+            {schemeWrittenQuestions.map((q) => (
+              <li key={q.no}>
+                {q.unitCode && (
+                  <span className="font-mono text-[11px] px-1.5 py-0.5 mr-1.5 rounded bg-slate-100 text-slate-700">
+                    {q.unitCode}
+                  </span>
+                )}
+                {q.question}
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
 
       {/* Ringkasan Kesalahan & Qualitative Plagiarism */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

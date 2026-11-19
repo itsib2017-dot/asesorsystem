@@ -23,25 +23,44 @@ export function BlankoA4Sheet({
 }
 
 export function BlankoSheetHeader(props?: SchemeBrandingConfig) {
-  const leftUrl = props?.leftLogoUrl || "/templates/ak3u/bnsp-logo.png";
+  const hasExplicitAltOnly =
+    props &&
+    (Boolean(props.leftLogoAlt) || Boolean(props.rightLogoAlt)) &&
+    !props.leftLogoUrl &&
+    !props.rightLogoUrl;
+  const leftUrl =
+    props?.leftLogoUrl ?? (hasExplicitAltOnly ? undefined : "/templates/ak3u/bnsp-logo.png");
   const leftAlt = props?.leftLogoAlt || "BNSP";
-  const rightUrl = props?.rightLogoUrl || "/templates/ak3u/lsp-logo.png";
+  const rightUrl =
+    props?.rightLogoUrl ?? (hasExplicitAltOnly ? undefined : "/templates/ak3u/lsp-logo.png");
   const rightAlt = props?.rightLogoAlt || "LSP Logo";
 
   return (
     <div className="flex items-center justify-between gap-4 pb-3">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={leftUrl}
-        alt={leftAlt}
-        className="h-10 w-auto object-contain"
-      />
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={rightUrl}
-        alt={rightAlt}
-        className="h-11 w-auto object-contain"
-      />
+      {leftUrl ? (
+        /* eslint-disable-next-line @next/next/no-img-element */
+        <img
+          src={leftUrl}
+          alt={leftAlt}
+          className="h-10 w-auto object-contain"
+        />
+      ) : (
+        <div className="px-2.5 py-1 border border-slate-400 rounded text-[11px] font-bold tracking-wider uppercase text-slate-800">
+          {leftAlt}
+        </div>
+      )}
+      {rightUrl ? (
+        /* eslint-disable-next-line @next/next/no-img-element */
+        <img
+          src={rightUrl}
+          alt={rightAlt}
+          className="h-11 w-auto object-contain"
+        />
+      ) : (
+        <div className="px-2.5 py-1 border border-slate-400 rounded text-[11px] font-bold tracking-wider uppercase text-slate-800">
+          {rightAlt}
+        </div>
+      )}
     </div>
   );
 }

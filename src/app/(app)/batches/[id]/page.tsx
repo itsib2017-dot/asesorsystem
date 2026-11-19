@@ -51,6 +51,10 @@ export default async function BatchDetailPage({
   ]);
   const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
   const docColumns = resolveSchemeDocColumns(scheme);
+
+  const manualUploadCount = files.filter((f) => String(f.driveFileId ?? "").startsWith("manual-"))
+    .length;
+  const driveFileCount = files.length - manualUploadCount;
   const ktpOcrMinConfidence =
     typeof configuredMinOcr === "number" && configuredMinOcr > 0 ? configuredMinOcr : 0.75;
 
@@ -117,7 +121,8 @@ export default async function BatchDetailPage({
           <div className="text-xs font-mono text-slate-500">BATCH ID: {batch.id.slice(0, 8)}</div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">{batch.name}</h1>
           <p className="text-sm text-slate-500 mt-1">
-            TUK: {batch.tukName || "-"} ({batch.tukType || "sewaktu"}) · Status:{" "}
+            TUK: {batch.tukName || "-"} ({batch.tukType || "sewaktu"}) · Skema:{" "}
+            {scheme ? `${scheme.code} — ${scheme.name}` : "-"} · Status:{" "}
             <strong className="text-slate-700">{batch.status}</strong>
           </p>
         </div>
@@ -207,8 +212,8 @@ export default async function BatchDetailPage({
           <span>
             Ringkasan Hasil Pindai:{" "}
             <strong>
-              {assessees.length} asesi terdeteksi · {files.length} berkas terpindai ·{" "}
-              {unmatchedCount} perlu triase
+              {assessees.length} asesi terdeteksi · {driveFileCount} berkas Drive +{" "}
+              {manualUploadCount} unggahan · {unmatchedCount} perlu triase
             </strong>
             {unextractableCount > 0 && (
               <>
@@ -271,9 +276,14 @@ export default async function BatchDetailPage({
       <div className="space-y-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
           <Users className="w-4 h-4 text-teal-700" />
-          Matriks Kelengkapan Berkas Asesi ({assessees.length} Asesi · {files.length} Berkas Drive)
+          Matriks Kelengkapan Berkas Asesi ({assessees.length} Asesi · {files.length} Berkas)
         </div>
-        <CompletenessMatrix batchId={batch.id} docColumns={docColumns} rows={rows} />
+        <CompletenessMatrix
+          batchId={batch.id}
+          docColumns={docColumns}
+          rows={rows}
+          scanDone={latestJob?.status === "done"}
+        />
       </div>
     </div>
   );

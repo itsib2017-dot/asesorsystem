@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
 import {
   generateAk02Docx,
+  generateAk05Docx,
   generateIa04bDocx,
   generateIa06cDocx,
   normalizeBlankoXmlForExport,
+  resolveSchemeTemplateBuffer,
 } from "@/services/export";
+import type { SchemeRecord } from "@/repositories/schemes.repository";
 import {
   AK3U_OFFICIAL_UNITS,
   buildAk02Payload,
@@ -304,5 +307,191 @@ describe("Official AK3U DOCX Template Exports (AK.02, IA.04B, IA.06C)", () => {
       hasWritten: false,
     });
     expect(ak02FromDitForms.unitDecisions[0]?.evidenceTypes).toContain("proyek");
+  });
+
+  it("exports AK.02, IA.04B, IA.06C, and AK.05 for non-AK3U scheme (ICT-PM) using scheme blanko registry and manifest questions with zero AK3U leakage (Round 14)", async () => {
+    const customZip = new JSZip();
+    customZip.file(
+      "word/document.xml",
+      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>{{SCHEME_TITLE}} | {{SCHEME_NUMBER}} | {{ASSESSEE_NAME}} | {{ASSESSOR_NAME}} | {{RECOMMENDATION}}</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`,
+    );
+    const customTemplateBuf = await customZip.generateAsync({ type: "nodebuffer" });
+
+    const ictScheme: SchemeRecord = {
+      id: "scheme-ict-1",
+      lspId: "lsp-1",
+      code: "ICT-PM",
+      name: "Okupasi ICT Project Manager (SKM/1522/00008/2/2024/3)",
+      version: 1,
+      forms: [
+        {
+          id: "f-ak02",
+          formKey: "ak02",
+          formName: "FR.AK.02 — ICT PM",
+          filePatterns: ["ak02"],
+          required: true,
+          instrumentRole: "keputusan",
+          sortOrder: 1,
+          templateStoragePath: "lsp-1/scheme-ict-1/ak02/v1-AK02-ICT.docx",
+          templateFileName: "AK02-ICT.docx",
+          templateMimeType:
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          templateSha256: "sha-ict",
+          templateVersion: 1,
+          templateUploadedAt: "2026-11-19T12:00:00Z",
+          templateUploadedBy: "user-1",
+        },
+      ],
+      manifest: {
+        questionCounts: { official04bCount: 2, written06aCount: 2, questionBankCount: 2 },
+        decisionRule: "VATM",
+        decisionRuleRef: "SKKNI Manajemen Proyek TIK",
+        prerequisites: [],
+        registrationRequirements: [],
+        units: [
+          { code: "J.620900.001.02", title: "Menyusun Perencanaan Proyek TIK (Project Charter & WBS)" },
+          { code: "J.620900.002.02", title: "Mengelola Jadwal, Biaya, dan Sumber Daya Proyek TIK" },
+        ],
+        kelompokPekerjaan: [
+          {
+            kpIndex: 1,
+            title: "Kelompok Pekerjaan 1 — Inisiasi & Perencanaan Proyek TIK",
+            units: [
+              { no: 1, code: "J.620900.001.02", title: "Menyusun Perencanaan Proyek TIK (Project Charter & WBS)" },
+              { no: 2, code: "J.620900.002.02", title: "Mengelola Jadwal, Biaya, dan Sumber Daya Proyek TIK" },
+            ],
+            aspects: [
+              {
+                kpIndex: 1,
+                no: 1,
+                unitCode: "J.620900.001.02",
+                unitTitle: "Menyusun Perencanaan Proyek TIK (Project Charter & WBS)",
+                lingkup: "Penyusunan Project Charter & WBS",
+                question: "Bagaimana menurunkan tujuan bisnis ke dalam Project Charter?",
+                kukRef: "1.1 Project Charter disusun.",
+              },
+              {
+                kpIndex: 1,
+                no: 2,
+                unitCode: "J.620900.002.02",
+                unitTitle: "Mengelola Jadwal, Biaya, dan Sumber Daya Proyek TIK",
+                lingkup: "Estimasi Critical Path & EVM",
+                question: "Bagaimana menghitung SPI dan CPI pada proyek TIK?",
+                kukRef: "2.2 Jadwal dan anggaran disepakati.",
+              },
+            ],
+          },
+        ],
+        formSuffixMapping: { soal: "06A", kunci: "06B", jawaban: "06C" },
+      },
+    };
+
+    const resolvedBuf = await resolveSchemeTemplateBuffer({
+      scheme: ictScheme,
+      formKeys: ["ak02"],
+      defaultAk3uFileName: "FR.AK.02.REKAMAN_ASESMEN.docx",
+      downloadFromStorage: async (sp) =>
+        sp === "lsp-1/scheme-ict-1/ak02/v1-AK02-ICT.docx" ? customTemplateBuf : undefined,
+    });
+    expect(resolvedBuf).toBe(customTemplateBuf);
+
+    // 1. Custom uploaded template with placeholder tokens
+    const ak02Payload = buildAk02Payload({
+      scheme: ictScheme,
+      schemeTitle: "OKUPASI ICT PROJECT MANAGER",
+      schemeNumber: "SKM/1522/00008/2/2024/3",
+      assessorName: "Dr. Rina TIK",
+      assessorRegNo: "MET.000.9999",
+      assesseeName: "Andi Pratama",
+      assessmentDate: "2026-11-19",
+      decisions: [
+        { unitCode: "J.620900.001.02", unitTitle: "Menyusun Perencanaan Proyek TIK (Project Charter & WBS)", decision: "K" },
+        { unitCode: "J.620900.002.02", unitTitle: "Mengelola Jadwal, Biaya, dan Sumber Daya Proyek TIK", decision: "K" },
+      ],
+      hasDit: true,
+      hasWritten: true,
+    });
+    const customAk02Docx = await generateAk02Docx({
+      ...ak02Payload,
+      templateBuffer: resolvedBuf,
+    });
+    const customAk02Xml = await (await JSZip.loadAsync(customAk02Docx))
+      .file("word/document.xml")!
+      .async("string");
+    expect(customAk02Xml).toContain("ICT PROJECT MANAGER");
+    expect(customAk02Xml).toContain("Andi Pratama");
+    expect(customAk02Xml).toContain("Dr. Rina TIK");
+
+    // 2. Standard 4-table AK.02 template dynamically adapted to ICT-PM's 2 units (zero AK3U units)
+    const dynamicAk02Docx = await generateAk02Docx(ak02Payload);
+    const dynamicAk02Xml = await (await JSZip.loadAsync(dynamicAk02Docx))
+      .file("word/document.xml")!
+      .async("string");
+    expect(dynamicAk02Xml).toContain("J.620900.001.02");
+    expect(dynamicAk02Xml).toContain("Project Charter");
+    expect(dynamicAk02Xml).not.toContain("Merancang Strategi Pengendalian Risiko K3");
+
+    // 3. Standard IA.04B template dynamically adapted to ICT-PM's Kelompok Pekerjaan & questions (zero AK3U K3 questions)
+    const ia04bPayload = buildIa04bPayload({
+      scheme: ictScheme,
+      schemeTitle: "OKUPASI ICT PROJECT MANAGER",
+      schemeNumber: "SKM/1522/00008/2/2024/3",
+      assessorName: "Dr. Rina TIK",
+      assessorRegNo: "MET.000.9999",
+      assesseeName: "Andi Pratama",
+      assessmentDate: "2026-11-19",
+      decisions: [
+        { unitTitle: "Menyusun Perencanaan Proyek TIK (Project Charter & WBS)", decision: "K" },
+        { unitTitle: "Mengelola Jadwal, Biaya, dan Sumber Daya Proyek TIK", decision: "K" },
+      ],
+    });
+    const dynamic04bDocx = await generateIa04bDocx(ia04bPayload);
+    const dynamic04bXml = await (await JSZip.loadAsync(dynamic04bDocx))
+      .file("word/document.xml")!
+      .async("string");
+    const plain04b = dynamic04bXml.replace(/<[^>]+>/g, "");
+    expect(plain04b).toContain("Inisiasi &amp; Perencanaan Proyek TIK");
+    expect(plain04b).toContain("Bagaimana menurunkan tujuan bisnis ke dalam Project Charter?");
+    expect(plain04b).toContain("Bagaimana menghitung SPI dan CPI pada proyek TIK?");
+    expect(plain04b).not.toContain("APAR");
+    expect(plain04b).not.toContain("Kelompok Pekerjaan 4");
+
+    // 4. IA.06C sized to ICT-PM's 2 written questions (instead of hardcoded 13)
+    const ia06cPayload = buildIa06cPayload({
+      scheme: ictScheme,
+      schemeTitle: "OKUPASI ICT PROJECT MANAGER",
+      schemeNumber: "SKM/1522/00008/2/2024/3",
+      assessorName: "Dr. Rina TIK",
+      assessorRegNo: "MET.000.9999",
+      assesseeName: "Andi Pratama",
+      assessmentDate: "2026-11-19",
+      writtenGrading: null,
+    });
+    expect(ia06cPayload.answers).toHaveLength(2);
+    const dynamic06cDocx = await generateIa06cDocx(ia06cPayload);
+    const dynamic06cXml = await (await JSZip.loadAsync(dynamic06cDocx))
+      .file("word/document.xml")!
+      .async("string");
+    expect(dynamic06cXml).toContain("ICT PROJECT MANAGER");
+
+    // 5. AK.05 with custom templateBuffer
+    const customAk05Docx = await generateAk05Docx({
+      schemeCode: "ICT-PM",
+      schemeTitle: "OKUPASI ICT PROJECT MANAGER",
+      schemeNumber: "SKM/1522/00008/2/2024/3",
+      tukType: "sewaktu",
+      assessorName: "Dr. Rina TIK",
+      assessorRegNo: "MET.000.9999",
+      assessmentDate: "2026-11-19",
+      rows: [{ no: 1, assesseeName: "Andi Pratama", recommendation: "K", keterangan: "-" }],
+      notesPositiveNegative: "Baik",
+      notesRejection: "-",
+      notesImprovement: "-",
+      templateBuffer: customTemplateBuf,
+    });
+    const customAk05Xml = await (await JSZip.loadAsync(customAk05Docx))
+      .file("word/document.xml")!
+      .async("string");
+    expect(customAk05Xml).toContain("ICT PROJECT MANAGER");
   });
 });

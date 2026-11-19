@@ -2,7 +2,9 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   classifyDocumentTextContent,
   classifyDriveFileName,
+  cleanCandidateLabel,
   crawlPublicDriveFolder,
+  explainNameInference,
   extractCandidateNamesFromDocumentText,
   hasTaskOrFolderPrefix,
   inferCandidateFromDrivePath,
@@ -397,5 +399,146 @@ describe("Drive folder crawling & BNSP path classification", () => {
     expect(hasTaskOrFolderPrefix("TUGAS SUANGI")).toBe(true);
     expect(hasTaskOrFolderPrefix("Suangi")).toBe(false);
     expect(hasTaskOrFolderPrefix("Dita Permata")).toBe(false);
+  });
+
+  it("classifies files using scheme-specific filePatterns from the batch scheme manifest (Round 14 D17/D21)", () => {
+    const ictPmForms = [
+      {
+        formKey: "berita_acara",
+        formName: "Kelengkapan Asesmen — Berita Acara & Daftar Hadir",
+        filePatterns: ["berita acara", "daftar hadir", "kelengkapan asesmen"],
+        instrumentRole: "administrasi",
+        sortOrder: 1,
+      },
+      {
+        formKey: "muk_portofolio",
+        formName: "MUK Verifikasi Portofolio Proyek TIK",
+        filePatterns: ["verifikasi portofolio", "project charter", "wbs", "bast"],
+        instrumentRole: "portofolio",
+        sortOrder: 2,
+      },
+      {
+        formKey: "04a",
+        formName: "MUK Kegiatan Terstruktur",
+        filePatterns: ["04a", "kegiatan terstruktur"],
+        instrumentRole: "dit",
+        sortOrder: 3,
+      },
+      {
+        formKey: "06c",
+        formName: "Lembar Jawaban ICT PM",
+        filePatterns: ["06c", "jawaban ict"],
+        instrumentRole: "written_jawaban",
+        sortOrder: 4,
+      },
+    ];
+
+    const charterCls = classifyDriveFileName(
+      "Project_Charter_Andi_Pratama.docx",
+      "MUK Verifikasi Portofolio/1. Andi Pratama",
+      ictPmForms,
+    );
+    expect(charterCls.docType).toBe("muk_portofolio");
+    expect(charterCls.reason).toContain("muk_portofolio");
+
+    const baCls = classifyDriveFileName(
+      "Daftar_Hadir_Peserta_Uji.pdf",
+      "Kelengkapan Asesmen",
+      ictPmForms,
+    );
+    expect(baCls.docType).toBe("berita_acara");
+
+    const ditCls = classifyDriveFileName(
+      "Soal_Kegiatan_Terstruktur_ICT_PM.docx",
+      "MUK Kegiatan Terstruktur",
+      ictPmForms,
+    );
+    expect(ditCls.docType).toBe("04a");
+
+    const ktpStillKtp = classifyDriveFileName(
+      "KTP Andi Pratama.jpg",
+      "Persyaratan/1. Andi Pratama",
+      ictPmForms,
+    );
+    expect(ktpStillKtp.docType).toBe("ktp");
+
+    const byContent = classifyDocumentTextContent(
+      "Dokumen Verifikasi Portofolio Proyek TIK dan Project Charter Sistem ERP Nasional",
+      "Lampiran_Asesi_01.pdf",
+      "",
+      ictPmForms,
+    );
+    expect(byContent?.docType).toBe("muk_portofolio");
+  });
+
+  describe("Status-suffix folder name inference (owner's folder pattern)", () => {
+    it("infers person name from folder ending in 'Kurang Sertifikat Pelatihan'", () => {
+      expect(
+        inferCandidateNameFromDrivePath(
+          "Budi Santoso - Kurang Sertifikat Pelatihan/KTP Budi.jpg",
+          "KTP Budi.jpg",
+        ),
+      ).toBe("Budi Santoso");
+      expect(
+        inferCandidateNameFromDrivePath(
+          "Siti Rahayu - Kurang Sertifikat Pelatihan/APL01 Siti.docx",
+          "APL01 Siti.docx",
+        ),
+      ).toBe("Siti Rahayu");
+    });
+
+    it("infers person name from numbered folder with status suffix", () => {
+      expect(
+        inferCandidateNameFromDrivePath(
+          "1. Budi Santoso - Kurang Sertifikat Pelatihan/KTP Budi.jpg",
+          "KTP Budi.jpg",
+        ),
+      ).toBe("Budi Santoso");
+    });
+
+    it("does not reject folder merely because suffix contains structural word 'pelatihan'", () => {
+      expect(
+        inferCandidateNameFromDrivePath(
+          "Faradhila A.Manaf - Kurang Berkas/Presentasi.pptx",
+          "Presentasi.pptx",
+        ),
+      ).toBe("Faradhila A.Manaf");
+    });
+
+    it("still rejects fully structural folder names", () => {
+      expect(
+        inferCandidateNameFromDrivePath(
+          "Materi Pelatihan/KTP Budi.jpg",
+          "KTP Budi.jpg",
+        ),
+      ).toBeNull();
+      expect(
+        inferCandidateNameFromDrivePath(
+          "Persyaratan Pelatihan/Dokumen.pdf",
+          "Dokumen.pdf",
+        ),
+      ).toBeNull();
+    });
+
+    it("explains why no candidate is inferred for structural folders", () => {
+      const reason = explainNameInference("Materi Pelatihan/KTP Budi.jpg");
+      expect(reason).not.toBeNull();
+      expect(reason).toContain("struktural");
+    });
+
+    it("returns null reason when candidate is found", () => {
+      const reason = explainNameInference(
+        "Budi Santoso - Kurang Sertifikat Pelatihan/KTP Budi.jpg",
+      );
+      expect(reason).toBeNull();
+    });
+
+    it("cleans status suffix in cleanCandidateLabel", () => {
+      expect(cleanCandidateLabel("Budi Santoso - Kurang Sertifikat Pelatihan")).toBe(
+        "Budi Santoso",
+      );
+      expect(cleanCandidateLabel("Siti Rahayu - Kurang Berkas")).toBe("Siti Rahayu");
+      expect(cleanCandidateLabel("Materi Pelatihan")).toBe("Materi Pelatihan");
+    });
   });
 });

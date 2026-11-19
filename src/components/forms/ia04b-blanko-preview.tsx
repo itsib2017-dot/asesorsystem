@@ -23,9 +23,9 @@ export function Ia04bBlankoPreview(props: {
 }) {
   const { payload } = props;
   const kelompokList =
-    props.kelompokPekerjaan && props.kelompokPekerjaan.length > 0
+    props.kelompokPekerjaan !== undefined
       ? props.kelompokPekerjaan
-      : IA04B_KELOMPOK_PEKERJAAN;
+      : (payload.kelompokPekerjaan ?? IA04B_KELOMPOK_PEKERJAAN);
   const displaySchemeTitle = formatAk05SchemeTitle(payload.schemeTitle);
   const displayDate = formatAk05DateIndonesia(payload.assessmentDate);
   const isK = payload.overallRecommendation === "K";
@@ -42,6 +42,17 @@ export function Ia04bBlankoPreview(props: {
         hasActiveSignature={props.hasActiveSignature}
         isNameConfirmed={props.isNameConfirmed}
       />
+
+      {kelompokList.length === 0 && (
+        <div
+          role="status"
+          className="rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-950"
+        >
+          <strong>Manifes Pertanyaan FR.IA.04B Kosong:</strong> Skema ini belum mendefinisikan
+          Kelompok Pekerjaan maupun daftar aspek FR.IA.04B. Lengkapi isi pertanyaan di{" "}
+          <em>Pengaturan → Skema</em>.
+        </div>
+      )}
 
       {kelompokList.some((kp) => kp.isGenericFallback) && (
         <div

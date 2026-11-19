@@ -2,7 +2,7 @@
 
 - **Project:** AsesorKompetensi
 - **Database:** Supabase PostgreSQL (`oiplhsmmfuqriaqrxjud`)
-- **Date:** 2026-11-18
+- **Date:** 2026-11-19
 - **Authority:** `ground_rules_v5.md` (§A.4) & ADR-0002
 
 ---
@@ -15,6 +15,7 @@
 | `public.assessors` | `id uuid` (FK `auth.users`) | via membership | Assessor profiles and active signatures | YES |
 | `public.lsp_memberships` | `(lsp_id, assessor_id)` | `lsp_id` | Role per LSP (`assessor`, `lsp_admin`, `tuk_admin`) | YES |
 | `public.schemes` | `id uuid` | `lsp_id` | Certification schemes with JSONB manifest | YES |
+| `public.scheme_form_manifests` | `id uuid` | `lsp_id` | Per-scheme form registry & versioned `.docx` blanko template references (`template_storage_path`, `template_file_name`, `template_sha256`, `template_version`, `template_uploaded_at`, `template_uploaded_by`) | YES |
 | `public.batches` | `id uuid` | `lsp_id` | Assessment batches linked to Google Drive | YES |
 | `public.batch_assessors` | `(batch_id, assessor_id)` | `lsp_id` | Assessor assignments per batch | YES |
 | `public.assessees` | `id uuid` | `lsp_id` | Candidate / assessee records | YES |
@@ -28,7 +29,20 @@
 
 ---
 
-## 2. Applied Migrations
+## 2. Assessee CRUD RLS (roster management)
+
+| Operation | Policy | Guard |
+|-----------|--------|-------|
+| SELECT assessees | `assessee_select` | `lsp_id = current_lsp_id()`; own batch for assessor, all in LSP for admin |
+| INSERT assessees | `assessee_insert` | `lsp_id = current_lsp_id()`; actor must be batch owner or LSP admin |
+| UPDATE assessees | `assessee_update` | `lsp_id = current_lsp_id()`; batch owner or LSP admin; cannot set `certificate_name_confirmed` via roster edit |
+| DELETE assessees | `assessee_delete` | `lsp_id = current_lsp_id()`; only unconfirmed, zero linked files/decisions/gradings |
+
+All assessee mutations are routed through `src/repositories/assessees.repository.ts` only — no Supabase client calls outside repositories (stack lock §A.2).
+
+---
+
+## 3. Applied Migrations
 
 1. `20261118000001_foundation.sql`: Core tables, helper functions, and base RLS policies.
 2. `20261118000002_hardening.sql`: Isolated helper functions to schema `private`, fixed init-plan RLS optimization.
@@ -42,3 +56,4 @@
 10. `20261119000010_drive_file_metadata.sql`: Added `drive_modified_time`, `archive_parent_id`, `archive_entry_path` and `drive_files_modified_idx` on `public.drive_files`, plus `grant delete` and `assessees_delete` RLS policy on `public.assessees`.
 11. `20261119000011_add_triage_unextractable.sql`: Expanded `drive_files.triage_status` CHECK constraint to include `'unextractable'`.
 12. `20261119000012_batch_active_key_and_roster_notes.sql`: Added explicit active FR.IA.06B master key governance columns (`active_master_key_file_id`, `active_master_key_source`, `active_master_key_validation_status`, `active_master_key_validation_summary`, `active_master_key_activated_at`, `active_master_key_activated_by`) on `public.batches`, created append-only `public.batch_roster_notes` table with RLS (`brn_select`, `brn_insert`), and seeded the PII-free retroactive `26 -> 23` reconciliation note for `Demo Audit R4`.
+13. `20261119000013_scheme_blanko_registry.sql`: Added `version` and `.docx` blanko template metadata columns (`template_storage_path`, `template_file_name`, `template_sha256`, `template_version`, `template_uploaded_at`, `template_uploaded_by`) on `public.scheme_form_manifests`, provisioned the private `scheme-blankos` Supabase Storage bucket with multi-tenant RLS (`scheme_blankos_bucket_select/insert/update/delete`), seeded 6 official `.docx` blanko references on `AK3U`, and seeded the second real non-K3 scheme `ICT-PM` (`Okupasi ICT Project Manager (SKM/1522/00008/2/2024/3)`) with 12 registered forms and 5 official `.docx` blankos.

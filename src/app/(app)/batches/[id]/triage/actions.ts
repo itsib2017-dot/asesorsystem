@@ -18,6 +18,7 @@ import {
   updateDriveFileTriage,
 } from "@/repositories/batches.repository";
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
+import { getSchemeById } from "@/repositories/schemes.repository";
 import { reclassifyBatchFilesByContent } from "@/services/drive-extract";
 
 const triageSchema = z.object({
@@ -110,10 +111,11 @@ export async function reclassifyBatchContentAction(formData: FormData): Promise<
   ]);
   if (!batch || !authz.allowed) return;
 
-  const [files, assessees, providerCfg] = await Promise.all([
+  const [files, assessees, providerCfg, scheme] = await Promise.all([
     listDriveFilesForBatch(user.id, batchId),
     listAssesseesByBatch(user.id, batchId),
     getLatestProviderConfigForAssessor(user.id),
+    getSchemeById(user.id, batch.schemeId),
   ]);
 
   let apiKey: string | undefined;
@@ -131,6 +133,7 @@ export async function reclassifyBatchContentAction(formData: FormData): Promise<
     assessees,
     apiKey,
     maxInspect: 12,
+    schemeForms: scheme?.forms,
   });
 
   try {

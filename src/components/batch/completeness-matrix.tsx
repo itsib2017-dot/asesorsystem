@@ -14,12 +14,14 @@ interface CompletenessMatrixProps {
   batchId: string;
   docColumns: string[];
   rows: CompletenessRow[];
+  scanDone?: boolean;
 }
 
 export function CompletenessMatrix({
   batchId,
   docColumns,
   rows,
+  scanDone = false,
 }: CompletenessMatrixProps) {
   // Decision-first ordering: incomplete / unconfirmed first
   const sorted = [...rows].sort((a, b) => {
@@ -33,7 +35,9 @@ export function CompletenessMatrix({
     return (
       <div className="glass-card rounded-2xl p-8 text-center">
         <p className="text-sm text-slate-600">
-          Belum ada data asesi pada batch ini. Mulai pindai folder Google Drive untuk memuat daftar berkas.
+          {scanDone
+            ? "Pindai selesai, namun 0 asesi terdeteksi pada batch ini. Tambah asesi manual dari halaman Triage atau impor dari Sheet Kelompok Asesi."
+            : "Belum ada data asesi pada batch ini. Mulai pindai folder Google Drive untuk memuat daftar berkas."}
         </p>
       </div>
     );

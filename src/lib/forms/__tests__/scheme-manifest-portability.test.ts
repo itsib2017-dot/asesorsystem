@@ -3,11 +3,15 @@ import type { SchemeRecord } from "@/repositories/schemes.repository";
 import {
   buildAk02Payload,
   buildIa04bPayload,
+  buildIa06cPayload,
   hasGenericFallbackKelompok,
+  isAk3uScheme,
   resolveSchemeBranding,
   resolveSchemeDocColumns,
+  resolveSchemeInterviewQuestions,
   resolveSchemeKelompokPekerjaan,
   resolveSchemeUnitsList,
+  resolveSchemeWrittenQuestions,
 } from "../assessee-forms";
 import { formatSchemeInstructionsText } from "../dit-inputs";
 import { resolveUnitsForScheme } from "../sync-vatm-decisions";
@@ -135,5 +139,58 @@ describe("D21 / R7 Scheme Manifest Portability", () => {
       { code: "KP.001", title: "Menyusun Analisis K3" },
       { code: "KP.002", title: "Melakukan Audit Internal" },
     ]);
+  });
+
+  it("never leaks AK3U units, AK3U 04B questions, or /templates/ak3u/ logos onto non-AK3U schemes (Round 14)", () => {
+    const emptyCustomScheme: SchemeRecord = {
+      id: "scheme-ict-pm",
+      lspId: "lsp-1",
+      code: "ICT-PM",
+      name: "Okupasi ICT Project Manager (SKM/1522/00008/2/2024/3)",
+      version: 1,
+      forms: [],
+      manifest: {
+        questionCounts: {
+          official04bCount: 4,
+          written06aCount: 5,
+          questionBankCount: 5,
+        },
+        decisionRule: "VATM",
+        decisionRuleRef: "SKKNI Manajemen Proyek TIK",
+        prerequisites: [],
+        registrationRequirements: [],
+        units: [],
+        writtenQuestions: [
+          { no: 1, unitCode: "J.620900.001.02", question: "Jelaskan komponen Project Charter." },
+        ],
+        interviewQuestions: [
+          { no: 1, unitCode: "J.620900.001.02", question: "Ceritakan proyek TIK terakhir Anda?" },
+        ],
+        formSuffixMapping: { soal: "06A", kunci: "06B", jawaban: "06C" },
+      },
+    };
+
+    expect(isAk3uScheme(emptyCustomScheme)).toBe(false);
+    expect(resolveSchemeUnitsList(emptyCustomScheme)).toEqual([]);
+    expect(resolveSchemeKelompokPekerjaan(emptyCustomScheme)).toEqual([]);
+    expect(resolveSchemeWrittenQuestions(emptyCustomScheme)).toHaveLength(1);
+    expect(resolveSchemeInterviewQuestions(emptyCustomScheme)).toHaveLength(1);
+
+    const branding = resolveSchemeBranding(emptyCustomScheme);
+    expect(branding.leftLogoUrl).toBeUndefined();
+    expect(branding.rightLogoUrl).toBeUndefined();
+    expect(branding.rightLogoAlt).toContain("ICT-PM");
+
+    const ia06c = buildIa06cPayload({
+      scheme: emptyCustomScheme,
+      schemeTitle: "Okupasi ICT Project Manager",
+      schemeNumber: "SKM/1522/00008/2/2024/3",
+      assessorName: "Asesor TIK",
+      assessorRegNo: "MET.999",
+      assesseeName: "Peserta ICT",
+      assessmentDate: "2026-11-19",
+      writtenGrading: null,
+    });
+    expect(ia06c.answers).toHaveLength(5);
   });
 });

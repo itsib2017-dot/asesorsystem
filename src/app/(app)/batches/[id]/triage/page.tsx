@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Users } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
 import { listAuditLogsForResource } from "@/repositories/audit.repository";
 import {
@@ -13,6 +14,28 @@ import {
   assignDriveFileAction,
   reclassifyBatchContentAction,
 } from "./actions";
+import {
+  addAssesseeAction,
+  deleteAssesseeAction,
+  importRosterFromSheetAction,
+  updateAssesseeAction,
+} from "../roster-actions";
+
+// Wrapper server actions so form `action` can use them (Next.js requires
+// form actions to return void | Promise<void>).
+async function handleAddAssessee(formData: FormData) {
+  await addAssesseeAction(formData);
+}
+async function handleUpdateAssessee(formData: FormData) {
+  await updateAssesseeAction(formData);
+}
+async function handleDeleteAssessee(formData: FormData) {
+  await deleteAssesseeAction(formData);
+}
+async function handleImportRoster(formData: FormData) {
+  await importRosterFromSheetAction(formData);
+}
+import { explainNameInference } from "@/services/drive";
 
 export const metadata = {
   title: "Triage Berkas Drive — AsesorKompetensi",
@@ -306,6 +329,154 @@ export default async function TriagePage({
         </details>
       </div>
 
+      {/* Roster Management: Tambah / Ubah / Hapus / Impor Asesi */}
+      <div className="glass-card rounded-2xl p-4 border border-amber-200 bg-amber-25/50 space-y-3">
+        <div className="flex items-center gap-2">
+          <Users className="w-4 h-4 text-amber-700" />
+          <h2 className="text-sm font-semibold text-slate-900">Kelola Daftar Asesi (Roster)</h2>
+        </div>
+        <p className="text-xs text-slate-600">
+          Tambah asesi manual, impor dari Sheet Kelompok Asesi, atau ubah/hapus asesi yang salah
+          terdeteksi. Semua perubahan tercatat di log audit.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Tambah Asesi Manual */}
+          <form action={handleAddAssessee} className="space-y-2 p-3 rounded-xl bg-white border border-slate-300">
+            <input type="hidden" name="batchId" value={id} />
+            <label className="text-[10px] font-semibold text-slate-700 uppercase tracking-wider">
+              Tambah Asesi Manual
+            </label>
+            <input
+              name="displayName"
+              type="text"
+              required
+              minLength={2}
+              placeholder="Nama lengkap asesi"
+              className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs bg-white"
+            />
+            <button
+              type="submit"
+              className="w-full px-3 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-medium cursor-pointer"
+            >
+              Simpan
+            </button>
+          </form>
+
+          {/* Impor dari Sheet */}
+          <form action={handleImportRoster} className="space-y-2 p-3 rounded-xl bg-white border border-slate-300">
+            <input type="hidden" name="batchId" value={id} />
+            <label className="text-[10px] font-semibold text-slate-700 uppercase tracking-wider">
+              Impor dari Sheet Kelompok Asesi
+            </label>
+            <input
+              name="kelompokSheetUrl"
+              type="url"
+              required
+              placeholder="https://docs.google.com/spreadsheets/d/..."
+              className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs bg-white font-mono"
+            />
+            <button
+              type="submit"
+              className="w-full px-3 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-medium cursor-pointer"
+            >
+              Impor
+            </button>
+          </form>
+        </div>
+
+        {/* Daftar asesi saat ini */}
+        {assessees.length === 0 ? (
+          <p className="text-xs text-slate-500 text-center">
+            Belum ada asesi di batch ini. Tambah asesi di atas atau impor dari Sheet.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse divide-y divide-slate-200">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="py-2 px-4 font-semibold text-slate-600">Nama Asesi</th>
+                  <th className="py-2 px-4 font-semibold text-slate-600 text-center">Pseudonim</th>
+                  <th className="py-2 px-4 font-semibold text-slate-600 text-center">Sertifikat</th>
+                  <th className="py-2 px-4 font-semibold text-slate-600 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {assessees.map((a) => (
+                  <tr key={a.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-2 px-4 font-medium text-slate-900">
+                      {a.displayName}
+                    </td>
+                    <td className="py-2 px-4 text-center font-mono text-slate-500">
+                      {a.pseudonym ?? "—"}
+                    </td>
+                    <td className="py-2 px-4 text-center">
+                      {a.certificateNameConfirmed ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          Dikonfirmasi
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+                          Belum
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 px-4 text-right space-x-1">
+                      {!a.certificateNameConfirmed && (
+                        <>
+                          <form
+                            action={handleUpdateAssessee}
+                            className="inline space-x-1"
+                            onSubmit={(e) => {
+                              const input = e.currentTarget.elements.namedItem("displayName") as HTMLInputElement | null;
+                              if (input && !input.value.trim()) {
+                                e.preventDefault();
+                              }
+                            }}
+                          >
+                            <input type="hidden" name="batchId" value={id} />
+                            <input type="hidden" name="assesseeId" value={a.id} />
+                            <input
+                              name="displayName"
+                              defaultValue={a.displayName}
+                              className="px-2 py-1 rounded-lg border border-slate-300 text-xs bg-white w-[140px]"
+                            />
+                            <button
+                              type="submit"
+                              className="px-2 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-medium cursor-pointer"
+                            >
+                              Ubah
+                            </button>
+                          </form>
+                          <form
+                            action={handleDeleteAssessee}
+                            className="inline"
+                            onSubmit={(e) => {
+                              if (!window.confirm(`Hapus asesi "${a.displayName}"?`)) {
+                                e.preventDefault();
+                              }
+                            }}
+                          >
+                            <input type="hidden" name="batchId" value={id} />
+                            <input type="hidden" name="assesseeId" value={a.id} />
+                            <button
+                              type="submit"
+                              className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-medium cursor-pointer"
+                            >
+                              Hapus
+                            </button>
+                          </form>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Filter & Search Bar */}
       <form
         method="GET"
@@ -392,6 +563,7 @@ export default async function TriagePage({
             <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-600">
               <tr>
                 <th className="py-3 px-4">Nama Berkas / Jalur Drive</th>
+                <th className="py-3 px-4">Alasan Tanpa Kandidat Nama</th>
                 <th className="py-3 px-4">Pemetaan Asesi, Jenis Dokumen &amp; Status</th>
               </tr>
             </thead>
@@ -447,6 +619,20 @@ export default async function TriagePage({
                           )}
                         </div>
                       )}
+                    </td>
+                    <td className="py-3 px-4 max-w-xs">
+                      {(() => {
+                        const reason = explainNameInference(f.drivePath);
+                        if (!reason) return <span className="text-[10px] text-slate-400">—</span>;
+                        return (
+                          <span
+                            className="px-2 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-900 border border-amber-200"
+                            title={reason}
+                          >
+                            {reason.length > 60 ? `${reason.slice(0, 60)}…` : reason}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="py-3 px-4">
                       <form action={assignDriveFileAction} className="flex flex-wrap gap-2 items-center">

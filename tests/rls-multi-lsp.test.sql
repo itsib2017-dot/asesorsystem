@@ -460,6 +460,35 @@ BEGIN
   END;
 END $mut$;
 
+-- T5.9: LSP Admin A can update scheme_form_manifests blanko version on LSP-A -> ALLOW (1 row)
+SELECT set_config('request.jwt.claims', '{"sub":"10000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+WITH updated_own AS (
+  UPDATE public.scheme_form_manifests
+  SET form_name = 'FR.IA.04A — DIT Alpha',
+      template_storage_path = 'a0000000-0000-0000-0000-000000000001/a1000000-0000-0000-0000-000000000001/04a/v1-04A.docx',
+      template_file_name = '04A.docx',
+      template_version = 1
+  WHERE lsp_id = 'a0000000-0000-0000-0000-000000000001' AND form_key = '04a'
+  RETURNING id
+)
+INSERT INTO test_results (test_id, role_tested, target_lsp, resource, expected, actual, status)
+SELECT 'RLS-41', 'lsp_admin', 'LSP-A', 'scheme_form_manifests (blanko update own)', '1', count(*)::text,
+       CASE WHEN count(*) = 1 THEN 'PASS' ELSE 'FAIL' END
+FROM updated_own;
+
+-- T5.10: LSP Admin A cannot update scheme_form_manifests blanko on LSP-B -> REJECT (0 rows)
+WITH updated_cross AS (
+  UPDATE public.scheme_form_manifests
+  SET template_storage_path = 'hijacked.docx',
+      template_version = 99
+  WHERE lsp_id = 'b0000000-0000-0000-0000-000000000002'
+  RETURNING id
+)
+INSERT INTO test_results (test_id, role_tested, target_lsp, resource, expected, actual, status)
+SELECT 'RLS-42', 'lsp_admin', 'LSP-B', 'scheme_form_manifests (blanko cross-update)', '0', count(*)::text,
+       CASE WHEN count(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM updated_cross;
+
 -- Switch back to postgres session to query results
 RESET ROLE;
 
