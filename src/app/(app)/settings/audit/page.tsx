@@ -63,13 +63,21 @@ export default async function AuditLogPage({
             Rekaman jejak audit keamanan dan perubahan data penting pada LSP Anda (khusus Admin LSP).
           </p>
         </div>
-        <Link
-          href="/settings/audit"
-          className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Muat Ulang Log
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href="/api/v1/audit/export"
+            className="px-3.5 py-2 rounded-xl bg-teal-700 text-white hover:bg-teal-800 text-xs font-medium inline-flex items-center gap-1.5"
+          >
+            Ekspor XLSX
+          </a>
+          <Link
+            href="/settings/audit"
+            className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Muat Ulang Log
+          </Link>
+        </div>
       </div>
 
       {!roleCheck.allowed ? (
