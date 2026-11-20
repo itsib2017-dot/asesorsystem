@@ -121,3 +121,14 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 | P0-6: Confidence tampil di kartu | PARTIAL | Teks OCR + verdict human-needed tampil; angka confidence tidak tersimpan di `:confidence` yang dibaca kartu — fallback jujur "confidence tidak tersimpan" ditampilkan. Root cause penyimpanan confidence jury perlu ditindaklanjuti |
 
 **Catatan P0-1:** penyebab awal kegagalan OCR di Production (dari log Vercel): `Cannot find module /ROOT/node_modules/tesseract.js/src/worker-script/node/index.js`, lalu `'..'`, lalu `bmp-js` — Next.js file trace tidak menyertakan worker thread Tesseract + dependency-nya. Diperbaiki lewat `outputFileTracingIncludes` + `serverExternalPackages` (Context7 v7 docs + Next.js tracing docs).
+
+---
+
+## Module: P1 (Bagian 4, Cacat 7–10)
+
+| Scenario | Result | Evidence |
+|---|---|---|
+| P1-7a: Ekspor XLSX log audit dari UI | PASS | Deploy `9cfbc05`: tombol "Ekspor XLSX" → download `audit-log.xlsx`, 14.019 byte, RBAC `lsp_admin`, 2000 baris maks, audit `audit.export.xlsx` |
+| P1-7b/8/9/10: formulir hilang, wawancara, pg-boss, PDF DOCX | BLOCKED (keputusan produk) | ADR-0005 berisi usaha keputusan; butuh konfirmasi pemilik. Tidak ada asumsi diam-diam (Non-Negotiable #2) |
+
+**Ringkasan akhir 2026-11-20:** Bagian 1 (R4 triage), Bagian 2 (kecuali DIT/LLM), Bagian 3 (kecuali ekspor template skema uji), P0 Cacat 1/4, dan P1-7a terverifikasi live. P0 Cacat 5 dan P1-7b/8/9/10 tertunda oleh batasan brief/keputusan pemilik.

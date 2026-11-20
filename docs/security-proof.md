@@ -1,3 +1,5 @@
+> **Tambahan 2026-11-20:** Variabel Production Vercel diverifikasi via `vercel env ls` (nama saja, nilai tidak dicatat): `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `BYOK_ENCRYPTION_SECRET` (Secret/Hidden), `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (Config/publik). OCR KTP tetap lokal (Tesseract), gambar tidak dikirim ke LLM. Ekspor XLSX audit dilindungi RBAC `lsp_admin` dan tercatat sebagai `audit.export.xlsx`.
+
 # F10 — Security Proof & Hardening Evidence
 
 - **Date:** 2026-11-19
