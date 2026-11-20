@@ -4,6 +4,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Clock, FileWarning, Play } from "lucide-react";
+import { waitForJob } from "@/lib/jobs/wait-for-job";
 
 interface InputStatusItem {
   label: string;
@@ -124,9 +125,25 @@ export function DitAnalysisTrigger({
         return;
       }
 
+      const jobId = json.data?.job_id;
+      if (jobId) {
+        const final = await waitForJob(jobId);
+        if (final.status !== "done") {
+          setFeedback({
+            type: "error",
+            text:
+              final.status === "failed"
+                ? `Analisis DIT gagal (Job ${jobId.slice(0, 8)}): ${final.error?.slice(0, 400) ?? "kesalahan worker."} Periksa kuota/mode BYOK Anda di Penyedia AI lalu jalankan ulang.`
+                : `Analisis DIT masih berjalan (Job ${jobId.slice(0, 8)}). Periksa Status Pindai/Job pada halaman batch.`,
+          });
+          router.refresh();
+          return;
+        }
+      }
+
       setFeedback({
         type: "success",
-        text: `Analisis DIT selesai (Job ${json.data?.job_id?.slice(0, 8) ?? "-"} · status: ${json.data?.status ?? "done"}).`,
+        text: `Analisis DIT selesai (Job ${jobId?.slice(0, 8) ?? "-"}).`,
       });
       router.refresh();
     } catch (err) {

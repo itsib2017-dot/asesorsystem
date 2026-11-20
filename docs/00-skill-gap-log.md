@@ -67,7 +67,7 @@
 ## 4. Sesi 2026-11-20 — Bootstrap ulang & RCA triage R4
 
 - **Caveman:** active (reasoning scaffold). **Graphify:** active; cache `graphify-out/graph.json` stale (built `e7fa16c9`, HEAD `3dabf1f`) — dipakai untuk orientasi saja, bukan bukti.
-- **Ponytail:** TIDAK tersedia di environment ini (`skill` loader error). Emulasi: task list berurutan di sesi ini dan `docs/testing/feature-test-report.md`. Gap dicatat di sini sesuai §A.7.
+- **Ponytail:** sebelumnya tidak terpasang. 2026-11-20 dipasang via `npx skills add dietrichgebert/ponytail@ponytail -g -y` (sumber 136,8K installs; risk assessment Safe / 0 alerts / Low Risk) dan aktif. Playwright aktif via browser tools + Playwright 1.41.1 lokal (kredensial dibaca runtime).
 - **Context7 MCP:** tersedia; dipakai hanya untuk keputusan API/versi baru (belum ada API baru di ticket triage).
 - **Vercel CLI:** tidak ada di PATH; tersedia via `npx --no-install vercel` (login `itsib2017-7919`). Dipakai **khusus logs**, bukan deploy. Deploy otomatis via git push.
 - **Playwright:** `1.41.1` (global Nodist), chromium `1208` dipakai lewat `executablePath`. Kredensial demo dibaca runtime dari file lokal, tidak pernah dicetak/committed.
