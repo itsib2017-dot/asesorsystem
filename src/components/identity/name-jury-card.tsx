@@ -84,7 +84,9 @@ export function NameJuryCard({
           <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
             {ocrConfidence !== null
               ? `OCR Yakin: ${Math.round(ocrConfidence * 100)}%`
-              : "OCR: Belum dijalankan"}
+              : ktpOcrName.trim()
+                ? "OCR: Teks terbaca (confidence tidak tersimpan)"
+                : "OCR: Belum dijalankan"}
           </span>
           {verdictBadge}
         </div>

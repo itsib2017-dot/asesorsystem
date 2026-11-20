@@ -105,4 +105,19 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 | G-03: Batch skema itu klasifikasi dengan polanya sendiri | PASS | Batch `5d183359-...`, 34 berkas Drive, 0 perlu triase; skema PK3MGB-UJI tampil di header batch |
 | G-04: AK3U tidak berubah | PASS | Batch R4 tetap 344 berkas dan triase termuat |
 | G-05: Nama LSP di header batch | PASS (kode) | `getLspNameForUser` + header "LSP: …"; terverifikasi setelah deploy |
-| G-06: "Unit: 0" | PASS (kode) | Kartu AK3U memakai `resolveSchemeUnitsList(s).length` → 13 fallback; tes `scheme-manifest-portability.test.ts` |
+| G-06: "Unit: 0" | PASS | Deploy `2dde383`: kartu AK3U live menampilkan "Unit: 13"; tes `scheme-manifest-portability.test.ts` |
+
+---
+
+## Module: P0 Live (Bagian 4)
+
+| Scenario | Result | Evidence |
+|---|---|---|
+| P0-1: OCR KTP lokal dari UI | PASS | Setelah perbaikan trace Tesseract (commits `32d09e4`, `45c63fa`, `86977c9`), tombol "Jalankan OCR KTP" menghasilkan `OCR KTP selesai ... veredik: needs_human`; teks OCR tersimpan di kartu; audit `identity.ocr.ktp` (56 entri). File Uji: `IMG-20261112-WA0003.jpg` (bukan KTP asli — dokumen demo) |
+| P0-2: Teks KTP tidak ke LLM | PASS (desain + kode) | `runOcrKtpAction` memakai `Tesseract.recognize` lokal; name jury menerima teks OCR saja |
+| P0-3: Trigger similarity UI | PASS | Batch `2a3f5107`: "Jalankan Analisis Kemiripan" → 1 pasangan flagged (Jaccard 0.0891, Cosine 0.6332), ambang 0.85/0.65/0.45 tampil |
+| P0-4: Trigger extract_file UI | PASS | Terverifikasi sebelumnya di `c61cf7c5` (brief); tombol hadir di triase batch uji |
+| P0-5: Model answers + ekspor 04A | BLOCKED | DIT tidak dijalankan pada batch demo tanpa kunci 06B kerja + persetujuan LLM (brief Bagian 5) |
+| P0-6: Confidence tampil di kartu | PARTIAL | Teks OCR + verdict human-needed tampil; angka confidence tidak tersimpan di `:confidence` yang dibaca kartu — fallback jujur "confidence tidak tersimpan" ditampilkan. Root cause penyimpanan confidence jury perlu ditindaklanjuti |
+
+**Catatan P0-1:** penyebab awal kegagalan OCR di Production (dari log Vercel): `Cannot find module /ROOT/node_modules/tesseract.js/src/worker-script/node/index.js`, lalu `'..'`, lalu `bmp-js` — Next.js file trace tidak menyertakan worker thread Tesseract + dependency-nya. Diperbaiki lewat `outputFileTracingIncludes` + `serverExternalPackages` (Context7 v7 docs + Next.js tracing docs).
