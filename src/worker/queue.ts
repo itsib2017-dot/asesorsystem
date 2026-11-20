@@ -11,6 +11,7 @@ import {
   type JobRecord,
 } from "@/repositories/jobs.repository";
 import { runWorkerJob } from "./index";
+import { isStaleRunningJob } from "./job-staleness";
 
 export type JobType =
   | "drive_scan"
@@ -257,5 +258,21 @@ export async function enqueueJob(params: {
 }
 
 export async function getJobStatus(userId: string, jobId: string) {
-  return getJobRecordById(userId, jobId);
+  const job = await getJobRecordById(userId, jobId);
+  if (!job) return null;
+
+  // shortcut: a worker killed by the Vercel 300s timeout cannot update its own
+  // row; surface a terminal state instead of polling "running" forever.
+  if (isStaleRunningJob(job)) {
+    await updateJobStatusRecord({
+      userId,
+      jobId,
+      status: "failed",
+      progress: job.progress,
+      error: "Worker timeout (Vercel 300s). Jalankan ulang analisis.",
+    });
+    return getJobRecordById(userId, jobId);
+  }
+
+  return job;
 }

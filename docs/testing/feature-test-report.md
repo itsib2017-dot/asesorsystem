@@ -132,7 +132,7 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 | P1-7b/8/9/10: formulir hilang, wawancara, pg-boss, PDF DOCX | BLOCKED (keputusan produk) | ADR-0005 berisi usaha keputusan; butuh konfirmasi pemilik. Tidak ada asumsi diam-diam (Non-Negotiable #2) |
 
 **Lanjutan 2026-11-20 (BYOK pemilik sudah diperbarui):**
-- DIT dijalankan ulang pada assessee `9bda2e81` → job `1d8dc449` mulai 02:17Z, lalu **Vercel Runtime Timeout 300s** (log 02:22Z). Job masih berstatus `running` — perlu recovery stale job + provider yang lebih cepat. Model answers masih 0/13.
+- DIT dijalankan ulang pada assessee `9bda2e81` → job `1d8dc449` mulai 02:17Z, lalu **Vercel Runtime Timeout 300s** (log 02:22Z). Model answers masih 0/13 — perlu provider dengan latensi lebih rendah (atau worker latar belakang, bukan inline di request). Stale job kini otomatis ditandai `failed` setelah 6 menit tanpa update (`job-staleness.ts`, 2 tes) sehingga UI tidak lagi terjebak "running" selamanya.
 - Cacat 8: prompt wawancara RCTFA diimplementasikan secara generik (multi-skema, multi-LSP) + tombol generate di FR.IA.09. Tes prompt 2/2 PASS.
 - Cacat 10: PDF AK.05 kini dikonversi dari DOCX terisi; tes export 5/5 PASS (tanda tangan tersemat, 2 halaman).
 
