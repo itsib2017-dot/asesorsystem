@@ -232,7 +232,8 @@ export async function runOcrKtpAction(formData: FormData): Promise<{
   revalidatePath(`/batches/${batchId}/assessees/${assesseeId}`);
   return {
     ok: true,
-    message: `OCR KTP selesai. Teks terdeteksi, confidence ${Math.round((ocrConfidence ?? 0) * 100)}%, veredik: ${jury.result.verdict}.`,
+    // Tesseract reports confidence on a 0-100 scale, not 0-1.
+    message: `OCR KTP selesai. Teks terdeteksi, confidence ${Math.round(ocrConfidence ?? 0)}%, veredik: ${jury.result.verdict}.`,
     ktpNameOcr: ocrText,
     ocrConfidence: jury.result.ocr_confidence ?? null,
     verdict: jury.result.verdict,

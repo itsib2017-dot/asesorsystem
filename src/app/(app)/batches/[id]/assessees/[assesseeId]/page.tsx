@@ -81,6 +81,26 @@ export default async function AssesseeDetailPage({
     (f) => f.assesseeId === assesseeId && (f.docType === "dit_form" || f.docType === "04b"),
   );
 
+  // If the jury verdict row is not yet readable, still surface the OCR evidence
+  // and require a human decision rather than showing "not run".
+  const ktpOcrFile = batchFiles.find(
+    (f) => f.assesseeId === assesseeId && f.docType === "ktp" && f.ocrConfidence != null,
+  );
+  const rawOcrConfidence = ktpOcrFile?.ocrConfidence ?? null;
+  const resolvedOcrConfidence = jury
+    ? jury.ocr_confidence ?? jury.ocrConfidence
+    : rawOcrConfidence != null
+      ? rawOcrConfidence > 1
+        ? rawOcrConfidence / 100
+        : rawOcrConfidence
+      : null;
+  const hasOcrEvidence = Boolean(assessee.ktpNameOcr?.trim());
+  const resolvedVerdict = jury?.verdict
+    ? (jury.verdict as "match" | "mismatch_resolved" | "needs_human")
+    : hasOcrEvidence
+      ? "needs_human"
+      : "not_run";
+
   const schemeUnitsList = resolveSchemeUnitsList(common.scheme);
   const resolvedOverall = resolveAssesseeOverallDecision({
     unitDecisions: decisions as unknown as UnitDecisionLike[],
@@ -183,14 +203,9 @@ export default async function AssesseeDetailPage({
         suratTugasName={assessee.suratTugasName || "-"}
         ijazahName={assessee.ijazahName || "-"}
         ocrConfidence={
-          jury && (jury.ocr_confidence ?? jury.ocrConfidence) != null
-            ? Number(jury.ocr_confidence ?? jury.ocrConfidence)
-            : null
+          resolvedOcrConfidence != null ? Number(resolvedOcrConfidence) : null
         }
-        verdict={
-          (jury?.verdict as "match" | "mismatch_resolved" | "needs_human" | undefined) ??
-          "not_run"
-        }
+        verdict={resolvedVerdict}
         proposedName={
           (jury?.proposed_certificate_name as string | null) ??
           (jury?.proposedCertificateName as string | null) ??
@@ -199,7 +214,9 @@ export default async function AssesseeDetailPage({
         }
         reasoning={
           (jury?.reasoning as string) ||
-          "Juri Nama / OCR KTP belum dijalankan. Periksa dokumen KTP asli dan konfirmasi nama sertifikat secara manual atau jalankan OCR."
+          (hasOcrEvidence
+            ? "OCR lokal selesai dan teks KTP terbaca. Rekomendasi juri belum tersedia; keputusan nama sertifikat memerlukan manusia."
+            : "Juri Nama / OCR KTP belum dijalankan. Periksa dokumen KTP asli dan konfirmasi nama sertifikat secara manual atau jalankan OCR.")
         }
         confirmedName={assessee.certificateNameConfirmed}
         onConfirmAction={confirmCertificateNameAction}
