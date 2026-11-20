@@ -61,6 +61,39 @@ export function buildDitAnalysisSchema(expectedQuestionCount: number) {
   });
 }
 
+export function buildInterviewQuestionsSchema(expectedQuestionCount: number) {
+  return z.object({
+    coverage: z.array(
+      z.object({
+        unitCode: z.string(),
+        status: coverageStatusSchema,
+        reason: z.string(),
+      }),
+    ),
+    gapQuestions: z.array(
+      z.object({
+        unitCode: z.string(),
+        dimension: dimensionCodeSchema,
+        question: z.string(),
+      }),
+    ),
+    interviewQuestions: z
+      .array(
+        z.object({
+          no: z.number().int().positive(),
+          unitCode: z.string(),
+          question: z.string(),
+        }),
+      )
+      .length(expectedQuestionCount),
+    readiness: z.object({
+      strengths: z.array(z.string()),
+      criticalGaps: z.array(z.string()),
+      recommendation: binaryDecisionCodeSchema,
+    }),
+  });
+}
+
 export const writtenGradingSchema = z.object({
   pseudonym: z.string(),
   itemVerdicts: z.array(

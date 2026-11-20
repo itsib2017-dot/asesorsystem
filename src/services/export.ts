@@ -18,6 +18,7 @@ import {
   formatAk05DateIndonesia,
   formatAk05SchemeTitle,
 } from "@/lib/ak05/format";
+import { renderAk05DocxToPdf } from "@/lib/ak05/docx-to-pdf";
 import { AK05_LAYOUT } from "@/lib/ak05/layout";
 import type {
   SchemeKelompokSpec,
@@ -1739,7 +1740,7 @@ function drawBlankoHeaderFooter(params: {
  * Page-1 Table 3 notes (for <=12 candidates), Page-2 Table 4 assessor block with
  * embedded signature, and #4472C4 / #A8D08D official footer.
  */
-export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffer> {
+export async function drawAk05PdfLegacy(payload: Ak05ExportPayload): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create();
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -2122,6 +2123,15 @@ export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffe
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);
+}
+
+/**
+ * PDF is produced from the filled DOCX template, so DOCX and PDF share one
+ * layout/content source (D8/Cacat 10).
+ */
+export async function generateAk05Pdf(payload: Ak05ExportPayload): Promise<Buffer> {
+  const filledDocx = await generateAk05Docx(payload);
+  return renderAk05DocxToPdf(filledDocx);
 }
 
 export async function generateTabularXlsx(

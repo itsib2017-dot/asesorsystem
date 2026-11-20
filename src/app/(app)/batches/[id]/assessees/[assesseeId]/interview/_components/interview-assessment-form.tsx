@@ -4,7 +4,10 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Save, XCircle } from "lucide-react";
-import { saveInterviewAssessmentAction } from "../actions";
+import {
+  generateInterviewQuestionsAction,
+  saveInterviewAssessmentAction,
+} from "../actions";
 
 export interface InterviewQuestionItem {
   no: number;
@@ -47,7 +50,33 @@ export function InterviewAssessmentForm({
   const [notes, setNotes] = useState(initialNotes);
   const [applyToDecisions, setApplyToDecisions] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [status, setStatus] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const handleGenerate = async () => {
+    if (generating) return;
+    setGenerating(true);
+    setStatus(null);
+    try {
+      const fd = new FormData();
+      fd.append("batchId", batchId);
+      fd.append("assesseeId", assesseeId);
+      const res = await generateInterviewQuestionsAction(fd);
+      if (!res.ok || !res.questions?.length) {
+        setStatus({ type: "error", text: res.error ?? "Gagal membuat pertanyaan wawancara." });
+        return;
+      }
+      setQuestions(res.questions);
+      setStatus({ type: "success", text: res.message ?? "Pertanyaan wawancara dibuat." });
+    } catch (err) {
+      setStatus({
+        type: "error",
+        text: err instanceof Error ? err.message : "Terjadi kesalahan jaringan.",
+      });
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const updateQuestion = (idx: number, patch: Partial<InterviewQuestionItem>) => {
     setQuestions((prev) =>
@@ -154,6 +183,14 @@ export function InterviewAssessmentForm({
               Catat kesimpulan jawaban asesi dan tentukan pencapaian Ya / Tidak per butir wawancara.
             </p>
           </div>
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={generating}
+            className="px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white text-xs font-medium cursor-pointer"
+          >
+            {generating ? "Membuat..." : "Hasilkan Pertanyaan (AI)"}
+          </button>
           <button
             type="button"
             onClick={() =>

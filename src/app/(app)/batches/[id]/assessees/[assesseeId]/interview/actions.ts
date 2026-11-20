@@ -2,6 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { runInterviewPipeline } from "@/services/interview";
+import { decryptSecret } from "@/lib/crypto/encryption";
+import { getLspNameForUser } from "@/repositories/auth.repository";
+import { resolveSchemeInterviewQuestions } from "@/lib/forms/assessee-forms";
+import { resolveUnitsForScheme } from "@/lib/forms/sync-vatm-decisions";
+import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
+import { listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { isUuid } from "@/db";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
@@ -177,5 +184,147 @@ export async function saveInterviewAssessmentAction(formData: FormData): Promise
   return {
     ok: true,
     message: `Penilaian wawancara FR.IA.09 (${data.overallRecommendation}) tersimpan dan roll-up VATM diperbarui.`,
+  };
+}
+
+export async function generateInterviewQuestionsAction(formData: FormData): Promise<{
+  ok: boolean;
+  questions?: Array<{
+    no: number;
+    question: string;
+    answerSummary: string;
+    achieved: null;
+    unitCode?: string;
+  }>;
+  message?: string;
+  error?: string;
+}> {
+  const user = await getUser();
+  if (!user) return { ok: false, error: "Unauthorized: Silakan masuk terlebih dahulu." };
+
+  const batchId = String(formData.get("batchId") ?? "").trim();
+  const assesseeId = String(formData.get("assesseeId") ?? "").trim();
+  if (!isUuid(batchId) || !isUuid(assesseeId)) {
+    return { ok: false, error: "Parameter wawancara tidak valid." };
+  }
+
+  const [batch, assessee, authz] = await Promise.all([
+    getBatchById(user.id, batchId),
+    getAssesseeById(user.id, assesseeId),
+    resolveAuthorizedLsp(user.id, ["lsp_admin", "assessor"]),
+  ]);
+  if (!batch || !assessee || assessee.batchId !== batch.id) {
+    return { ok: false, error: "Batch atau asesi tidak ditemukan." };
+  }
+  if (!authz.allowed) {
+    return { ok: false, error: "Peran Anda tidak berwenang menghasilkan pertanyaan wawancara." };
+  }
+
+  const [schemes, lspName, providerCfg, files] = await Promise.all([
+    listSchemes(user.id, batch.lspId),
+    getLspNameForUser(user.id, batch.lspId),
+    getLatestProviderConfigForAssessor(user.id),
+    listDriveFilesForBatch(user.id, batchId),
+  ]);
+  const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
+  if (!scheme) return { ok: false, error: "Skema batch tidak ditemukan." };
+
+  const units = resolveUnitsForScheme(scheme);
+  const manifestQuestions = resolveSchemeInterviewQuestions(scheme);
+  const questionCount = manifestQuestions.length || units.length;
+  if (questionCount < 1) {
+    return {
+      ok: false,
+      error: "Jumlah pertanyaan wawancara belum terkonfigurasi pada manifes skema.",
+    };
+  }
+  if (!providerCfg?.encryptedApiKey) {
+    return { ok: false, error: "Konfigurasi AI (BYOK) belum tersedia di Penyedia AI." };
+  }
+
+  let llmConfig;
+  try {
+    llmConfig = {
+      provider: providerCfg.provider,
+      apiKey: decryptSecret(providerCfg.encryptedApiKey),
+      baseUrl: providerCfg.baseUrl,
+      gatewayToken: providerCfg.encryptedGatewayToken
+        ? decryptSecret(providerCfg.encryptedGatewayToken)
+        : null,
+      model: providerCfg.model,
+      temperature: providerCfg.temperature,
+      maxTokens: providerCfg.maxTokens,
+    };
+  } catch {
+    return { ok: false, error: "Kunci BYOK tidak dapat dibaca. Periksa konfigurasi Penyedia AI." };
+  }
+
+  const fr09Text =
+    files
+      .filter((f) => f.assesseeId === assesseeId && f.docType === "09")
+      .map((f) => f.extractedText ?? "")
+      .join("\n")
+      .slice(0, 20_000) || "";
+  const profile = [
+    `Pseudonim: ${assessee.pseudonym ?? "-"}`,
+    `FR.APL.01: ${assessee.apl01Name ?? "-"}`,
+    `Surat Tugas: ${assessee.suratTugasName ?? "-"}`,
+    `Ijazah: ${assessee.ijazahName ?? "-"}`,
+  ].join("\n");
+
+  const result = await runInterviewPipeline({
+    pseudonym: assessee.pseudonym ?? "ASESI",
+    lspName: lspName ?? "-",
+    schemeName: scheme.name,
+    schemeCode: scheme.code,
+    questionCount,
+    units,
+    legalRefs: scheme.manifest.decisionRuleRef
+      ? [scheme.manifest.decisionRuleRef]
+      : [],
+    candidateProfileSummary: profile,
+    fr09Text,
+    llmConfig,
+    correlationId: `interview-${assesseeId}`,
+  });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: `Pertanyaan wawancara gagal dibuat (${result.reason}): ${result.error ?? "kesalahan AI."}`,
+    };
+  }
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        lsp_id: batch.lspId,
+        actor_id: user.id,
+        action: "interview.ia09.generate",
+        resource: "assessees",
+        resource_id: assessee.id,
+        after_summary: {
+          schemeCode: scheme.code,
+          questionCount,
+          promptVersion: result.promptVersion,
+        },
+      },
+      supabase,
+    );
+  } catch {
+    // non-fatal audit error
+  }
+
+  return {
+    ok: true,
+    questions: result.output.interviewQuestions.map((q) => ({
+      no: q.no,
+      question: q.question,
+      answerSummary: "",
+      achieved: null,
+      unitCode: q.unitCode,
+    })),
+    message: `${questionCount} pertanyaan wawancara dibuat dari manifes skema ${scheme.code}.`,
   };
 }

@@ -131,4 +131,9 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 | P1-7a: Ekspor XLSX log audit dari UI | PASS | Deploy `9cfbc05`: tombol "Ekspor XLSX" → download `audit-log.xlsx`, 14.019 byte, RBAC `lsp_admin`, 2000 baris maks, audit `audit.export.xlsx` |
 | P1-7b/8/9/10: formulir hilang, wawancara, pg-boss, PDF DOCX | BLOCKED (keputusan produk) | ADR-0005 berisi usaha keputusan; butuh konfirmasi pemilik. Tidak ada asumsi diam-diam (Non-Negotiable #2) |
 
-**Ringkasan akhir 2026-11-20:** Bagian 1 (R4 triage), Bagian 2 (kecuali DIT/LLM), Bagian 3 (kecuali ekspor template skema uji), P0 Cacat 1/4, dan P1-7a terverifikasi live. P0 Cacat 5 dan P1-7b/8/9/10 tertunda oleh batasan brief/keputusan pemilik.
+**Lanjutan 2026-11-20 (BYOK pemilik sudah diperbarui):**
+- DIT dijalankan ulang pada assessee `9bda2e81` → job `1d8dc449` mulai 02:17Z, lalu **Vercel Runtime Timeout 300s** (log 02:22Z). Job masih berstatus `running` — perlu recovery stale job + provider yang lebih cepat. Model answers masih 0/13.
+- Cacat 8: prompt wawancara RCTFA diimplementasikan secara generik (multi-skema, multi-LSP) + tombol generate di FR.IA.09. Tes prompt 2/2 PASS.
+- Cacat 10: PDF AK.05 kini dikonversi dari DOCX terisi; tes export 5/5 PASS (tanda tangan tersemat, 2 halaman).
+
+**Ringkasan akhir 2026-11-20:** Bagian 1, 2 (kecuali DIT/LLM), 3, P0 Cacat 1/4, P1-7a/8/10 selesai. P0 Cacat 5 dan P1-7b/9 tertunda (DIT timeout + keputusan pemilik).
