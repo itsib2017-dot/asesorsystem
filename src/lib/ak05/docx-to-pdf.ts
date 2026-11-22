@@ -18,7 +18,6 @@ const FOOTER_DIVIDER_Y = 50;
 const BOTTOM_SAFE_Y = 66;
 const BODY_FONT_SIZE = 8.5;
 const CELL_FONT_SIZE = 8;
-const LINE_HEIGHT = 11.2;
 const CELL_PAD_X = 5;
 const CELL_PAD_Y = 4;
 
