@@ -87,7 +87,7 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 | Scenario | Result | Evidence |
 |---|---|---|
 | R-L1: Buat batch uji dari UI + Sheet + Drive | PASS | Batch `2a3f5107-61fe-48ac-9281-b42ad3c051b0`, job `ca6c133b`, scan done 100%, 34 berkas, 2 asesi terdeteksi |
-| R-L2: Tambah asesi manual dari UI | PASS | "Uji Satu 20Nov", "Nama Baru ABC", "Nama Baru ABC2" muncul di tabel roster (render Server Action delay ~1 request) |
+| R-L2: Tambah asesi manual dari UI | PASS | "Uji Satu 20Nov", "Nama Baru ABC", "Nama Baru ABC2" muncul di tabel roster (Observasi R16 #6: total 6 asesi pada `2a3f5107`, termasuk 4 entri manual; pseudonim kini monotonic melalui indeks parsial unik migrasi `20261122000014`) |
 | R-L3: Impor Sheet Kelompok Asesi | PASS | Entri "Update Per 19 November 2026 10.29" masuk roster; tombol Impor di triase |
 | R-L4: Audit `batch.roster.*` | PASS | `/settings/audit` 42 entri; `batch.roster.add` pada resource `2a3f5107...` dengan corr id |
 | R-L5: Deteksi nama folder ber-akhiran status | PASS | "Pak Aryanto - Kurang Sertifikat Pelatihan dan SK kerja" terdeteksi sebagai asesi tanpa ubah nama folder |
@@ -113,12 +113,12 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 
 | Scenario | Result | Evidence |
 |---|---|---|
-| P0-1: OCR KTP lokal dari UI | PASS | Setelah perbaikan trace Tesseract (commits `32d09e4`, `45c63fa`, `86977c9`), tombol "Jalankan OCR KTP" menghasilkan `OCR KTP selesai ... veredik: needs_human`; teks OCR tersimpan di kartu; audit `identity.ocr.ktp` (56 entri). File Uji: `IMG-20261112-WA0003.jpg` (bukan KTP asli — dokumen demo) |
+| P0-1: OCR KTP lokal dari UI | PASS | Setelah perbaikan trace Tesseract (commits `32d09e4`, `45c63fa`, `86977c9`), tombol "Jalankan OCR KTP" menghasilkan `OCR KTP selesai ... veredik: needs_human`; teks OCR tersimpan di kartu. *(Koreksi R16 #4: klaim historis "56 entri audit `identity.ocr.ktp`" tidak teramati pada `/settings/audit` saat audit R16 dan overflow `NUMERIC(5,4)` `22003` telah diperbaiki pada T1 `3955ce3`)*. File Uji: `IMG-20261112-WA0003.jpg` (dokumen demo) |
 | P0-2: Teks KTP tidak ke LLM | PASS (desain + kode) | `runOcrKtpAction` memakai `Tesseract.recognize` lokal; name jury menerima teks OCR saja |
-| P0-3: Trigger similarity UI | PASS | Batch `2a3f5107`: "Jalankan Analisis Kemiripan" → 1 pasangan flagged (Jaccard 0.0891, Cosine 0.6332), ambang 0.85/0.65/0.45 tampil |
+| P0-3: Trigger similarity UI | PASS | Batch `2a3f5107`: "Jalankan Analisis Kemiripan" → 1 pasangan flagged (Jaccard 0.0891, Cosine 0.6332), kini juga menampilkan skor gabungan `max(Jaccard, Cosine)` secara eksplisit (T3 `ed9f5bd`), ambang 0.85/0.65/0.45 tampil |
 | P0-4: Trigger extract_file UI | PASS | Terverifikasi sebelumnya di `c61cf7c5` (brief); tombol hadir di triase batch uji |
 | P0-5: Model answers + ekspor 04A | BLOCKED | DIT dijalankan (assesee `9bda2e81-...`) tetapi gagal di worker: BYOK `openai-compatible/deepseek-v4.1-flash` → `zro.moonmath.ai` kehabisan kuota harian Free ("resets in 22h..."). Log Vercel 2026-11-20T01:08:27Z, corr `f571e865-...`, `worker.execute.dit_analysis` outcome failure. Model answers 0/13 karena tidak ada analisis tersimpan — bukan cacat UI. Ekspor 04A memang dikunci sampai nama sertifikat dikonfirmasi. Perbaikan UI: trigger DIT tidak lagi mengklaim "selesai" pada HTTP 202; kini menunggu status job terminal dan menampilkan error asli + petunjuk ganti/isi ulang BYOK. Deploy `f68b278` terverifikasi: akun demo (assessee `b573fd6c`) kini menampilkan `Job 1e644c04-... gagal: ... This model is not available. Choose a published model.` — bukan "Analisis DIT selesai" palsu. |
-| P0-6: Confidence tampil di kartu | PARTIAL | Teks OCR + verdict human-needed tampil; angka confidence tidak tersimpan di `:confidence` yang dibaca kartu — fallback jujur "confidence tidak tersimpan" ditampilkan. Root cause penyimpanan confidence jury perlu ditindaklanjuti |
+| P0-6: Confidence tampil di kartu | PASS (T1) | T1 (`3955ce3`) memperbaiki normalisasi confidence Tesseract `0–100` → `0–1` (`normalizeOcrConfidence`) agar tidak overflow `NUMERIC(5,4)` `22003` dan menampilkan error DB secara eksplisit |
 
 **Catatan P0-1:** penyebab awal kegagalan OCR di Production (dari log Vercel): `Cannot find module /ROOT/node_modules/tesseract.js/src/worker-script/node/index.js`, lalu `'..'`, lalu `bmp-js` — Next.js file trace tidak menyertakan worker thread Tesseract + dependency-nya. Diperbaiki lewat `outputFileTracingIncludes` + `serverExternalPackages` (Context7 v7 docs + Next.js tracing docs).
 
@@ -129,7 +129,7 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 | Scenario | Result | Evidence |
 |---|---|---|
 | P1-7a: Ekspor XLSX log audit dari UI | PASS | Deploy `9cfbc05`: tombol "Ekspor XLSX" → download `audit-log.xlsx`, 14.019 byte, RBAC `lsp_admin`, 2000 baris maks, audit `audit.export.xlsx` |
-| P1-7b/8/9/10: formulir hilang, wawancara, pg-boss, PDF DOCX | BLOCKED (keputusan produk) | ADR-0005 berisi usaha keputusan; butuh konfirmasi pemilik. Tidak ada asumsi diam-diam (Non-Negotiable #2) |
+| P1-7b/8/9/10: formulir hilang, wawancara, pg-boss, PDF DOCX | PASS (2026-11-22) | Keputusan ADR-0005 disetujui & diterapkan: blanko opsional di `000015` (7b), Moza RCTFA + PII scrub + FR.IA.04B manual-only `2e0659c`/`e4d8fcd` (8), batas 50 berkas di UI `399810b` (9), renderer AK.05 OOXML→PDF dengan tabel, checkbox vektor & paginasi `7d70fa5` (10) |
 
 **Lanjutan 2026-11-20 (BYOK pemilik sudah diperbarui):**
 - DIT dijalankan ulang pada assessee `9bda2e81` → job `1d8dc449` mulai 02:17Z, lalu **Vercel Runtime Timeout 300s** (log 02:22Z). Model answers masih 0/13 — perlu provider dengan latensi lebih rendah (atau worker latar belakang, bukan inline di request). Stale job kini otomatis ditandai `failed` setelah 6 menit tanpa update (`job-staleness.ts`, 2 tes) sehingga UI tidak lagi terjebak "running" selamanya.
@@ -137,3 +137,19 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 - Cacat 10: PDF AK.05 kini dikonversi dari DOCX terisi; tes export 5/5 PASS (tanda tangan tersemat, 2 halaman).
 
 **Ringkasan akhir 2026-11-20:** Bagian 1, 2 (kecuali DIT/LLM), 3, P0 Cacat 1/4, P1-7a/8/10 selesai. P0 Cacat 5 dan P1-7b/9 tertunda (DIT timeout + keputusan pemilik).
+
+---
+
+## Module: Remediasi Brief Gabungan T1–T9 (2026-11-22)
+
+| Tiket | Ringkasan Perbaikan | Commit / Bukti |
+|---|---|---|
+| T1 | Normalisasi confidence OCR KTP `0–100 → 0–1` (`normalizeOcrConfidence`) + pemunculan error `name_jury_verdicts` | `3955ce3` · `confidence.test.ts` & `worker.test.ts` (17/17 PASS) |
+| T2 | Pseudonim monotonic `ASESI-NNN` bebas benturan hapus + indeks parsial unik `assessees_batch_pseudonym_uidx` | `f64cfb0` · migrasi `000014` · `assessees-pseudonym.test.ts` + `roster-actions.test.ts` + `worker.test.ts` (25/25 PASS) |
+| T3 | Tampilan skor `max(Jaccard, Cosine)` pada `/similarity`, tombol refresh bekerja pada `/settings/audit`, perbaikan warning `cookies()` pada `names.test.ts` | `ed9f5bd` · `similarity.test.ts` & `names.test.ts` (7/7 PASS, 0 stderr) |
+| T4 | Classifier triage 2-tahap (perbaikan `04b` `.pptx` vs `04a` + perluasan pola CV) & penyelarasan manifes AK3U + blanko opsional ADR-0005 | `efd28c2` · migrasi `000015` · `drive.test.ts` & `worker.test.ts` (33/33 PASS) |
+| T5 | Hentikan auto-centang "Ya" pada FR.IA.04B dari AI `coverage_matrix` & tambah formulir FR.IA.04B asesor mandiri | `2e0659c` · `official-forms-export.test.ts` + `dit/__tests__/actions.test.ts` + `worker.test.ts` (26/26 PASS) |
+| T6 | Penyelarasan prompt DIT & FR.IA.09 v1.1.0 ke spesifikasi RCTFA Moza, dimensi `TS/TMS/CMS/JRES/TrS`, & hapus kebocoran PII nama/NIK di `generateInterviewQuestionsAction` | `e4d8fcd` · `interview-rctfa.test.ts` + `dit.test.ts` + `no-hardcoded-values.test.ts` + `interview/__tests__/actions.test.ts` (11/11 PASS) |
+| T7 | Tambah `assessment_date` pada buat/ubah batch, parser + unggah opsional Surat Tugas (`surat-tugas.ts`), & auto-isi saat Drive scan | `d4720a1` · `surat-tugas.test.ts` + `drive.test.ts` + `batches/[id]/__tests__/actions.test.ts` + `worker.test.ts` (44/44 PASS) |
+| T8 | `BatchWorkflowStepper` 9 langkah bernomor lintas alur batch & pemberitahuan kapasitas inline ~50 berkas (peringatan >50 berkas) | `399810b` · `batch-workflow-stepper.test.ts` (2/2 PASS) |
+| T9 | Tingkatkan renderer PDF AK.05 (`docx-to-pdf.ts`) dengan tabel OOXML berbatas, checkbox vektor tanpa `?`, tanda tangan aman, & paginasi multi-halaman | `7d70fa5` · `export.test.ts` + `official-forms-export.test.ts` (16/16 PASS) |

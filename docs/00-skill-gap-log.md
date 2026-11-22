@@ -75,3 +75,15 @@
   `Error: Event handlers cannot be passed to Client Component props. {action: ..., className: "inline", onSubmit: function onSubmit, children: ...}`
   Handler `onSubmit` inline ada di `triage/page.tsx` (Server Component) pada form Ubah/Hapus asesi. Render hanya terjadi bila batch punya asesi → R4 (23 asesi) gagal, `c61cf7c5` (0 asesi) tidak memicu cabang ini. Bukan null `drivePath`/`docType`.
 - **Fix:** form Ubah/Hapus dipindah ke `triage/assessee-actions.tsx` (`"use client"`). Guard null `docType`/`fileName`/`drivePath` ditambahkan. Tes regresi source-scan ditambahkan.
+
+---
+
+## 5. Sesi 2026-11-22 — Remediasi Brief Gabungan (T1–T10) & Dokumentasi Celah Spesifikasi (§A.1)
+
+- **Celah Spesifikasi (§A.1 — Missing Referenced File):**
+  - Dokumen brief gabungan 2026-11-19 merujuk berkas **`Audit Menyeluruh v2`** beserta butir **`A1–A11, B2–B8, C1–C5`**. Pemeriksaan menyeluruh pada repositori (`docs/`, `_documentations_/`, dan akar workspace) mengonfirmasi berkas tersebut **tidak ada** di repositori.
+  - Sesuai `ground_rules_v5.md` §A.1, celah ini dicatat di sini tanpa menebak isi yang hilang; seluruh pekerjaan remediasi (T1–T10) merujuk strictly pada bukti kode/database, ADR-0005 yang disetujui, serta `_documentations_/research/prompts/prompt_wawancara_k3.md`.
+- **Tooling & Migrasi Remote:**
+  - `supabase v3.2.0`: `supabase migration list --remote` dan `supabase db push --remote --yes` berhasil menerapkan migrasi `20261122000014_unique_assessee_pseudonym.sql` dan `20261122000015_refine_ak3u_manifest_and_adr0005_forms.sql` pada proyek `oiplhsmmfuqriaqrxjud`.
+  - `vercel v66.2.0` (`npx --no-install vercel`): dipakai strictly read-only (`ls`, `logs`, `env ls`); deploy dipicu otomatis melalui `git push origin main`.
+  - `playwright`: dipakai untuk verifikasi rendering UI/UX, layout desktop/mobile, console, dan status HTTP pada build lokal (`npm run start`) tanpa mengubah data batch pemilik.
