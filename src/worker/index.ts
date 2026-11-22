@@ -3,6 +3,7 @@ import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { decryptSecret } from "@/lib/crypto/encryption";
 import { getConfig } from "@/lib/config/get-config";
 import { logEvent } from "@/lib/logger";
+import { normalizeOcrConfidence } from "@/lib/ocr/confidence";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { readStringField } from "@/lib/utils/record-fields";
 import { findBestMatchingCandidate } from "@/lib/names";
@@ -979,12 +980,14 @@ async function handleOcrKtpJob(job: WorkerJobInput): Promise<WorkerJobResult> {
   }
 
   const ktpNameOcr = String(job.payload.ktpText ?? assessee.ktpNameOcr ?? "").trim();
-  const ocrConfidence =
-    typeof job.payload.ocrConfidence === "number" ? job.payload.ocrConfidence : 0.9;
-  const ocrConfidenceFloor =
+  const ocrConfidence = normalizeOcrConfidence(
+    typeof job.payload.ocrConfidence === "number" ? job.payload.ocrConfidence : 0.9,
+  );
+  const ocrConfidenceFloor = normalizeOcrConfidence(
     typeof job.payload.ocrConfidenceFloor === "number"
       ? job.payload.ocrConfidenceFloor
-      : 0.75;
+      : 0.75,
+  );
 
   const llmConfig = await resolveOptionalLlmConfig(userId);
   const thresholds = (await getConfig("name_jury.thresholds", { lspId: assessee.lspId })) ?? undefined;

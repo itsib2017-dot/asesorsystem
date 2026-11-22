@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { isUuid, runRepositoryDualPath } from "@/db";
 import { assessees, batchAssessors, batchRosterNotes, batches, driveFiles } from "@/db/schema";
+import { normalizeOcrConfidence } from "@/lib/ocr/confidence";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export type MasterKeySource =
@@ -580,6 +581,8 @@ export async function updateDriveFileExtraction(params: {
   ocrConfidence?: number | null;
 }): Promise<void> {
   const now = new Date();
+  const normalizedOcr =
+    params.ocrConfidence != null ? normalizeOcrConfidence(params.ocrConfidence) : null;
   return runRepositoryDualPath({
     userId: params.userId,
     label: "BatchesRepository.updateDriveFileExtraction",
@@ -589,23 +592,25 @@ export async function updateDriveFileExtraction(params: {
         .set({
           extractedText: params.extractedText,
           extractionMethod: params.extractionMethod,
-          ocrConfidence:
-            params.ocrConfidence != null ? params.ocrConfidence.toFixed(4) : null,
+          ocrConfidence: normalizedOcr != null ? normalizedOcr.toFixed(4) : null,
           updatedAt: now,
         })
         .where(eq(driveFiles.id, params.fileId));
     },
     supabase: async () => {
       const supabase = await getSupabaseServerClient();
-      await supabase
+      const { error } = await supabase
         .from("drive_files")
         .update({
           extracted_text: params.extractedText,
           extraction_method: params.extractionMethod,
-          ocr_confidence: params.ocrConfidence ?? null,
+          ocr_confidence: normalizedOcr,
           updated_at: now.toISOString(),
         })
         .eq("id", params.fileId);
+      if (error) {
+        throw new Error(`DRIVE_FILE_EXTRACTION_UPDATE_FAILED: ${error.message}`);
+      }
     },
   });
 }

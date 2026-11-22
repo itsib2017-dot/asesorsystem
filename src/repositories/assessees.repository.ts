@@ -11,6 +11,7 @@ import {
   writtenGradings,
 } from "@/db/schema";
 import { findBestMatchingCandidate } from "@/lib/names";
+import { normalizeOcrConfidence } from "@/lib/ocr/confidence";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export interface AssesseeRecord {
@@ -213,6 +214,7 @@ export async function saveNameJuryVerdictAndOcr(params: {
   promptVersion: string;
 }): Promise<void> {
   const now = new Date();
+  const normalizedConfidence = normalizeOcrConfidence(params.ocrConfidence);
   return runRepositoryDualPath({
     userId: params.userId,
     label: "AssesseesRepository.saveNameJuryVerdict",
@@ -234,7 +236,7 @@ export async function saveNameJuryVerdictAndOcr(params: {
         proposedCertificateName: params.proposedCertificateName,
         reasoning: params.reasoning,
         evidence: params.evidence,
-        ocrConfidence: params.ocrConfidence.toFixed(4),
+        ocrConfidence: normalizedConfidence.toFixed(4),
         model: params.model,
         promptVersion: params.promptVersion,
       });
@@ -242,26 +244,32 @@ export async function saveNameJuryVerdictAndOcr(params: {
     supabase: async () => {
       const supabase = await getSupabaseServerClient();
       if (params.ktpNameOcr !== undefined) {
-        await supabase
+        const { error: assesseeUpdateError } = await supabase
           .from("assessees")
           .update({
             ktp_name_ocr: params.ktpNameOcr,
             updated_at: now.toISOString(),
           })
           .eq("id", params.assesseeId);
+        if (assesseeUpdateError) {
+          throw new Error(`ASSESSEE_OCR_UPDATE_FAILED: ${assesseeUpdateError.message}`);
+        }
       }
 
-      await supabase.from("name_jury_verdicts").insert({
+      const { error: verdictInsertError } = await supabase.from("name_jury_verdicts").insert({
         lsp_id: params.lspId,
         assessee_id: params.assesseeId,
         verdict: params.verdict,
         proposed_certificate_name: params.proposedCertificateName,
         reasoning: params.reasoning,
         evidence: params.evidence,
-        ocr_confidence: params.ocrConfidence,
+        ocr_confidence: normalizedConfidence,
         model: params.model,
         prompt_version: params.promptVersion,
       });
+      if (verdictInsertError) {
+        throw new Error(`NAME_JURY_VERDICT_INSERT_FAILED: ${verdictInsertError.message}`);
+      }
     },
   });
 }

@@ -1,6 +1,8 @@
 "use client";
+// Client interactivity required for triggering local OCR KTP action, displaying feedback state, and refreshing server data.
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Play } from "lucide-react";
 import { runOcrKtpAction } from "./actions";
 
@@ -10,6 +12,7 @@ interface OcrKtpTriggerProps {
 }
 
 export function OcrKtpTrigger({ assesseeId, batchId }: OcrKtpTriggerProps) {
+  const router = useRouter();
   const [running, setRunning] = useState(false);
   const [feedback, setFeedback] = useState<{
     type: "success" | "error";
@@ -34,6 +37,7 @@ export function OcrKtpTrigger({ assesseeId, batchId }: OcrKtpTriggerProps) {
         type: "success",
         text: res.message ?? "OCR KTP selesai.",
       });
+      router.refresh();
     } catch (err) {
       setFeedback({
         type: "error",

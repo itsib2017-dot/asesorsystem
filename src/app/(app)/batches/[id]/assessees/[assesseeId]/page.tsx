@@ -30,6 +30,7 @@ import {
 import { resolveUnitsForScheme } from "@/lib/forms/sync-vatm-decisions";
 import { computeVatmUnitRollup } from "@/services/vatm-rollup";
 import { OverallDecisionOverrideCard } from "./_components/overall-decision-override";
+import { normalizeOcrConfidence } from "@/lib/ocr/confidence";
 import {
   confirmCertificateNameAction,
   saveOverallDecisionOverrideAction,
@@ -87,13 +88,13 @@ export default async function AssesseeDetailPage({
     (f) => f.assesseeId === assesseeId && f.docType === "ktp" && f.ocrConfidence != null,
   );
   const rawOcrConfidence = ktpOcrFile?.ocrConfidence ?? null;
-  const resolvedOcrConfidence = jury
-    ? jury.ocr_confidence ?? jury.ocrConfidence
-    : rawOcrConfidence != null
-      ? rawOcrConfidence > 1
-        ? rawOcrConfidence / 100
-        : rawOcrConfidence
-      : null;
+  const rawJuryConfidence = jury ? (jury.ocr_confidence ?? jury.ocrConfidence ?? null) : null;
+  const resolvedOcrConfidence =
+    rawJuryConfidence != null
+      ? normalizeOcrConfidence(Number(rawJuryConfidence))
+      : rawOcrConfidence != null
+        ? normalizeOcrConfidence(Number(rawOcrConfidence))
+        : null;
   const hasOcrEvidence = Boolean(assessee.ktpNameOcr?.trim());
   const resolvedVerdict = jury?.verdict
     ? (jury.verdict as "match" | "mismatch_resolved" | "needs_human")

@@ -7,13 +7,15 @@ import { requireLspRole } from "@/lib/auth/get-role";
 import { getConfig } from "@/lib/config/get-config";
 import { decryptSecret } from "@/lib/crypto/encryption";
 import { confirmCertificateName, getAssesseeById, saveNameJuryVerdictAndOcr } from "@/repositories/assessees.repository";
-import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
+import { getBatchById, listDriveFilesForBatch, updateDriveFileExtraction } from "@/repositories/batches.repository";
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
 import {
   upsertAssesseeDecisionOverride,
   upsertUnitDecision,
 } from "@/repositories/assessment.repository";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
+import { normalizeOcrConfidence } from "@/lib/ocr/confidence";
+import { redactPii } from "@/ai/redact";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { downloadPublicDriveFileBuffer } from "@/services/drive-extract";
 import { runNameJury } from "@/services/name-jury";
@@ -141,13 +143,13 @@ export async function runOcrKtpAction(formData: FormData): Promise<{
   let ocrConfidence = 0;
   try {
     const result = await Tesseract.recognize(imageBuffer, "ind");
-    ocrText = (result.data?.text ?? "").trim();
-    ocrConfidence = Number(result.data?.confidence ?? 0);
+    ocrText = redactPii(result.data?.text ?? "").trim();
+    ocrConfidence = normalizeOcrConfidence(result.data?.confidence);
   } catch {
     try {
       const result = await Tesseract.recognize(imageBuffer, "eng");
-      ocrText = (result.data?.text ?? "").trim();
-      ocrConfidence = Number(result.data?.confidence ?? 0);
+      ocrText = redactPii(result.data?.text ?? "").trim();
+      ocrConfidence = normalizeOcrConfidence(result.data?.confidence);
     } catch (err2) {
       return {
         ok: false,
@@ -192,19 +194,41 @@ export async function runOcrKtpAction(formData: FormData): Promise<{
     correlationId: `ocr-ktp-${assesseeId}`,
   });
 
-  await saveNameJuryVerdictAndOcr({
-    userId: user.id,
-    lspId: assessee.lspId,
-    assesseeId: assessee.id,
-    ktpNameOcr: ocrText || undefined,
-    verdict: jury.result.verdict,
-    proposedCertificateName: jury.result.proposed_certificate_name,
-    reasoning: jury.result.reasoning,
-    evidence: jury.result.evidence,
-    ocrConfidence: jury.result.ocr_confidence,
-    model: llmConfig ? `${llmConfig.provider}/${llmConfig.model}` : "deterministic-rule-30",
-    promptVersion: jury.promptVersion,
-  });
+  const normalizedVerdictConfidence = normalizeOcrConfidence(
+    jury.result.ocr_confidence ?? ocrConfidence,
+  );
+
+  try {
+    await saveNameJuryVerdictAndOcr({
+      userId: user.id,
+      lspId: assessee.lspId,
+      assesseeId: assessee.id,
+      ktpNameOcr: ocrText || undefined,
+      verdict: jury.result.verdict,
+      proposedCertificateName: jury.result.proposed_certificate_name,
+      reasoning: jury.result.reasoning,
+      evidence: jury.result.evidence,
+      ocrConfidence: normalizedVerdictConfidence,
+      model: llmConfig ? `${llmConfig.provider}/${llmConfig.model}` : "deterministic-rule-30",
+      promptVersion: jury.promptVersion,
+    });
+
+    await updateDriveFileExtraction({
+      userId: user.id,
+      fileId: ktpFile.id,
+      extractedText: ktpFile.extractedText || ocrText,
+      extractionMethod: ktpFile.extractionMethod || "tesseract_local",
+      ocrConfidence: normalizedVerdictConfidence,
+    });
+  } catch (persistErr) {
+    return {
+      ok: false,
+      error:
+        persistErr instanceof Error
+          ? `Gagal menyimpan hasil OCR ke database: ${persistErr.message}`
+          : "Gagal menyimpan hasil OCR ke database.",
+    };
+  }
 
   try {
     const supabase = await getSupabaseServerClient();
@@ -219,7 +243,8 @@ export async function runOcrKtpAction(formData: FormData): Promise<{
           batchId,
           fileName: ktpFile.fileName,
           ktpNameOcr: ocrText,
-          ocrConfidence,
+          ocrConfidence: normalizedVerdictConfidence,
+          ocrConfidencePercent: Math.round(normalizedVerdictConfidence * 100),
           verdict: jury.result.verdict,
         },
       },
@@ -229,13 +254,13 @@ export async function runOcrKtpAction(formData: FormData): Promise<{
     // non-fatal audit error
   }
 
+  revalidatePath(`/batches/${batchId}`);
   revalidatePath(`/batches/${batchId}/assessees/${assesseeId}`);
   return {
     ok: true,
-    // Tesseract reports confidence on a 0-100 scale, not 0-1.
-    message: `OCR KTP selesai. Teks terdeteksi, confidence ${Math.round(ocrConfidence ?? 0)}%, veredik: ${jury.result.verdict}.`,
+    message: `OCR KTP selesai. Teks terdeteksi, confidence ${Math.round(normalizedVerdictConfidence * 100)}%, veredik: ${jury.result.verdict}.`,
     ktpNameOcr: ocrText,
-    ocrConfidence: jury.result.ocr_confidence ?? null,
+    ocrConfidence: normalizedVerdictConfidence,
     verdict: jury.result.verdict,
   };
 }
