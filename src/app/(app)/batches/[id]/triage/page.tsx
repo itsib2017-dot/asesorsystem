@@ -18,6 +18,7 @@ import {
 } from "./actions";
 import { ExtractFileTrigger } from "./extract-file-trigger";
 import { AssesseeActions } from "./assessee-actions";
+import { BatchWorkflowStepper } from "@/components/batch/batch-workflow-stepper";
 
 import { explainNameInference } from "@/services/drive";
 
@@ -119,6 +120,7 @@ export default async function TriagePage({
 
   return (
     <div className="space-y-6">
+      <BatchWorkflowStepper batchId={id} currentStep={3} />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <Link href={`/batches/${id}`} className="text-xs text-teal-700 hover:underline">
@@ -314,7 +316,10 @@ export default async function TriagePage({
       </div>
 
       {/* Roster Management: Tambah / Ubah / Hapus / Impor Asesi */}
-      <div className="glass-card rounded-2xl p-4 border border-amber-200 bg-amber-25/50 space-y-3">
+      <section
+        id="roster"
+        className="glass-card rounded-2xl p-4 border border-amber-200 bg-amber-25/50 space-y-3"
+      >
         <div className="flex items-center gap-2">
           <Users className="w-4 h-4 text-amber-700" />
           <h2 className="text-sm font-semibold text-slate-900">Kelola Daftar Asesi (Roster)</h2>
@@ -420,7 +425,7 @@ export default async function TriagePage({
             </table>
           </div>
         )}
-      </div>
+      </section>
 
       {/* Filter & Search Bar */}
       <form

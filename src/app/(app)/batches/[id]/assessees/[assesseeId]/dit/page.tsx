@@ -14,6 +14,7 @@ import {
   selectDitInputFiles,
 } from "@/lib/forms/dit-inputs";
 import { Ia04bBlankoPreview } from "@/components/forms/ia04b-blanko-preview";
+import { BatchWorkflowStepper } from "@/components/batch/batch-workflow-stepper";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import {
   buildIa04bPayload,
@@ -107,6 +108,11 @@ export default async function DitAnalysisPage({
 
   return (
     <div className="space-y-6">
+      <BatchWorkflowStepper
+        batchId={batchId}
+        assesseeId={assesseeId}
+        currentStep={savedOfficial04b.items.length > 0 ? 6 : 5}
+      />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link href={`/batches/${batchId}/assessees/${assesseeId}`} className="text-xs text-teal-700 hover:underline">

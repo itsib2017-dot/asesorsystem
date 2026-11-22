@@ -188,6 +188,9 @@ export function CreateBatchPanel({ schemes }: CreateBatchPanelProps) {
             placeholder="https://drive.google.com/drive/folders/..."
             className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white font-mono"
           />
+          <p className="text-[11px] text-slate-500 mt-1">
+            Pemindaian antrean inline optimal untuk sekitar &le; 50 berkas per proses. Jika folder berisi &gt; 50 berkas, pecah per kelompok atau jalankan pindai ulang bertahap.
+          </p>
         </div>
 
         <div>

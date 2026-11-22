@@ -14,6 +14,7 @@ import {
   resolveSchemeUnitsList,
 } from "@/lib/forms/assessee-forms";
 import { Ak05Preview } from "@/components/ak05/ak05-preview";
+import { BatchWorkflowStepper } from "@/components/batch/batch-workflow-stepper";
 
 export const metadata = {
   title: "Laporan FR.AK.05 — AsesorKompetensi",
@@ -53,6 +54,7 @@ export default async function Ak05Page({
 
   return (
     <div className="space-y-6">
+      <BatchWorkflowStepper batchId={batchId} currentStep={8} />
       <div>
         <Link href={`/batches/${batchId}`} className="text-xs text-teal-700 hover:underline">
           &larr; Kembali ke Batch
@@ -62,34 +64,36 @@ export default async function Ak05Page({
         </h1>
       </div>
 
-      <Ak05Preview
-        batchId={batchId}
-        branding={resolveSchemeBranding(scheme)}
-        schemeTitle={schemeTitle}
-        schemeNumber={schemeNumber}
-        tukName={batch.tukName ?? "-"}
-        tukType={batch.tukType ?? "sewaktu"}
-        assessorName={
-          (profile?.fullName as string) || (profile?.full_name as string) || user.email || "Asesor"
-        }
-        assessorRegNo={(profile?.regNoMet as string) || (profile?.reg_no_met as string) || "-"}
-        assessmentDate={batch.assessmentDate ?? ""}
-        hasActiveSignature={Boolean(signature)}
-        signatureUrl={signature?.signedUrl}
-        unconfirmedNamesCount={unconfirmedCount}
-        undecidedCount={undecidedCount}
-        rows={rows.map((r) => ({
-          no: r.no,
-          assesseeName: r.assesseeName,
-          recommendation: r.recommendation,
-          keterangan: r.keterangan,
-        }))}
-        notesPositiveNegative={String(
-          report?.notes_positive_negative ?? report?.notesPositiveNegative ?? "",
-        )}
-        notesRejection={String(report?.notes_rejection ?? report?.notesRejection ?? "")}
-        notesImprovement={String(report?.notes_improvement ?? report?.notesImprovement ?? "")}
-      />
+      <section id="ekspor">
+        <Ak05Preview
+          batchId={batchId}
+          branding={resolveSchemeBranding(scheme)}
+          schemeTitle={schemeTitle}
+          schemeNumber={schemeNumber}
+          tukName={batch.tukName ?? "-"}
+          tukType={batch.tukType ?? "sewaktu"}
+          assessorName={
+            (profile?.fullName as string) || (profile?.full_name as string) || user.email || "Asesor"
+          }
+          assessorRegNo={(profile?.regNoMet as string) || (profile?.reg_no_met as string) || "-"}
+          assessmentDate={batch.assessmentDate ?? ""}
+          hasActiveSignature={Boolean(signature)}
+          signatureUrl={signature?.signedUrl}
+          unconfirmedNamesCount={unconfirmedCount}
+          undecidedCount={undecidedCount}
+          rows={rows.map((r) => ({
+            no: r.no,
+            assesseeName: r.assesseeName,
+            recommendation: r.recommendation,
+            keterangan: r.keterangan,
+          }))}
+          notesPositiveNegative={String(
+            report?.notes_positive_negative ?? report?.notesPositiveNegative ?? "",
+          )}
+          notesRejection={String(report?.notes_rejection ?? report?.notesRejection ?? "")}
+          notesImprovement={String(report?.notes_improvement ?? report?.notesImprovement ?? "")}
+        />
+      </section>
     </div>
   );
 }

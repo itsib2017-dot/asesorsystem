@@ -15,6 +15,7 @@ import { listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { NameJuryCard } from "@/components/identity/name-jury-card";
 import { OcrKtpTrigger } from "./ocr-ktp-trigger";
 import { DecisionToggle } from "@/components/ak05/decision-toggle";
+import { BatchWorkflowStepper } from "@/components/batch/batch-workflow-stepper";
 import { Ak02BlankoPreview } from "@/components/forms/ak02-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import {
@@ -158,6 +159,7 @@ export default async function AssesseeDetailPage({
 
   return (
     <div className="space-y-6">
+      <BatchWorkflowStepper batchId={batchId} assesseeId={assesseeId} currentStep={4} />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <Link href={`/batches/${batchId}`} className="text-xs text-teal-700 hover:underline">

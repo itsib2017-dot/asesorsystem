@@ -10,6 +10,7 @@ import { getLatestInterviewAssessment } from "@/repositories/assessment.reposito
 import { listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
 import { ensureDriveFileExtracted } from "@/services/drive-extract";
+import { BatchWorkflowStepper } from "@/components/batch/batch-workflow-stepper";
 import {
   InterviewAssessmentForm,
   type InterviewQuestionItem,
@@ -151,6 +152,7 @@ export default async function InterviewPage({
 
   return (
     <div className="space-y-6">
+      <BatchWorkflowStepper batchId={batchId} assesseeId={assesseeId} currentStep={7} />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <Link

@@ -24,6 +24,7 @@ import { pickLatestDriveFile } from "@/services/drive-revisions";
 import { enqueueJob } from "@/worker/queue";
 import { CompletenessMatrix, type CompletenessRow } from "@/components/batch/completeness-matrix";
 import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
+import { BatchWorkflowStepper } from "@/components/batch/batch-workflow-stepper";
 import { JobStatusPoller } from "@/components/batch/job-status-poller";
 import { BatchMetadataSuratTugasPanel } from "./_components/batch-metadata-surat-tugas-panel";
 import { RescanDriveButton } from "./_components/rescan-drive-button";
@@ -122,6 +123,7 @@ export default async function BatchDetailPage({
 
   return (
     <div className="space-y-6">
+      <BatchWorkflowStepper batchId={batch.id} currentStep={2} />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="text-xs font-mono text-slate-500">BATCH ID: {batch.id.slice(0, 8)}</div>
@@ -252,6 +254,26 @@ export default async function BatchDetailPage({
             </p>
           </div>
         )}
+
+        <div
+          className={`p-3 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2 ${
+            files.length > 50
+              ? "bg-amber-50 border-amber-200 text-amber-900"
+              : "bg-slate-50 border-slate-200 text-slate-600"
+          }`}
+        >
+          <span>
+            Kapasitas Antrean Inline: optimal hingga <strong>&le; 50 berkas</strong> per pemindaian.{" "}
+            {files.length > 50
+              ? `Batch ini memuat ${files.length} berkas — disarankan memindai ulang bertahap atau memecah folder besar.`
+              : "Jika folder Drive berisi > 50 berkas, pecah per kelompok atau jalankan pindai ulang bertahap."}
+          </span>
+          {files.length > 50 && (
+            <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-950 font-semibold">
+              &gt; 50 berkas ({files.length})
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Metadata Batch & Optional Surat Tugas Upload */}
