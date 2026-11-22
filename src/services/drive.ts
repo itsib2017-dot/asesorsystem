@@ -620,7 +620,7 @@ export function extractCandidateNamesFromDocumentText(
   if (docType === "surat_tugas") {
     const afterList = text.split(/DAFTAR\s+PESERTA/i).pop() ?? "";
     if (afterList && afterList.length < text.length) {
-      for (const m of afterList.matchAll(/^\s*\d+\.\s+([A-Za-z][A-Za-z\s.,'()-]{2,70})/gm)) {
+      for (const m of afterList.matchAll(/^\s*\d+\.\s+([A-Za-z][A-Za-z\t .,'()-]{2,70})/gm)) {
         const val = m[1]?.trim();
         if (val && !/^(asesor|tuk|tanggal|skema)/i.test(val)) names.push(val);
       }

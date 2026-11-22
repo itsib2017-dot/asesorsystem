@@ -6,6 +6,7 @@ import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { requireLspRole } from "@/lib/auth/get-role";
 import { getUser } from "@/lib/auth/get-session";
 import { checkRateLimit } from "@/lib/security/rate-limit";
+import { validateSafeExternalUrl } from "@/lib/security/ssrf";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { decryptAgileOoxmlBuffer } from "@/lib/written/ooxml-decrypt";
 import {
@@ -15,12 +16,18 @@ import {
   validateMasterKey06bContent,
 } from "@/lib/written/master-key";
 import {
+  listAssesseesByBatch,
+  upsertAssesseesForBatch,
+} from "@/repositories/assessees.repository";
+import {
   clearBatchActiveMasterKey,
   getBatchById,
   getDriveFileById,
   setBatchActiveMasterKey,
+  updateBatchMetadata,
   updateDriveFileExtraction,
   updateDriveFileTriage,
+  upsertDriveFilesForBatch,
   type DriveFileRecord,
 } from "@/repositories/batches.repository";
 import { downloadPublicDriveFileBuffer } from "@/services/drive-extract";
@@ -29,6 +36,7 @@ import {
   extractTextFromDocx,
   isOleEncryptedBuffer,
 } from "@/services/extract";
+import { parseSuratTugasText, type ParsedSuratTugasResult } from "@/services/surat-tugas";
 
 const BatchIdSchema = z.object({
   batchId: z.string().uuid("Parameter batchId tidak valid."),
@@ -412,4 +420,394 @@ export async function deactivateBatchMasterKey06bAction(formData: FormData): Pro
   revalidatePath(`/batches/${batchId}/triage`);
   revalidatePath("/settings/audit");
   return { ok: true };
+}
+
+const MAX_SURAT_TUGAS_BYTES = 10 * 1024 * 1024;
+const ALLOWED_SURAT_TUGAS_EXT_RE = /\.(pdf|docx|txt)$/i;
+
+const UpdateBatchMetadataSchema = z.object({
+  batchId: z.string().uuid("Parameter batchId tidak valid."),
+  name: z.string().trim().min(3, "Nama batch minimal 3 karakter.").max(200),
+  tukName: z.string().trim().max(200).optional(),
+  tukType: z.enum(["sewaktu", "tempat_kerja", "mandiri"]),
+  assessmentDate: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Format tanggal asesmen harus YYYY-MM-DD.")
+    .optional()
+    .or(z.literal("")),
+  schemeId: z.string().uuid("Skema sertifikasi tidak valid.").optional(),
+  driveFolderUrl: z.string().trim().max(500).optional(),
+  kelompokSheetUrl: z.string().trim().max(500).optional(),
+});
+
+export async function updateBatchMetadataAction(formData: FormData): Promise<{
+  ok: boolean;
+  message?: string;
+  error?: string;
+}> {
+  const user = await getUser();
+  if (!user) {
+    return { ok: false, error: "Unauthorized: Silakan masuk terlebih dahulu." };
+  }
+
+  const parsed = UpdateBatchMetadataSchema.safeParse({
+    batchId: String(formData.get("batchId") ?? "").trim(),
+    name: String(formData.get("name") ?? "").trim(),
+    tukName: String(formData.get("tukName") ?? "").trim(),
+    tukType: String(formData.get("tukType") ?? "sewaktu").trim(),
+    assessmentDate: String(formData.get("assessmentDate") ?? "").trim(),
+    schemeId: String(formData.get("schemeId") ?? "").trim() || undefined,
+    driveFolderUrl: String(formData.get("driveFolderUrl") ?? "").trim(),
+    kelompokSheetUrl: String(formData.get("kelompokSheetUrl") ?? "").trim(),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Data batch tidak valid.",
+    };
+  }
+
+  const data = parsed.data;
+  if (data.driveFolderUrl) {
+    const driveCheck = validateSafeExternalUrl(data.driveFolderUrl, [
+      "drive.google.com",
+      "docs.google.com",
+    ]);
+    if (!driveCheck.safe) {
+      return { ok: false, error: `Tautan Drive tidak aman/valid: ${driveCheck.reason}` };
+    }
+  }
+  if (data.kelompokSheetUrl) {
+    const sheetCheck = validateSafeExternalUrl(data.kelompokSheetUrl, ["docs.google.com"]);
+    if (!sheetCheck.safe) {
+      return { ok: false, error: `Tautan Google Sheet tidak aman/valid: ${sheetCheck.reason}` };
+    }
+  }
+
+  const rate = checkRateLimit(`batch:update:${user.id}:${data.batchId}`, 20, 60_000);
+  if (!rate.allowed) {
+    return {
+      ok: false,
+      error: `Terlalu banyak pembaruan metadata batch. Coba lagi dalam ${rate.retryAfterSeconds} detik.`,
+    };
+  }
+
+  const batch = await getBatchById(user.id, data.batchId);
+  if (!batch) {
+    return { ok: false, error: "Batch tidak ditemukan atau akses ditolak." };
+  }
+
+  const roleCheck = await requireLspRole(batch.lspId, user.id, [
+    "lsp_admin",
+    "tuk_admin",
+    "assessor",
+  ]);
+  if (!roleCheck.allowed) {
+    return {
+      ok: false,
+      error: "Akses ditolak: Anda tidak berwenang mengubah metadata batch.",
+    };
+  }
+
+  try {
+    await updateBatchMetadata({
+      userId: user.id,
+      batchId: batch.id,
+      name: data.name,
+      tukName: data.tukName ? data.tukName : null,
+      tukType: data.tukType,
+      assessmentDate: data.assessmentDate ? data.assessmentDate : null,
+      ...(data.schemeId ? { schemeId: data.schemeId } : {}),
+      ...(data.driveFolderUrl !== undefined
+        ? { driveFolderUrl: data.driveFolderUrl ? data.driveFolderUrl : null }
+        : {}),
+      ...(data.kelompokSheetUrl !== undefined
+        ? { kelompokSheetUrl: data.kelompokSheetUrl ? data.kelompokSheetUrl : null }
+        : {}),
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Gagal memperbarui metadata batch.",
+    };
+  }
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        lsp_id: batch.lspId,
+        actor_id: user.id,
+        action: "batch.update",
+        resource: "batches",
+        resource_id: batch.id,
+        after_summary: {
+          name: data.name,
+          tukName: data.tukName || null,
+          tukType: data.tukType,
+          assessmentDate: data.assessmentDate || null,
+          schemeId: data.schemeId ?? batch.schemeId,
+        },
+      },
+      supabase,
+    );
+  } catch (err) {
+    console.warn("[BatchUpdate] audit log failed:", err instanceof Error ? err.message : String(err));
+  }
+
+  revalidatePath("/batches");
+  revalidatePath(`/batches/${batch.id}`);
+  revalidatePath(`/batches/${batch.id}/ak05`);
+  revalidatePath("/settings/audit");
+  return { ok: true, message: "Metadata batch berhasil diperbarui." };
+}
+
+async function readValidatedSuratTugasFile(
+  rawFile: FormDataEntryValue | null,
+): Promise<
+  | { ok: true; fileName: string; mimeType: string; buffer: Buffer; text: string; extractionMethod: string; parsed: ParsedSuratTugasResult }
+  | { ok: false; error: string }
+> {
+  if (!rawFile || typeof rawFile !== "object" || !("arrayBuffer" in rawFile)) {
+    return { ok: false, error: "Pilih berkas Surat Tugas (.pdf, .docx, atau .txt)." };
+  }
+  const file = rawFile as File;
+  if (!ALLOWED_SURAT_TUGAS_EXT_RE.test(file.name)) {
+    return { ok: false, error: "Format Surat Tugas harus .pdf, .docx, atau .txt." };
+  }
+  if (file.size <= 0 || file.size > MAX_SURAT_TUGAS_BYTES) {
+    return { ok: false, error: "Ukuran berkas Surat Tugas maksimal 10 MB." };
+  }
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const extracted = await extractTextFromBuffer({
+    buffer,
+    fileName: file.name,
+    mimeType: file.type || "application/octet-stream",
+  });
+  const text = extracted.text.trim();
+  if (!text) {
+    return {
+      ok: false,
+      error: "Teks tidak dapat dibaca dari Surat Tugas ini (mungkin PDF scan gambar tanpa teks).",
+    };
+  }
+
+  return {
+    ok: true,
+    fileName: file.name,
+    mimeType: file.type || "application/octet-stream",
+    buffer,
+    text,
+    extractionMethod: extracted.extractionMethod,
+    parsed: parseSuratTugasText(text),
+  };
+}
+
+export async function parseSuratTugasPreviewAction(formData: FormData): Promise<{
+  ok: boolean;
+  fileName?: string;
+  parsed?: ParsedSuratTugasResult;
+  error?: string;
+}> {
+  const user = await getUser();
+  if (!user) return { ok: false, error: "Unauthorized: Silakan masuk terlebih dahulu." };
+
+  const parsedInput = BatchIdSchema.safeParse({
+    batchId: String(formData.get("batchId") ?? "").trim(),
+  });
+  if (!parsedInput.success) {
+    return { ok: false, error: parsedInput.error.issues[0]?.message ?? "Parameter tidak valid." };
+  }
+  const { batchId } = parsedInput.data;
+
+  const rate = checkRateLimit(`batch:surat_tugas_preview:${user.id}:${batchId}`, 25, 60_000);
+  if (!rate.allowed) {
+    return { ok: false, error: `Terlalu banyak permintaan pratinjau. Coba lagi dalam ${rate.retryAfterSeconds} detik.` };
+  }
+
+  const batch = await getBatchById(user.id, batchId);
+  if (!batch) return { ok: false, error: "Batch tidak ditemukan atau akses ditolak." };
+
+  const roleCheck = await requireLspRole(batch.lspId, user.id, [
+    "lsp_admin",
+    "tuk_admin",
+    "assessor",
+  ]);
+  if (!roleCheck.allowed) {
+    return { ok: false, error: "Akses ditolak untuk membaca Surat Tugas batch." };
+  }
+
+  const fileRes = await readValidatedSuratTugasFile(formData.get("suratTugasFile"));
+  if (!fileRes.ok) {
+    return { ok: false, error: fileRes.error };
+  }
+
+  return {
+    ok: true,
+    fileName: fileRes.fileName,
+    parsed: fileRes.parsed,
+  };
+}
+
+export async function uploadBatchSuratTugasAction(formData: FormData): Promise<{
+  ok: boolean;
+  fileName?: string;
+  parsed?: ParsedSuratTugasResult;
+  importedCandidates?: number;
+  message?: string;
+  error?: string;
+}> {
+  const user = await getUser();
+  if (!user) return { ok: false, error: "Unauthorized: Silakan masuk terlebih dahulu." };
+
+  const parsedInput = BatchIdSchema.safeParse({
+    batchId: String(formData.get("batchId") ?? "").trim(),
+  });
+  if (!parsedInput.success) {
+    return { ok: false, error: parsedInput.error.issues[0]?.message ?? "Parameter tidak valid." };
+  }
+  const { batchId } = parsedInput.data;
+
+  const rate = checkRateLimit(`batch:surat_tugas:${user.id}:${batchId}`, 15, 60_000);
+  if (!rate.allowed) {
+    return {
+      ok: false,
+      error: `Terlalu banyak unggahan Surat Tugas. Coba lagi dalam ${rate.retryAfterSeconds} detik.`,
+    };
+  }
+
+  const batch = await getBatchById(user.id, batchId);
+  if (!batch) return { ok: false, error: "Batch tidak ditemukan atau akses ditolak." };
+
+  const roleCheck = await requireLspRole(batch.lspId, user.id, [
+    "lsp_admin",
+    "tuk_admin",
+    "assessor",
+  ]);
+  if (!roleCheck.allowed) {
+    return {
+      ok: false,
+      error: "Akses ditolak: hanya Admin LSP, Admin TUK, atau Asesor yang dapat mengunggah Surat Tugas.",
+    };
+  }
+
+  const fileRes = await readValidatedSuratTugasFile(formData.get("suratTugasFile"));
+  if (!fileRes.ok) {
+    return { ok: false, error: fileRes.error };
+  }
+
+  const applyMetadata = String(formData.get("applyMetadata") ?? "true") !== "false";
+  const importCandidates = String(formData.get("importCandidates") ?? "false") === "true";
+  const overrideDate = String(formData.get("assessmentDate") ?? "").trim();
+  const overrideTuk = String(formData.get("tukName") ?? "").trim();
+
+  if (overrideDate && !/^\d{4}-\d{2}-\d{2}$/.test(overrideDate)) {
+    return { ok: false, error: "Format tanggal asesmen harus YYYY-MM-DD." };
+  }
+
+  const targetDate = overrideDate || fileRes.parsed.assessmentDate;
+  const targetTuk = overrideTuk || fileRes.parsed.tukName;
+
+  try {
+    await upsertDriveFilesForBatch({
+      userId: user.id,
+      lspId: batch.lspId,
+      batchId: batch.id,
+      files: [
+        {
+          driveFileId: `manual-st-${batch.id}-${Date.now()}`,
+          fileName: fileRes.fileName,
+          mimeType: fileRes.mimeType,
+          drivePath: `Manual Upload/Surat Tugas/${fileRes.fileName}`,
+          docType: "surat_tugas",
+          confidence: 1,
+          assesseeId: null,
+          triageStatus: "not_needed",
+          triageReason: "Surat Tugas batch diunggah manual (opsional)",
+          extractedText: fileRes.text.slice(0, 60_000),
+          extractionMethod: fileRes.extractionMethod,
+        },
+      ],
+    });
+
+    if (applyMetadata && (targetDate || targetTuk)) {
+      await updateBatchMetadata({
+        userId: user.id,
+        batchId: batch.id,
+        ...(targetDate && (!batch.assessmentDate || Boolean(overrideDate))
+          ? { assessmentDate: targetDate }
+          : {}),
+        ...(targetTuk && (!batch.tukName || Boolean(overrideTuk))
+          ? { tukName: targetTuk }
+          : {}),
+      });
+    }
+
+    let importedCount = 0;
+    if (importCandidates && fileRes.parsed.candidateNames.length > 0) {
+      const existingPool = await listAssesseesByBatch(user.id, batch.id);
+      const existingSet = new Set(existingPool.map((a) => a.displayName.trim().toLowerCase()));
+      const newNames = fileRes.parsed.candidateNames.filter(
+        (n) => !existingSet.has(n.trim().toLowerCase()),
+      );
+      if (newNames.length > 0) {
+        await upsertAssesseesForBatch({
+          userId: user.id,
+          lspId: batch.lspId,
+          batchId: batch.id,
+          names: newNames,
+          existingPool,
+        });
+        importedCount = newNames.length;
+      }
+    }
+
+    try {
+      const supabase = await getSupabaseServerClient();
+      await writeAuditLog(
+        {
+          lsp_id: batch.lspId,
+          actor_id: user.id,
+          action: "batch.surat_tugas.upload",
+          resource: "batches",
+          resource_id: batch.id,
+          after_summary: {
+            fileName: fileRes.fileName,
+            letterNumber: fileRes.parsed.letterNumber,
+            assessmentDate: targetDate ?? null,
+            tukName: targetTuk ?? null,
+            detectedCandidates: fileRes.parsed.candidateNames.length,
+            importedCandidates: importedCount,
+          },
+        },
+        supabase,
+      );
+    } catch (err) {
+      console.warn(
+        "[SuratTugasUpload] audit log failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    revalidatePath("/batches");
+    revalidatePath(`/batches/${batch.id}`);
+    revalidatePath(`/batches/${batch.id}/triage`);
+    revalidatePath(`/batches/${batch.id}/ak05`);
+    revalidatePath("/settings/audit");
+
+    return {
+      ok: true,
+      fileName: fileRes.fileName,
+      parsed: fileRes.parsed,
+      importedCandidates: importedCount,
+      message: `Surat Tugas "${fileRes.fileName}" tersimpan${importedCount > 0 ? ` · ${importedCount} peserta ditambahkan ke roster` : ""}.`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Gagal menyimpan Surat Tugas batch.",
+    };
+  }
 }

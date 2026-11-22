@@ -27,6 +27,7 @@ import {
   getBatchById,
   getDriveFileById,
   listDriveFilesForBatch,
+  updateBatchMetadata,
   updateDriveFileExtraction,
   upsertDriveFilesForBatch,
   type DriveTriageStatus,
@@ -35,6 +36,7 @@ import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repo
 import { listSchemes } from "@/repositories/schemes.repository";
 import { getActiveSignature } from "@/repositories/signatures.repository";
 import { runDitPipeline } from "@/services/dit";
+import { parseSuratTugasText } from "@/services/surat-tugas";
 import {
   classifyDocumentTextContent,
   classifyDriveFileName,
@@ -475,6 +477,8 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
   });
 
   const suratTugasRoster: string[] = [];
+  let parsedSuratTugasDate: string | null = null;
+  let parsedSuratTugasTuk: string | null = null;
   const inferredPerFile = expandedFiles.map((file) => {
     const inferred = inferCandidateFromDrivePath(file.drivePath, file.fileName);
     let candidateName = inferred.candidateName;
@@ -482,7 +486,17 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
 
     if (file.extractedText) {
       if (file.docType === "surat_tugas") {
-        const names = extractCandidateNamesFromDocumentText("surat_tugas", file.extractedText);
+        const stParsed = parseSuratTugasText(file.extractedText);
+        if (!parsedSuratTugasDate && stParsed.assessmentDate) {
+          parsedSuratTugasDate = stParsed.assessmentDate;
+        }
+        if (!parsedSuratTugasTuk && stParsed.tukName) {
+          parsedSuratTugasTuk = stParsed.tukName;
+        }
+        const names =
+          stParsed.candidateNames.length > 0
+            ? stParsed.candidateNames
+            : extractCandidateNamesFromDocumentText("surat_tugas", file.extractedText);
         suratTugasRoster.push(...names);
       } else if (!candidateName && file.docType === "apl01") {
         const extractedNames = extractCandidateNamesFromDocumentText(
@@ -801,6 +815,22 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     batchId: batch.id,
     files: enrichedFiles,
   });
+
+  if (
+    (!batch.assessmentDate && parsedSuratTugasDate) ||
+    (!batch.tukName && parsedSuratTugasTuk)
+  ) {
+    await updateBatchMetadata({
+      userId,
+      batchId: batch.id,
+      ...(!batch.assessmentDate && parsedSuratTugasDate
+        ? { assessmentDate: parsedSuratTugasDate }
+        : {}),
+      ...(!batch.tukName && parsedSuratTugasTuk
+        ? { tukName: parsedSuratTugasTuk }
+        : {}),
+    });
+  }
 
   const prunedRows = await pruneOrphanedDuplicateAssessees({
     userId,

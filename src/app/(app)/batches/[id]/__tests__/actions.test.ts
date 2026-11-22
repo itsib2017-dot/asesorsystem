@@ -10,8 +10,12 @@ const mocks = vi.hoisted(() => ({
   getDriveFileById: vi.fn(),
   setBatchActiveMasterKey: vi.fn(),
   clearBatchActiveMasterKey: vi.fn(),
+  updateBatchMetadata: vi.fn(),
   updateDriveFileExtraction: vi.fn(),
   updateDriveFileTriage: vi.fn(),
+  upsertDriveFilesForBatch: vi.fn(),
+  listAssesseesByBatch: vi.fn(),
+  upsertAssesseesForBatch: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({
@@ -43,8 +47,15 @@ vi.mock("@/repositories/batches.repository", () => ({
   getBatchById: mocks.getBatchById,
   getDriveFileById: mocks.getDriveFileById,
   setBatchActiveMasterKey: mocks.setBatchActiveMasterKey,
+  updateBatchMetadata: mocks.updateBatchMetadata,
   updateDriveFileExtraction: mocks.updateDriveFileExtraction,
   updateDriveFileTriage: mocks.updateDriveFileTriage,
+  upsertDriveFilesForBatch: mocks.upsertDriveFilesForBatch,
+}));
+
+vi.mock("@/repositories/assessees.repository", () => ({
+  listAssesseesByBatch: mocks.listAssesseesByBatch,
+  upsertAssesseesForBatch: mocks.upsertAssesseesForBatch,
 }));
 
 vi.mock("@/services/drive-extract", () => ({
@@ -55,7 +66,11 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { clearRateLimitBucketsForTest } from "@/lib/security/rate-limit";
 import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
-import { activateBatchMasterKey06bAction } from "../actions";
+import {
+  activateBatchMasterKey06bAction,
+  updateBatchMetadataAction,
+  uploadBatchSuratTugasAction,
+} from "../actions";
 
 const USER_ID = "e27f3fa3-d2d2-494f-b05c-c97f18446e9f";
 const LSP_ID = "b03afb00-9266-467d-823e-44a7830a4077";
@@ -266,5 +281,141 @@ describe("activateBatchMasterKey06bAction (Round 13 Cacat 1)", () => {
     expect(html).toContain(`data-testid="try-activate-06b-${FILE_ID}"`);
     expect(html).toContain("Coba Aktifkan / Uji Validasi");
     expect(html).toContain("Tidak dapat diaktifkan (blanko / tidak terbaca)");
+  });
+});
+
+describe("updateBatchMetadataAction & uploadBatchSuratTugasAction (T7)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearRateLimitBucketsForTest();
+    mocks.getUser.mockResolvedValue({ id: USER_ID });
+    mocks.requireLspRole.mockResolvedValue({ allowed: true, role: "assessor" });
+    mocks.getSupabaseServerClient.mockResolvedValue({});
+    mocks.writeAuditLog.mockResolvedValue("corr-t7-1");
+    mocks.getBatchById.mockResolvedValue({
+      id: BATCH_ID,
+      lspId: LSP_ID,
+      schemeId: "55555555-5555-4555-8555-555555555555",
+      name: "Batch Lama",
+      tukName: null,
+      tukType: "sewaktu",
+      assessmentDate: null,
+    });
+    mocks.updateBatchMetadata.mockResolvedValue({ id: BATCH_ID });
+    mocks.upsertDriveFilesForBatch.mockResolvedValue(1);
+    mocks.listAssesseesByBatch.mockResolvedValue([]);
+    mocks.upsertAssesseesForBatch.mockResolvedValue([]);
+  });
+
+  it("updates batch assessmentDate, TUK, and name and logs batch.update", async () => {
+    const fd = new FormData();
+    fd.set("batchId", BATCH_ID);
+    fd.set("name", "Batch K3 November");
+    fd.set("tukName", "TUK Mandiri Nusantara");
+    fd.set("tukType", "mandiri");
+    fd.set("assessmentDate", "2026-11-25");
+
+    const res = await updateBatchMetadataAction(fd);
+
+    expect(res.ok).toBe(true);
+    expect(mocks.updateBatchMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: BATCH_ID,
+        name: "Batch K3 November",
+        tukName: "TUK Mandiri Nusantara",
+        tukType: "mandiri",
+        assessmentDate: "2026-11-25",
+      }),
+    );
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "batch.update",
+        resource: "batches",
+        resource_id: BATCH_ID,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("rejects invalid assessmentDate format and non-allowlisted Drive URL", async () => {
+    const badDate = new FormData();
+    badDate.set("batchId", BATCH_ID);
+    badDate.set("name", "Batch K3");
+    badDate.set("tukType", "sewaktu");
+    badDate.set("assessmentDate", "25-11-2026");
+
+    const r1 = await updateBatchMetadataAction(badDate);
+    expect(r1.ok).toBe(false);
+    expect(r1.error).toContain("YYYY-MM-DD");
+
+    const badUrl = new FormData();
+    badUrl.set("batchId", BATCH_ID);
+    badUrl.set("name", "Batch K3");
+    badUrl.set("tukType", "sewaktu");
+    badUrl.set("driveFolderUrl", "https://evil.example.com/drive");
+
+    const r2 = await updateBatchMetadataAction(badUrl);
+    expect(r2.ok).toBe(false);
+    expect(r2.error).toContain("tidak aman");
+    expect(mocks.updateBatchMetadata).not.toHaveBeenCalled();
+  });
+
+  it("parses optional Surat Tugas .txt upload, fills blank batch metadata, and imports candidates", async () => {
+    const content = [
+      "SURAT TUGAS",
+      "Nomor Surat: ST-099/2026",
+      "Tempat Uji Kompetensi (TUK): TUK Sewaktu Sinar Harapan",
+      "Tanggal Pelaksanaan: 28 November 2026",
+      "DAFTAR PESERTA",
+      "1. Dewi Sartika",
+      "2. Agus Salim",
+    ].join("\n");
+
+    const file = new File([content], "Surat_Tugas_Nov.txt", { type: "text/plain" });
+    const fd = new FormData();
+    fd.set("batchId", BATCH_ID);
+    fd.set("suratTugasFile", file);
+    fd.set("applyMetadata", "true");
+    fd.set("importCandidates", "true");
+
+    const res = await uploadBatchSuratTugasAction(fd);
+
+    expect(res.ok).toBe(true);
+    expect(res.parsed?.assessmentDate).toBe("2026-11-28");
+    expect(res.parsed?.tukName).toBe("TUK Sewaktu Sinar Harapan");
+    expect(res.importedCandidates).toBe(2);
+    expect(mocks.upsertDriveFilesForBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: BATCH_ID,
+        files: [
+          expect.objectContaining({
+            docType: "surat_tugas",
+            triageStatus: "not_needed",
+            fileName: "Surat_Tugas_Nov.txt",
+          }),
+        ],
+      }),
+    );
+    expect(mocks.updateBatchMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: BATCH_ID,
+        assessmentDate: "2026-11-28",
+        tukName: "TUK Sewaktu Sinar Harapan",
+      }),
+    );
+    expect(mocks.upsertAssesseesForBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: BATCH_ID,
+        names: ["Dewi Sartika", "Agus Salim"],
+      }),
+    );
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "batch.surat_tugas.upload",
+        resource: "batches",
+        resource_id: BATCH_ID,
+      }),
+      expect.anything(),
+    );
   });
 });

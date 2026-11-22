@@ -25,6 +25,7 @@ import { enqueueJob } from "@/worker/queue";
 import { CompletenessMatrix, type CompletenessRow } from "@/components/batch/completeness-matrix";
 import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
 import { JobStatusPoller } from "@/components/batch/job-status-poller";
+import { BatchMetadataSuratTugasPanel } from "./_components/batch-metadata-surat-tugas-panel";
 import { RescanDriveButton } from "./_components/rescan-drive-button";
 
 export const metadata = {
@@ -57,6 +58,9 @@ export default async function BatchDetailPage({
   const manualUploadCount = files.filter((f) => String(f.driveFileId ?? "").startsWith("manual-"))
     .length;
   const driveFileCount = files.length - manualUploadCount;
+  const suratTugasFiles = files
+    .filter((f) => f.docType === "surat_tugas")
+    .map((f) => ({ id: f.id, fileName: f.fileName, triageStatus: f.triageStatus }));
   const ktpOcrMinConfidence =
     typeof configuredMinOcr === "number" && configuredMinOcr > 0 ? configuredMinOcr : 0.75;
 
@@ -123,7 +127,8 @@ export default async function BatchDetailPage({
           <div className="text-xs font-mono text-slate-500">BATCH ID: {batch.id.slice(0, 8)}</div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">{batch.name}</h1>
           <p className="text-sm text-slate-500 mt-1">
-            LSP: {lspName || "-"} · TUK: {batch.tukName || "-"} ({batch.tukType || "sewaktu"}) · Skema:{" "}
+            LSP: {lspName || "-"} · TUK: {batch.tukName || "-"} ({batch.tukType || "sewaktu"}) · Tanggal Asesmen:{" "}
+            <strong className="text-slate-700">{batch.assessmentDate || "-"}</strong> · Skema:{" "}
             {scheme ? `${scheme.code} — ${scheme.name}` : "-"} · Status:{" "}
             <strong className="text-slate-700">{batch.status}</strong>
           </p>
@@ -248,6 +253,24 @@ export default async function BatchDetailPage({
           </div>
         )}
       </div>
+
+      {/* Metadata Batch & Optional Surat Tugas Upload */}
+      <section id="surat-tugas">
+        <BatchMetadataSuratTugasPanel
+          batch={{
+            id: batch.id,
+            name: batch.name,
+            schemeId: batch.schemeId,
+            tukName: batch.tukName,
+            tukType: batch.tukType,
+            assessmentDate: batch.assessmentDate,
+            driveFolderUrl: batch.driveFolderUrl,
+            kelompokSheetUrl: batch.kelompokSheetUrl,
+          }}
+          schemes={schemes.map((s) => ({ id: s.id, code: s.code, name: s.name }))}
+          existingSuratTugasFiles={suratTugasFiles}
+        />
+      </section>
 
       {/* Batch-level 06B Master Answer Key Upload */}
       <BatchKeyUploadPanel

@@ -15,6 +15,11 @@ const createBatchSchema = z.object({
   name: z.string().min(3, { message: "Nama batch minimal 3 karakter." }),
   tukName: z.string().optional(),
   tukType: z.enum(["sewaktu", "tempat_kerja", "mandiri"]).default("sewaktu"),
+  assessmentDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Format tanggal asesmen harus YYYY-MM-DD.")
+    .optional()
+    .or(z.literal("")),
   driveFolderUrl: z.string().url({ message: "Link Google Drive harus valid." }),
   kelompokSheetUrl: z.string().optional(),
 });
@@ -103,6 +108,7 @@ export async function POST(req: Request) {
     name: parsed.data.name,
     tukName: parsed.data.tukName,
     tukType: parsed.data.tukType,
+    assessmentDate: parsed.data.assessmentDate ? parsed.data.assessmentDate : null,
     driveFolderUrl: parsed.data.driveFolderUrl,
     kelompokSheetUrl: parsed.data.kelompokSheetUrl,
   });

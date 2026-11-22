@@ -15,6 +15,7 @@ export function CreateBatchPanel({ schemes }: CreateBatchPanelProps) {
   const [name, setName] = useState("");
   const [tukName, setTukName] = useState("");
   const [tukType, setTukType] = useState<"sewaktu" | "tempat_kerja" | "mandiri">("sewaktu");
+  const [assessmentDate, setAssessmentDate] = useState("");
   const [driveFolderUrl, setDriveFolderUrl] = useState("");
   const [kelompokSheetUrl, setKelompokSheetUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -34,6 +35,7 @@ export function CreateBatchPanel({ schemes }: CreateBatchPanelProps) {
           name,
           tukName,
           tukType,
+          assessmentDate: assessmentDate || undefined,
           driveFolderUrl,
           kelompokSheetUrl: kelompokSheetUrl || undefined,
         }),
@@ -157,6 +159,21 @@ export function CreateBatchPanel({ schemes }: CreateBatchPanelProps) {
               <option value="mandiri">Mandiri</option>
             </select>
           </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 mb-1">
+            Tanggal Asesmen (Opsional)
+          </label>
+          <input
+            type="date"
+            value={assessmentDate}
+            onChange={(e) => setAssessmentDate(e.target.value)}
+            className="w-full sm:max-w-xs px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white"
+          />
+          <p className="text-[11px] text-slate-500 mt-1">
+            Dapat diisi langsung di sini, disunting nanti, atau terisi otomatis dari Surat Tugas.
+          </p>
         </div>
 
         <div>

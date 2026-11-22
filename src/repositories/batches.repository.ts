@@ -177,6 +177,7 @@ export async function createBatchRecord(params: {
   name: string;
   tukName?: string;
   tukType?: "sewaktu" | "tempat_kerja" | "mandiri";
+  assessmentDate?: string | null;
   driveFolderUrl?: string;
   kelompokSheetUrl?: string;
 }): Promise<{ ok: true; batchId: string } | { ok: false; error: string }> {
@@ -193,6 +194,7 @@ export async function createBatchRecord(params: {
             name: params.name,
             tukName: params.tukName ?? null,
             tukType: params.tukType ?? "sewaktu",
+            assessmentDate: params.assessmentDate || null,
             driveFolderUrl: params.driveFolderUrl ?? null,
             kelompokSheetUrl: params.kelompokSheetUrl ?? null,
             createdBy: params.userId,
@@ -222,6 +224,7 @@ export async function createBatchRecord(params: {
             name: params.name,
             tuk_name: params.tukName ?? null,
             tuk_type: params.tukType ?? "sewaktu",
+            assessment_date: params.assessmentDate || null,
             drive_folder_url: params.driveFolderUrl ?? null,
             kelompok_sheet_url: params.kelompokSheetUrl ?? null,
             created_by: params.userId,
@@ -245,6 +248,70 @@ export async function createBatchRecord(params: {
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "DB error" };
   }
+}
+
+export async function updateBatchMetadata(params: {
+  userId: string;
+  batchId: string;
+  name?: string;
+  tukName?: string | null;
+  tukType?: "sewaktu" | "tempat_kerja" | "mandiri";
+  assessmentDate?: string | null;
+  schemeId?: string;
+  driveFolderUrl?: string | null;
+  kelompokSheetUrl?: string | null;
+}): Promise<BatchSummary | null> {
+  if (!isUuid(params.batchId)) return null;
+  const now = new Date();
+
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "BatchesRepository.updateBatchMetadata",
+    drizzle: async (tx) => {
+      const setPayload: Partial<typeof batches.$inferInsert> = {
+        updatedAt: now,
+      };
+      if (params.name !== undefined) setPayload.name = params.name;
+      if (params.tukName !== undefined) setPayload.tukName = params.tukName;
+      if (params.tukType !== undefined) setPayload.tukType = params.tukType;
+      if (params.assessmentDate !== undefined) setPayload.assessmentDate = params.assessmentDate;
+      if (params.schemeId !== undefined) setPayload.schemeId = params.schemeId;
+      if (params.driveFolderUrl !== undefined) setPayload.driveFolderUrl = params.driveFolderUrl;
+      if (params.kelompokSheetUrl !== undefined) setPayload.kelompokSheetUrl = params.kelompokSheetUrl;
+
+      const [updated] = await tx
+        .update(batches)
+        .set(setPayload)
+        .where(eq(batches.id, params.batchId))
+        .returning();
+      return updated ? mapDrizzleBatchRow(updated) : null;
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const updatePayload: Record<string, unknown> = {
+        updated_at: now.toISOString(),
+      };
+      if (params.name !== undefined) updatePayload.name = params.name;
+      if (params.tukName !== undefined) updatePayload.tuk_name = params.tukName;
+      if (params.tukType !== undefined) updatePayload.tuk_type = params.tukType;
+      if (params.assessmentDate !== undefined) updatePayload.assessment_date = params.assessmentDate;
+      if (params.schemeId !== undefined) updatePayload.scheme_id = params.schemeId;
+      if (params.driveFolderUrl !== undefined) updatePayload.drive_folder_url = params.driveFolderUrl;
+      if (params.kelompokSheetUrl !== undefined) updatePayload.kelompok_sheet_url = params.kelompokSheetUrl;
+
+      const { data, error } = await supabase
+        .from("batches")
+        .update(updatePayload)
+        .eq("id", params.batchId)
+        .select("*")
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(`BATCH_UPDATE_FAILED: ${error.message}`);
+      }
+      return data ? mapSupabaseBatchRow(data as Record<string, unknown>) : null;
+    },
+  });
 }
 
 function mapDrizzleDriveFileRow(r: typeof driveFiles.$inferSelect): DriveFileRecord {
