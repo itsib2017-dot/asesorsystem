@@ -36,7 +36,12 @@ import {
   extractTextFromDocx,
   isOleEncryptedBuffer,
 } from "@/services/extract";
-import { parseSuratTugasText, type ParsedSuratTugasResult } from "@/services/surat-tugas";
+import {
+  diffSuratTugasCandidates,
+  parseSuratTugasText,
+  type ParsedSuratTugasResult,
+  type SuratTugasRosterSummary,
+} from "@/services/surat-tugas";
 
 const BatchIdSchema = z.object({
   batchId: z.string().uuid("Parameter batchId tidak valid."),
@@ -609,6 +614,7 @@ export async function parseSuratTugasPreviewAction(formData: FormData): Promise<
   ok: boolean;
   fileName?: string;
   parsed?: ParsedSuratTugasResult;
+  rosterSummary?: SuratTugasRosterSummary;
   error?: string;
 }> {
   const user = await getUser();
@@ -644,10 +650,14 @@ export async function parseSuratTugasPreviewAction(formData: FormData): Promise<
     return { ok: false, error: fileRes.error };
   }
 
+  const existingPool = await listAssesseesByBatch(user.id, batch.id);
+  const rosterSummary = diffSuratTugasCandidates(fileRes.parsed.candidateNames, existingPool);
+
   return {
     ok: true,
     fileName: fileRes.fileName,
     parsed: fileRes.parsed,
+    rosterSummary,
   };
 }
 
@@ -655,6 +665,11 @@ export async function uploadBatchSuratTugasAction(formData: FormData): Promise<{
   ok: boolean;
   fileName?: string;
   parsed?: ParsedSuratTugasResult;
+  rosterSummary?: SuratTugasRosterSummary;
+  appliedMetadata?: {
+    assessmentDate: string | null;
+    tukName: string | null;
+  };
   importedCandidates?: number;
   message?: string;
   error?: string;
@@ -736,32 +751,24 @@ export async function uploadBatchSuratTugasAction(formData: FormData): Promise<{
       await updateBatchMetadata({
         userId: user.id,
         batchId: batch.id,
-        ...(targetDate && (!batch.assessmentDate || Boolean(overrideDate))
-          ? { assessmentDate: targetDate }
-          : {}),
-        ...(targetTuk && (!batch.tukName || Boolean(overrideTuk))
-          ? { tukName: targetTuk }
-          : {}),
+        ...(targetDate ? { assessmentDate: targetDate } : {}),
+        ...(targetTuk ? { tukName: targetTuk } : {}),
       });
     }
 
+    const existingPool = await listAssesseesByBatch(user.id, batch.id);
+    const rosterSummary = diffSuratTugasCandidates(fileRes.parsed.candidateNames, existingPool);
+
     let importedCount = 0;
-    if (importCandidates && fileRes.parsed.candidateNames.length > 0) {
-      const existingPool = await listAssesseesByBatch(user.id, batch.id);
-      const existingSet = new Set(existingPool.map((a) => a.displayName.trim().toLowerCase()));
-      const newNames = fileRes.parsed.candidateNames.filter(
-        (n) => !existingSet.has(n.trim().toLowerCase()),
-      );
-      if (newNames.length > 0) {
-        await upsertAssesseesForBatch({
-          userId: user.id,
-          lspId: batch.lspId,
-          batchId: batch.id,
-          names: newNames,
-          existingPool,
-        });
-        importedCount = newNames.length;
-      }
+    if (importCandidates && rosterSummary.toAdd.length > 0) {
+      await upsertAssesseesForBatch({
+        userId: user.id,
+        lspId: batch.lspId,
+        batchId: batch.id,
+        names: rosterSummary.toAdd,
+        existingPool,
+      });
+      importedCount = rosterSummary.toAdd.length;
     }
 
     try {
@@ -776,9 +783,11 @@ export async function uploadBatchSuratTugasAction(formData: FormData): Promise<{
           after_summary: {
             fileName: fileRes.fileName,
             letterNumber: fileRes.parsed.letterNumber,
-            assessmentDate: targetDate ?? null,
-            tukName: targetTuk ?? null,
-            detectedCandidates: fileRes.parsed.candidateNames.length,
+            assessorName: fileRes.parsed.assessorName,
+            assessmentDate: applyMetadata ? (targetDate ?? null) : batch.assessmentDate,
+            tukName: applyMetadata ? (targetTuk ?? null) : batch.tukName,
+            detectedCandidates: rosterSummary.detected.length,
+            alreadyInRoster: rosterSummary.alreadyInRoster.length,
             importedCandidates: importedCount,
           },
         },
@@ -797,12 +806,29 @@ export async function uploadBatchSuratTugasAction(formData: FormData): Promise<{
     revalidatePath(`/batches/${batch.id}/ak05`);
     revalidatePath("/settings/audit");
 
+    const parts = [`Surat Tugas "${fileRes.fileName}" tersimpan`];
+    if (applyMetadata && (targetDate || targetTuk)) {
+      parts.push(
+        `metadata diterapkan (${[targetDate ? `tanggal ${targetDate}` : null, targetTuk ? `TUK ${targetTuk}` : null].filter(Boolean).join(", ")})`,
+      );
+    }
+    if (rosterSummary.detected.length > 0) {
+      parts.push(
+        `${rosterSummary.detected.length} peserta terdeteksi (${importedCount} ditambahkan${rosterSummary.alreadyInRoster.length > 0 ? `, ${rosterSummary.alreadyInRoster.length} sudah ada di roster` : ""})`,
+      );
+    }
+
     return {
       ok: true,
       fileName: fileRes.fileName,
       parsed: fileRes.parsed,
+      rosterSummary,
+      appliedMetadata: {
+        assessmentDate: applyMetadata ? (targetDate ?? null) : null,
+        tukName: applyMetadata ? (targetTuk ?? null) : null,
+      },
       importedCandidates: importedCount,
-      message: `Surat Tugas "${fileRes.fileName}" tersimpan${importedCount > 0 ? ` · ${importedCount} peserta ditambahkan ke roster` : ""}.`,
+      message: `${parts.join(" · ")}.`,
     };
   } catch (err) {
     return {

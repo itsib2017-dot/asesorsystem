@@ -847,4 +847,70 @@ describe("Worker dispatcher and queue runner", () => {
     );
     expect(totalFailedCalls).toHaveLength(1);
   });
+
+  it("extracts high-confidence Drive surat_tugas files and auto-fills empty batch assessmentDate & tukName", async () => {
+    const batchId = "66666666-6666-4666-8666-666666666666";
+    const lspId = "lsp-1";
+    mocks.getBatchById.mockResolvedValue({
+      id: batchId,
+      lspId,
+      schemeId: "scheme-1",
+      name: "Batch ST Auto",
+      tukName: null,
+      assessmentDate: null,
+      driveFolderUrl: "https://drive.google.com/drive/folders/stautofolder1",
+    });
+    mocks.listDriveFilesForBatch.mockResolvedValue([]);
+    mocks.listAssesseesByBatch.mockResolvedValue([]);
+    mocks.upsertAssesseesForBatch.mockImplementation(async (args: { names: string[] }) =>
+      args.names.map((n, i) => ({ id: `as-${i}`, displayName: n })),
+    );
+    mocks.upsertDriveFilesForBatch.mockImplementation(async (args: { files: unknown[] }) => args.files.length);
+    mocks.pruneOrphanedDuplicateAssessees.mockResolvedValue([]);
+    mocks.updateBatchMetadata.mockResolvedValue({ id: batchId });
+
+    const stText = [
+      "SURAT TUGAS",
+      "Nomor Surat: ST - 210 / 20 26",
+      "Tempat Uji Kompetensi (TUK): TUK Sewaktu K3 Prima (Ruang Serbaguna)",
+      "Tanggal Pelaksanaan: 22 November 2026",
+      "Asesor Kompetensi: Budi Santoso, S.T.",
+      "DAFTAR PESERTA",
+      "1. Peserta Satu",
+      "2. Peserta Dua",
+    ].join("\n");
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === "drive.google.com" && url.pathname.includes("embeddedfolderview")) {
+        return new Response(
+          `<div class="flip-entry" id="entry-stfile123456789"><a href="https://drive.google.com/file/d/stfile123456789/view"><div class="flip-entry-title">Surat_Tugas_Batch.txt</div></a></div>`,
+          { status: 200 },
+        );
+      }
+      if (url.searchParams.get("id") === "stfile123456789") {
+        return new Response(stText, {
+          status: 200,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const res = await runWorkerJob({
+      id: "job-st-autofill",
+      type: "drive_scan",
+      userId: "user-1",
+      payload: { batchId },
+    });
+
+    expect(res.status).toBe("done");
+    expect(mocks.updateBatchMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId,
+        assessmentDate: "2026-11-22",
+        tukName: "TUK Sewaktu K3 Prima",
+      }),
+    );
+  });
 });

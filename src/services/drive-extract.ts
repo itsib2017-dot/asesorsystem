@@ -544,6 +544,7 @@ export async function enrichFilesByContent<T extends ContentEnrichableFile>(para
     const isAmbiguous =
       dt === "unknown" ||
       dt === "portofolio" ||
+      dt === "surat_tugas" ||
       currentConf < 0.85 ||
       (Boolean(params.includeUnmatched) && !file.assesseeId);
 

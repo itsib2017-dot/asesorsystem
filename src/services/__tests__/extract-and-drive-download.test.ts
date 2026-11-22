@@ -22,6 +22,7 @@ import {
 } from "../extract";
 import {
   downloadPublicDriveFileBuffer,
+  enrichFilesByContent,
   ensureDriveFileExtracted,
   extractDriveVirusScanConfirmUrl,
   reclassifyBatchFilesByContent,
@@ -61,6 +62,32 @@ describe("File text extraction & SSRF-guarded Drive download (T2)", () => {
 
     expect(extractTextFromPdfBasic(fakePdf)).toContain("Curriculum Vitae Budi Santoso K3");
     expect(extractTextFromPdfBasic(Buffer.from("not a pdf"))).toBe("");
+  });
+
+  it("preserves reading order and line breaks across mixed Tj, TJ, and Td/Tm operators", () => {
+    const streamContent = [
+      "BT",
+      "1 0 0 1 50 760 Tm (Nomor: ST-045 / 2026) Tj",
+      "0 -14 Td [(Nama) 20 ( Asesor) -200 (:) -200 (Budi Santoso)] TJ",
+      "0 -14 Td (1. Peserta Pertama) Tj",
+      "0 -14 Td [(2. Peserta) -180 (Kedua)] TJ",
+      "ET",
+    ].join("\n");
+    const deflated = zlib.deflateSync(Buffer.from(streamContent, "latin1"));
+    const pdfBuf = Buffer.concat([
+      Buffer.from("%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n", "latin1"),
+      deflated,
+      Buffer.from("\nendstream\nendobj\n%%EOF", "latin1"),
+    ]);
+
+    const extracted = extractTextFromPdfBasic(pdfBuf);
+    const lines = extracted.split("\n");
+    expect(lines).toEqual([
+      "Nomor: ST-045 / 2026",
+      "Nama Asesor : Budi Santoso",
+      "1. Peserta Pertama",
+      "2. Peserta Kedua",
+    ]);
   });
 
   it("rejects OLE encrypted OOXML buffers with KEY_ENCRYPTED", async () => {
@@ -368,5 +395,36 @@ describe("File text extraction & SSRF-guarded Drive download (T2)", () => {
     ]);
     expect(isEncryptedZipBuffer(encryptedZipHeader)).toBe(true);
     await expect(unpackSafeZipEntries(encryptedZipHeader)).rejects.toThrow("ZIP_ENCRYPTED");
+  });
+
+  it("extracts high-confidence surat_tugas files during enrichFilesByContent", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("SURAT TUGAS\nTanggal Pelaksanaan: 22 November 2026\nTUK: TUK Utama", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+
+    const files = [
+      {
+        driveFileId: "stfile999999",
+        fileName: "Surat_Tugas_2026.txt",
+        mimeType: "text/plain",
+        drivePath: "Surat_Tugas_2026.txt",
+        docType: "surat_tugas",
+        confidence: 0.92,
+      },
+    ];
+
+    const stats = await enrichFilesByContent({
+      files,
+      persistUpdates: false,
+      reassignAssessee: false,
+    });
+
+    expect(stats.inspected).toBe(1);
+    expect(files[0]).toMatchObject({
+      extractedText: expect.stringContaining("TUK Utama"),
+    });
   });
 });

@@ -68,6 +68,7 @@ import { clearRateLimitBucketsForTest } from "@/lib/security/rate-limit";
 import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
 import {
   activateBatchMasterKey06bAction,
+  parseSuratTugasPreviewAction,
   updateBatchMetadataAction,
   uploadBatchSuratTugasAction,
 } from "../actions";
@@ -360,11 +361,60 @@ describe("updateBatchMetadataAction & uploadBatchSuratTugasAction (T7)", () => {
     expect(mocks.updateBatchMetadata).not.toHaveBeenCalled();
   });
 
-  it("parses optional Surat Tugas .txt upload, fills blank batch metadata, and imports candidates", async () => {
+  it("previews Surat Tugas roster diff showing existing vs new participants cleanly", async () => {
+    mocks.listAssesseesByBatch.mockResolvedValue([
+      { id: "a-1", displayName: "Dewi Sartika", pseudonym: "ASESI-001" },
+    ]);
+    const content = [
+      "SURAT TUGAS",
+      "Nomor Surat: ST - 099 / 20 26",
+      "Menugaskan kepada:",
+      "Nama Asesor: Ir. Hendra Kusuma, M.T.",
+      "Tempat Uji Kompetensi (TUK): TUK Sewaktu Sinar Harapan (Ruang Aula 1)",
+      "Tanggal Pelaksanaan: 28 - 29 November 2026",
+      "DAFTAR PESERTA",
+      "1. Dewi Sartika",
+      "2. Agus Salim",
+    ].join("\n");
+
+    const file = new File([content], "Surat_Tugas_Nov.txt", { type: "text/plain" });
+    const fd = new FormData();
+    fd.set("batchId", BATCH_ID);
+    fd.set("suratTugasFile", file);
+
+    const res = await parseSuratTugasPreviewAction(fd);
+
+    expect(res.ok).toBe(true);
+    expect(res.parsed?.letterNumber).toBe("ST-099/2026");
+    expect(res.parsed?.assessorName).toBe("Ir. Hendra Kusuma, M.T.");
+    expect(res.parsed?.tukName).toBe("TUK Sewaktu Sinar Harapan");
+    expect(res.parsed?.assessmentDate).toBe("2026-11-28");
+    expect(res.rosterSummary).toEqual({
+      detected: ["Dewi Sartika", "Agus Salim"],
+      alreadyInRoster: ["Dewi Sartika"],
+      toAdd: ["Agus Salim"],
+    });
+  });
+
+  it("parses optional Surat Tugas .txt upload, automatically applies batch metadata, and imports only missing candidates", async () => {
+    mocks.getBatchById.mockResolvedValue({
+      id: BATCH_ID,
+      lspId: LSP_ID,
+      schemeId: "55555555-5555-4555-8555-555555555555",
+      name: "Batch Lama",
+      tukName: "TUK Placeholder Lama",
+      tukType: "sewaktu",
+      assessmentDate: "2026-11-01",
+    });
+    mocks.listAssesseesByBatch.mockResolvedValue([
+      { id: "a-1", displayName: "Dewi Sartika", pseudonym: "ASESI-001" },
+    ]);
+
     const content = [
       "SURAT TUGAS",
       "Nomor Surat: ST-099/2026",
-      "Tempat Uji Kompetensi (TUK): TUK Sewaktu Sinar Harapan",
+      "Nama Asesor: Ir. Hendra Kusuma, M.T.",
+      "Tempat Uji Kompetensi (TUK): TUK Sewaktu Sinar Harapan, Ruang Rapat Lantai 2",
       "Tanggal Pelaksanaan: 28 November 2026",
       "DAFTAR PESERTA",
       "1. Dewi Sartika",
@@ -383,7 +433,16 @@ describe("updateBatchMetadataAction & uploadBatchSuratTugasAction (T7)", () => {
     expect(res.ok).toBe(true);
     expect(res.parsed?.assessmentDate).toBe("2026-11-28");
     expect(res.parsed?.tukName).toBe("TUK Sewaktu Sinar Harapan");
-    expect(res.importedCandidates).toBe(2);
+    expect(res.appliedMetadata).toEqual({
+      assessmentDate: "2026-11-28",
+      tukName: "TUK Sewaktu Sinar Harapan",
+    });
+    expect(res.rosterSummary).toEqual({
+      detected: ["Dewi Sartika", "Agus Salim"],
+      alreadyInRoster: ["Dewi Sartika"],
+      toAdd: ["Agus Salim"],
+    });
+    expect(res.importedCandidates).toBe(1);
     expect(mocks.upsertDriveFilesForBatch).toHaveBeenCalledWith(
       expect.objectContaining({
         batchId: BATCH_ID,
@@ -406,7 +465,7 @@ describe("updateBatchMetadataAction & uploadBatchSuratTugasAction (T7)", () => {
     expect(mocks.upsertAssesseesForBatch).toHaveBeenCalledWith(
       expect.objectContaining({
         batchId: BATCH_ID,
-        names: ["Dewi Sartika", "Agus Salim"],
+        names: ["Agus Salim"],
       }),
     );
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(

@@ -264,12 +264,199 @@ function unescapePdfLiteral(raw: string): string {
     .replace(/\\([()\\])/g, "$1")
     .replace(/\\n/g, "\n")
     .replace(/\\r/g, " ")
-    .replace(/\\t/g, " ");
+    .replace(/\\t/g, " ")
+    .replace(/\\([0-7]{1,3})/g, (_, oct: string) =>
+      String.fromCharCode(Number.parseInt(oct, 8)),
+    );
+}
+
+function parsePdfLiteralAt(input: string, openParenIdx: number): { value: string; nextIdx: number } {
+  let i = openParenIdx + 1;
+  let depth = 1;
+  let raw = "";
+  while (i < input.length && depth > 0) {
+    const ch = input[i];
+    if (ch === "\\") {
+      const next = input[i + 1] ?? "";
+      raw += `\\${next}`;
+      i += 2;
+      continue;
+    }
+    if (ch === "(") {
+      depth += 1;
+      raw += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        i += 1;
+        break;
+      }
+      raw += ch;
+      i += 1;
+      continue;
+    }
+    raw += ch;
+    i += 1;
+  }
+  return { value: unescapePdfLiteral(raw), nextIdx: i };
+}
+
+function extractStreamTextWithLayout(stream: string): string[] {
+  const lines: string[] = [];
+  let currentLine = "";
+  let lastY: number | null = null;
+  let numericWindow: number[] = [];
+
+  const flushLine = () => {
+    const cleaned = currentLine.replace(/[ \t]+/g, " ").trim();
+    if (cleaned) lines.push(cleaned);
+    currentLine = "";
+  };
+
+  let i = 0;
+  const len = stream.length;
+  while (i < len) {
+    const ch = stream[i] ?? "";
+
+    // Skip PDF comments
+    if (ch === "%") {
+      const nl = stream.indexOf("\n", i);
+      if (nl === -1) break;
+      i = nl + 1;
+      continue;
+    }
+
+    // String literal (...) possibly followed by Tj / ' / "
+    if (ch === "(") {
+      const { value, nextIdx } = parsePdfLiteralAt(stream, i);
+      let j = nextIdx;
+      while (j < len && /\s/.test(stream[j] ?? "")) j += 1;
+      const op2 = stream.slice(j, j + 2);
+      const op1 = stream[j] ?? "";
+      if (op2 === "Tj" || op1 === "'" || op1 === '"') {
+        if (op1 === "'") flushLine();
+        if (value) {
+          if (currentLine && !currentLine.endsWith(" ") && !value.startsWith(" ")) {
+            currentLine += value;
+          } else {
+            currentLine += value;
+          }
+        }
+        i = j + (op2 === "Tj" ? 2 : 1);
+        numericWindow = [];
+        continue;
+      }
+      i = nextIdx;
+      continue;
+    }
+
+    // TJ array [...] TJ
+    if (ch === "[") {
+      let j = i + 1;
+      let segment = "";
+      while (j < len && stream[j] !== "]") {
+        const innerCh = stream[j] ?? "";
+        if (innerCh === "(") {
+          const { value, nextIdx } = parsePdfLiteralAt(stream, j);
+          segment += value;
+          j = nextIdx;
+          continue;
+        }
+        if (innerCh === "-" || (innerCh >= "0" && innerCh <= "9") || innerCh === ".") {
+          const numMatch = stream.slice(j).match(/^-?\d+(?:\.\d+)?/);
+          if (numMatch?.[0]) {
+            const adj = Number(numMatch[0]);
+            if (adj < -140 && segment && !segment.endsWith(" ")) {
+              segment += " ";
+            }
+            j += numMatch[0].length;
+            continue;
+          }
+        }
+        j += 1;
+      }
+      if (stream[j] === "]") {
+        let k = j + 1;
+        while (k < len && /\s/.test(stream[k] ?? "")) k += 1;
+        if (stream.slice(k, k + 2) === "TJ") {
+          currentLine += segment;
+          i = k + 2;
+          numericWindow = [];
+          continue;
+        }
+      }
+      i += 1;
+      continue;
+    }
+
+    // Numbers (operands for Td, TD, Tm)
+    if (ch === "-" || ch === "+" || ch === "." || (ch >= "0" && ch <= "9")) {
+      const prevCh = i > 0 ? stream[i - 1] ?? "" : " ";
+      if (/\s|\[|\]/.test(prevCh) || i === 0) {
+        const numMatch = stream.slice(i).match(/^[+-]?\d+(?:\.\d+)?/);
+        if (numMatch?.[0]) {
+          numericWindow.push(Number(numMatch[0]));
+          if (numericWindow.length > 6) numericWindow.shift();
+          i += numMatch[0].length;
+          continue;
+        }
+      }
+    }
+
+    // Text positioning / line operators
+    if (/[A-Za-z*]/.test(ch)) {
+      const tokMatch = stream.slice(i).match(/^[A-Za-z*]+/);
+      const tok = tokMatch?.[0] ?? "";
+      if (tok === "BT") {
+        lastY = null;
+        numericWindow = [];
+      } else if (tok === "ET") {
+        flushLine();
+        lastY = null;
+        numericWindow = [];
+      } else if (tok === "T*") {
+        flushLine();
+        numericWindow = [];
+      } else if ((tok === "Td" || tok === "TD") && numericWindow.length >= 2) {
+        const dx = numericWindow[numericWindow.length - 2] ?? 0;
+        const dy = numericWindow[numericWindow.length - 1] ?? 0;
+        if (Math.abs(dy) > 2) {
+          flushLine();
+        } else if (Math.abs(dx) > 4 && currentLine && !currentLine.endsWith(" ")) {
+          currentLine += " ";
+        }
+        lastY = (lastY ?? 0) + dy;
+        numericWindow = [];
+      } else if (tok === "Tm" && numericWindow.length >= 6) {
+        const ty = numericWindow[5] ?? 0;
+        if (lastY !== null && Math.abs(ty - lastY) > 2) {
+          flushLine();
+        } else if (currentLine && !currentLine.endsWith(" ")) {
+          currentLine += " ";
+        }
+        lastY = ty;
+        numericWindow = [];
+      } else {
+        numericWindow = [];
+      }
+      i += tok.length;
+      continue;
+    }
+
+    i += 1;
+  }
+
+  flushLine();
+  return lines;
 }
 
 /**
  * Lightweight pure-Node PDF text-layer extractor for standard FlateDecode / uncompressed
- * text operators (Tj / TJ). Returns "" for scanned image-only PDFs without crashing.
+ * text operators (Tj / TJ / Td / Tm). Preserves reading order and line breaks cleanly
+ * and returns "" for scanned image-only PDFs without crashing.
  */
 export function extractTextFromPdfBasic(buffer: Buffer): string {
   if (buffer.length === 0 || buffer.length > MAX_PDF_EXTRACT_BYTES) return "";
@@ -294,26 +481,13 @@ export function extractTextFromPdfBasic(buffer: Buffer): string {
     }
   }
 
-  const haystack = streams.length > 0 ? streams.join("\n") : latin;
-  const parts: string[] = [];
-  const tjRe = /\(([^()\\]*(?:\\.[^()\\]*)*)\)\s*Tj/g;
-  for (const m of haystack.matchAll(tjRe)) {
-    const val = unescapePdfLiteral(m[1] ?? "").trim();
-    if (val) parts.push(val);
+  const targetStreams = streams.length > 0 ? streams : [latin];
+  const allLines: string[] = [];
+  for (const st of targetStreams) {
+    allLines.push(...extractStreamTextWithLayout(st));
   }
 
-  const tjArrayRe = /\[([^\]]+)\]\s*TJ/g;
-  for (const m of haystack.matchAll(tjArrayRe)) {
-    const inner = m[1] ?? "";
-    const segs: string[] = [];
-    for (const sm of inner.matchAll(/\(([^()\\]*(?:\\.[^()\\]*)*)\)/g)) {
-      segs.push(unescapePdfLiteral(sm[1] ?? ""));
-    }
-    const joined = segs.join("").trim();
-    if (joined) parts.push(joined);
-  }
-
-  return parts.join(" ").replace(/\s+/g, " ").trim();
+  return allLines.join("\n").trim();
 }
 
 export async function extractTextFromBuffer(params: {

@@ -66,6 +66,8 @@ vi.mock("@/lib/audit/write-audit-log", () => ({
   writeAuditLog: mocks.writeAuditLog,
 }));
 
+import { generateInterviewQuestionsAction } from "../actions";
+
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const LSP_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const BATCH_ID = "33333333-3333-4333-8333-333333333333";
@@ -170,7 +172,6 @@ afterEach(() => {
 describe("generateInterviewQuestionsAction", () => {
   it("denies unauthenticated users and unauthorized roles", async () => {
     mocks.getUser.mockResolvedValue(null);
-    const { generateInterviewQuestionsAction } = await import("../actions");
 
     const unauth = await generateInterviewQuestionsAction(
       makeFormData({ batchId: BATCH_ID, assesseeId: ASSESSEE_ID }),
@@ -189,7 +190,6 @@ describe("generateInterviewQuestionsAction", () => {
 
   it("blocks when rate limit is exceeded", async () => {
     mocks.checkRateLimit.mockReturnValue({ allowed: false, retryAfterSeconds: 42 });
-    const { generateInterviewQuestionsAction } = await import("../actions");
 
     const res = await generateInterviewQuestionsAction(
       makeFormData({ batchId: BATCH_ID, assesseeId: ASSESSEE_ID }),
@@ -201,7 +201,6 @@ describe("generateInterviewQuestionsAction", () => {
   });
 
   it("scrubs candidate real names and NIK before calling LLM and returns question dimensions", async () => {
-    const { generateInterviewQuestionsAction } = await import("../actions");
 
     const res = await generateInterviewQuestionsAction(
       makeFormData({ batchId: BATCH_ID, assesseeId: ASSESSEE_ID }),
