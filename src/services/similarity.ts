@@ -150,7 +150,7 @@ export function renderCombinedWrittenReportMarkdown(params: {
     ``,
     `- **Batch:** ${params.batchName}`,
     `- **Skema:** ${params.schemeName}`,
-    `- **Ambang Batas Deteksi:** ${thresholdLabel}`,
+    `- **Ambang Batas Deteksi:** ${thresholdLabel} — aturan gabungan: max(Jaccard, Cosine) >= ambang`,
     `- **Catatan:** Dokumen ini bersifat rekomendasi AI dan memerlukan konfirmasi asesor. Kemiripan adalah indikator peninjauan, bukan keputusan otomatis.`,
     ``,
     `## 1. Ringkasan Penilaian Per Asesi`,
@@ -179,11 +179,12 @@ export function renderCombinedWrittenReportMarkdown(params: {
   if (params.flaggedPairs.length === 0) {
     lines.push(`Tidak ditemukan pasangan dengan tingkat kemiripan di atas ambang batas.`);
   } else {
-    lines.push(`| Asesi A | Asesi B | Skor Jaccard | Cosine TF-IDF | Status |`);
-    lines.push(`|---|---|---|---|---|`);
+    lines.push(`| Asesi A | Asesi B | Skor Gabungan (max) | Skor Jaccard | Cosine TF-IDF | Status |`);
+    lines.push(`|---|---|---|---|---|---|`);
     for (const p of params.flaggedPairs) {
+      const combined = Math.max(Number(p.jaccardScore) || 0, Number(p.tfidfCosine) || 0).toFixed(4);
       lines.push(
-        `| ${p.assesseeAName} (${p.assesseeAId}) | ${p.assesseeBName} (${p.assesseeBId}) | ${p.jaccardScore} | ${p.tfidfCosine} | ${p.verdict} |`,
+        `| ${p.assesseeAName} (${p.assesseeAId}) | ${p.assesseeBName} (${p.assesseeBId}) | ${combined} | ${p.jaccardScore} | ${p.tfidfCosine} | ${p.verdict} |`,
       );
     }
   }

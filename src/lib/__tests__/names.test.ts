@@ -6,7 +6,7 @@ import {
   normalisePersonName,
   scoreCandidateNameMatch,
 } from "../names";
-import { runNameJury } from "@/services/name-jury";
+import { DEFAULT_NAME_JURY_THRESHOLDS, runNameJury } from "@/services/name-jury";
 
 describe("KTP-Authoritative Name Comparison & Jury (D6 & D10)", () => {
   it("normalises titles and punctuation without mutating original strings", () => {
@@ -30,6 +30,7 @@ describe("KTP-Authoritative Name Comparison & Jury (D6 & D10)", () => {
       nameIjazah: "Budi Santoso",
       ocrConfidence: 0.45,
       ocrConfidenceFloor: 0.75,
+      thresholds: DEFAULT_NAME_JURY_THRESHOLDS,
     });
 
     expect(out.result.verdict).toBe("needs_human");
@@ -44,6 +45,7 @@ describe("KTP-Authoritative Name Comparison & Jury (D6 & D10)", () => {
       nameIjazah: "Declan Rice Pangabean",
       ocrConfidence: 0.95,
       ocrConfidenceFloor: 0.75,
+      thresholds: DEFAULT_NAME_JURY_THRESHOLDS,
     });
 
     expect(out.result.verdict).toBe("mismatch_resolved");

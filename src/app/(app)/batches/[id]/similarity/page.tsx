@@ -85,6 +85,10 @@ export default async function SimilarityReportPage({
             )}
           </div>
         </div>
+        <p className="text-[11px] text-slate-600">
+          Aturan deteksi: pasangan ditandai apabila <strong>skor gabungan max(Jaccard, Cosine)</strong>{" "}
+          mencapai ambang batas di atas (mis. Cosine &ge; {thresholds.partial.toFixed(2)} meski Jaccard lebih rendah).
+        </p>
         {flaggedPairs.length === 0 ? (
           <p className="text-xs text-slate-500">
             Belum ada pasangan kemiripan yang melebihi ambang batas deteksi (Parsial &ge;{" "}
@@ -93,18 +97,22 @@ export default async function SimilarityReportPage({
           </p>
         ) : (
           <div className="space-y-3">
-            {flaggedPairs.map((p, idx) => (
-              <div key={idx} className="p-4 rounded-xl bg-amber-50/50 border border-amber-200 text-xs flex justify-between items-center">
-                <div>
-                  <strong>{p.assesseeAName || "-"}</strong>
-                  {" vs "}
-                  <strong>{p.assesseeBName || "-"}</strong>
+            {flaggedPairs.map((p, idx) => {
+              const combinedScore = Math.max(Number(p.jaccardScore) || 0, Number(p.tfidfCosine) || 0);
+              return (
+                <div key={idx} className="p-4 rounded-xl bg-amber-50/50 border border-amber-200 text-xs flex flex-wrap justify-between items-center gap-2">
+                  <div>
+                    <strong>{p.assesseeAName || "-"}</strong>
+                    {" vs "}
+                    <strong>{p.assesseeBName || "-"}</strong>
+                  </div>
+                  <div className="font-mono text-slate-800">
+                    Skor Gabungan (max): <strong>{combinedScore.toFixed(4)}</strong> ({Math.round(combinedScore * 100)}%) |
+                    Jaccard: {p.jaccardScore} | Cosine: {p.tfidfCosine} | Status: {p.verdict}
+                  </div>
                 </div>
-                <div className="font-mono">
-                  Jaccard: {p.jaccardScore} | Cosine: {p.tfidfCosine} | Status: {p.verdict}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { formatAuditSummary, resolveAuditResourceHref } from "@/lib/audit/job-audit";
 import { getUser } from "@/lib/auth/get-session";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { listAuditLogsForUser } from "@/repositories/audit.repository";
+import { RefreshAuditButton } from "./_components/refresh-audit-button";
 
 export const dynamic = "force-dynamic";
 
@@ -70,13 +71,7 @@ export default async function AuditLogPage({
           >
             Ekspor XLSX
           </a>
-          <Link
-            href="/settings/audit"
-            className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Muat Ulang Log
-          </Link>
+          <RefreshAuditButton hasBeforeId={Boolean(beforeId)} />
         </div>
       </div>
 
