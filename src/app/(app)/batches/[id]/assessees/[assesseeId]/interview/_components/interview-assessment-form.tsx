@@ -9,12 +9,15 @@ import {
   saveInterviewAssessmentAction,
 } from "../actions";
 
+export type InterviewDimensionCode = "TS" | "TMS" | "CMS" | "JRES" | "TrS";
+
 export interface InterviewQuestionItem {
   no: number;
   question: string;
   answerSummary: string;
   achieved: "Ya" | "Tidak" | null;
   unitCode?: string;
+  dimension?: InterviewDimensionCode;
 }
 
 export interface InterviewUnitItem {
@@ -214,9 +217,27 @@ export function InterviewAssessmentForm({
           {questions.map((q, idx) => (
             <div key={idx} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-bold text-slate-900">
-                  Pertanyaan #{q.no} {q.unitCode ? `(${q.unitCode})` : ""}
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold text-slate-900">
+                    Pertanyaan #{q.no} {q.unitCode ? `(${q.unitCode})` : ""}
+                  </span>
+                  <select
+                    aria-label={`Dimensi pertanyaan ${q.no}`}
+                    value={q.dimension ?? ""}
+                    onChange={(e) => {
+                      const val = e.target.value as InterviewDimensionCode | "";
+                      updateQuestion(idx, { dimension: val || undefined });
+                    }}
+                    className="px-2 py-0.5 rounded-md border border-slate-300 bg-white text-[11px] font-medium text-slate-700"
+                  >
+                    <option value="">Dimensi: —</option>
+                    <option value="TS">TS (Task)</option>
+                    <option value="TMS">TMS (Task Mgmt)</option>
+                    <option value="CMS">CMS (Contingency)</option>
+                    <option value="JRES">JRES (Job Env)</option>
+                    <option value="TrS">TrS (Transfer)</option>
+                  </select>
+                </div>
                 <div className="flex items-center gap-2 text-xs">
                   <button
                     type="button"

@@ -14,9 +14,12 @@ import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { getUser } from "@/lib/auth/get-session";
 import { syncAssesseeVatmRecommendations } from "@/lib/forms/sync-vatm-decisions";
+import { checkRateLimit } from "@/lib/security/rate-limit";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { redactPii } from "@/ai/redact";
 import { getAssesseeById } from "@/repositories/assessees.repository";
 import {
+  getLatestDitAnalysis,
   saveInterviewAssessment,
   upsertUnitDecision,
 } from "@/repositories/assessment.repository";
@@ -29,7 +32,75 @@ const questionSchema = z.object({
   answerSummary: z.string().max(4000).default(""),
   achieved: z.enum(["Ya", "Tidak"]).nullable().default(null),
   unitCode: z.string().max(64).optional(),
+  dimension: z.enum(["TS", "TMS", "CMS", "JRES", "TrS"]).optional(),
 });
+
+const NAME_TITLE_STOPWORDS = new Set([
+  "binti",
+  "bin",
+  "skm",
+  "s.km",
+  "st",
+  "mt",
+  "mm",
+  "dr",
+  "ir",
+  "hj",
+  "drs",
+  "spd",
+  "mba",
+  "kes",
+  "msi",
+  "se",
+  "sh",
+  "amd",
+]);
+
+function escapeRegex(raw: string): string {
+  return raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function scrubCandidateIdentityText(
+  text: string,
+  candidateNames: Array<string | null | undefined>,
+  pseudonym: string,
+): string {
+  if (!text.trim()) return "";
+  let cleaned = text;
+  const fullNames = Array.from(
+    new Set(
+      candidateNames
+        .map((n) => n?.trim() ?? "")
+        .filter((n) => n.length >= 3),
+    ),
+  ).sort((a, b) => b.length - a.length);
+
+  for (const name of fullNames) {
+    cleaned = cleaned.replace(new RegExp(escapeRegex(name), "gi"), pseudonym);
+  }
+
+  const tokens = Array.from(
+    new Set(
+      fullNames
+        .flatMap((n) => n.split(/[\s,./()]+/))
+        .map((t) => t.trim())
+        .filter(
+          (t) =>
+            t.length >= 4 &&
+            !NAME_TITLE_STOPWORDS.has(t.toLowerCase()),
+        ),
+    ),
+  ).sort((a, b) => b.length - a.length);
+
+  for (const token of tokens) {
+    cleaned = cleaned.replace(
+      new RegExp(`\\b${escapeRegex(token)}\\b`, "gi"),
+      pseudonym,
+    );
+  }
+
+  return redactPii(cleaned);
+}
 
 const unitRecSchema = z.object({
   unitCode: z.string().min(1).max(64),
@@ -195,6 +266,7 @@ export async function generateInterviewQuestionsAction(formData: FormData): Prom
     answerSummary: string;
     achieved: null;
     unitCode?: string;
+    dimension?: "TS" | "TMS" | "CMS" | "JRES" | "TrS";
   }>;
   message?: string;
   error?: string;
@@ -206,6 +278,14 @@ export async function generateInterviewQuestionsAction(formData: FormData): Prom
   const assesseeId = String(formData.get("assesseeId") ?? "").trim();
   if (!isUuid(batchId) || !isUuid(assesseeId)) {
     return { ok: false, error: "Parameter wawancara tidak valid." };
+  }
+
+  const rate = checkRateLimit(`interview:generate:${user.id}:${assesseeId}`, 15, 60_000);
+  if (!rate.allowed) {
+    return {
+      ok: false,
+      error: `Terlalu banyak permintaan pembuatan pertanyaan AI. Coba lagi dalam ${rate.retryAfterSeconds} detik.`,
+    };
   }
 
   const [batch, assessee, authz] = await Promise.all([
@@ -220,11 +300,12 @@ export async function generateInterviewQuestionsAction(formData: FormData): Prom
     return { ok: false, error: "Peran Anda tidak berwenang menghasilkan pertanyaan wawancara." };
   }
 
-  const [schemes, lspName, providerCfg, files] = await Promise.all([
+  const [schemes, lspName, providerCfg, files, latestDit] = await Promise.all([
     listSchemes(user.id, batch.lspId),
     getLspNameForUser(user.id, batch.lspId),
     getLatestProviderConfigForAssessor(user.id),
     listDriveFilesForBatch(user.id, batchId),
+    getLatestDitAnalysis(user.id, assesseeId),
   ]);
   const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
   if (!scheme) return { ok: false, error: "Skema batch tidak ditemukan." };
@@ -259,21 +340,83 @@ export async function generateInterviewQuestionsAction(formData: FormData): Prom
     return { ok: false, error: "Kunci BYOK tidak dapat dibaca. Periksa konfigurasi Penyedia AI." };
   }
 
-  const fr09Text =
+  const pseudonym = assessee.pseudonym ?? "ASESI";
+  const sensitiveNames = [
+    assessee.displayName,
+    assessee.apl01Name,
+    assessee.ktpNameOcr,
+    assessee.suratTugasName,
+    assessee.ijazahName,
+    assessee.certificateNameConfirmed,
+  ];
+  const scrub = (raw: string) => scrubCandidateIdentityText(raw, sensitiveNames, pseudonym);
+
+  const fr09Text = scrub(
     files
       .filter((f) => f.assesseeId === assesseeId && f.docType === "09")
       .map((f) => f.extractedText ?? "")
       .join("\n")
-      .slice(0, 20_000) || "";
-  const profile = [
-    `Pseudonim: ${assessee.pseudonym ?? "-"}`,
-    `FR.APL.01: ${assessee.apl01Name ?? "-"}`,
-    `Surat Tugas: ${assessee.suratTugasName ?? "-"}`,
-    `Ijazah: ${assessee.ijazahName ?? "-"}`,
-  ].join("\n");
+      .slice(0, 20_000),
+  );
+
+  const cvExcerpt = scrub(
+    files
+      .filter((f) => f.assesseeId === assesseeId && f.docType === "cv")
+      .map((f) => f.extractedText ?? "")
+      .join("\n")
+      .slice(0, 5_000),
+  );
+  const fr04bExcerpt = scrub(
+    files
+      .filter((f) => f.assesseeId === assesseeId && f.docType === "04b")
+      .map((f) => f.extractedText ?? "")
+      .join("\n")
+      .slice(0, 6_000),
+  );
+  const fr04aExcerpt = scrub(
+    files
+      .filter(
+        (f) =>
+          f.docType === "04a" &&
+          (f.assesseeId === assesseeId || f.assesseeId === null),
+      )
+      .map((f) => f.extractedText ?? "")
+      .join("\n")
+      .slice(0, 3_000),
+  );
+
+  let ditSummaryText = "";
+  if (latestDit && typeof latestDit === "object") {
+    const rawDit = latestDit as Record<string, unknown>;
+    const rawOutput =
+      (rawDit.rawOutput ?? rawDit.raw_output) && typeof (rawDit.rawOutput ?? rawDit.raw_output) === "object"
+        ? ((rawDit.rawOutput ?? rawDit.raw_output) as Record<string, unknown>)
+        : null;
+    const ditCandidateProfile = rawOutput?.candidateProfileSummary ?? null;
+    const ditReadiness = rawDit.readiness ?? rawOutput?.readiness ?? null;
+    const ditGaps = rawDit.gapQuestions ?? rawDit.gap_questions ?? rawOutput?.gapQuestions ?? null;
+    const compactDit = {
+      candidateProfileSummary: ditCandidateProfile,
+      readiness: ditReadiness,
+      gapQuestions: Array.isArray(ditGaps) ? ditGaps.slice(0, 8) : [],
+    };
+    ditSummaryText = scrub(JSON.stringify(compactDit).slice(0, 5_000));
+  }
+
+  const profileSections = [`Pseudonim: ${pseudonym}`];
+  if (cvExcerpt) profileSections.push(`[Ringkasan CV / Riwayat Kerja]\n${cvExcerpt}`);
+  if (fr04bExcerpt) profileSections.push(`[Materi / Presentasi FR.IA.04B]\n${fr04bExcerpt}`);
+  if (fr04aExcerpt) profileSections.push(`[Instruksi FR.IA.04A]\n${fr04aExcerpt}`);
+  if (ditSummaryText) profileSections.push(`[Ringkasan Analisis DIT]\n${ditSummaryText}`);
+  if (profileSections.length === 1) {
+    profileSections.push(
+      "[Catatan Bahan]: Ringkasan CV, presentasi DIT, dan dokumen pendukung belum terekstraksi. Gunakan unit kompetensi aktif serta tanda bila bahan masih kurang.",
+    );
+  }
+  const profile = profileSections.join("\n\n");
 
   const result = await runInterviewPipeline({
-    pseudonym: assessee.pseudonym ?? "ASESI",
+    pseudonym,
     lspName: lspName ?? "-",
     schemeName: scheme.name,
     schemeCode: scheme.code,
@@ -324,6 +467,7 @@ export async function generateInterviewQuestionsAction(formData: FormData): Prom
       answerSummary: "",
       achieved: null,
       unitCode: q.unitCode,
+      dimension: q.dimension,
     })),
     message: `${questionCount} pertanyaan wawancara dibuat dari manifes skema ${scheme.code}.`,
   };

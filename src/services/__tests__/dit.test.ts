@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { checkDitCompletenessGate } from "../dit";
-import { buildDitAnalysisSchema } from "@/ai/schemas";
+import { buildDitAnalysisSchema, buildInterviewQuestionsSchema } from "@/ai/schemas";
 
 describe("DIT Completeness Gate & Dynamic Manifest Schema (Rule 26 & D21)", () => {
   it("rejects incomplete inputs and lists missing documents", () => {
@@ -70,5 +70,40 @@ describe("DIT Completeness Gate & Dynamic Manifest Schema (Rule 26 & D21)", () =
         },
       }).success,
     ).toBe(false);
+  });
+
+  it("validates RCTFA 5-dimension code on interviewQuestions schema items", () => {
+    const schema3 = buildInterviewQuestionsSchema(3);
+    const valid = schema3.safeParse({
+      coverage: [],
+      gapQuestions: [],
+      interviewQuestions: [
+        { no: 1, unitCode: "U1", dimension: "TS", question: "Q1" },
+        { no: 2, unitCode: "U2", dimension: "CMS", question: "Q2" },
+        { no: 3, unitCode: "U3", dimension: "TrS", question: "Q3" },
+      ],
+      readiness: {
+        strengths: ["Kuat"],
+        criticalGaps: [],
+        recommendation: "K",
+      },
+    });
+    expect(valid.success).toBe(true);
+
+    const missingDimension = schema3.safeParse({
+      coverage: [],
+      gapQuestions: [],
+      interviewQuestions: [
+        { no: 1, unitCode: "U1", question: "Q1" },
+        { no: 2, unitCode: "U2", dimension: "CMS", question: "Q2" },
+        { no: 3, unitCode: "U3", dimension: "TrS", question: "Q3" },
+      ],
+      readiness: {
+        strengths: ["Kuat"],
+        criticalGaps: [],
+        recommendation: "K",
+      },
+    });
+    expect(missingDimension.success).toBe(false);
   });
 });

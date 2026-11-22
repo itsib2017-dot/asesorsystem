@@ -82,6 +82,7 @@ export function buildInterviewQuestionsSchema(expectedQuestionCount: number) {
         z.object({
           no: z.number().int().positive(),
           unitCode: z.string(),
+          dimension: dimensionCodeSchema,
           question: z.string(),
         }),
       )
