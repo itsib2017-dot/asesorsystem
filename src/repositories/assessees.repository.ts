@@ -281,6 +281,25 @@ function findMatchingAssessee(
   return findBestMatchingCandidate(candidateName, pool);
 }
 
+/**
+ * Computes the next strictly monotonic numeric suffix (`max(ASESI-NNN) + 1`) so
+ * deleting an assessee never causes subsequent inserts to reuse an existing pseudonym.
+ */
+export function computeNextPseudonymSeq(
+  existing: ReadonlyArray<{ pseudonym?: string | null }>,
+): number {
+  let maxSeq = 0;
+  for (const row of existing) {
+    const match = row.pseudonym?.trim().match(/^ASESI-(\d+)$/i);
+    if (!match?.[1]) continue;
+    const parsed = Number.parseInt(match[1], 10);
+    if (Number.isFinite(parsed) && parsed > maxSeq) {
+      maxSeq = parsed;
+    }
+  }
+  return Math.max(maxSeq + 1, 1);
+}
+
 export async function upsertAssesseesForBatch(params: {
   userId: string;
   lspId: string;
@@ -294,6 +313,12 @@ export async function upsertAssesseesForBatch(params: {
 
   const existing = params.existingPool ?? (await listAssesseesByBatch(params.userId, params.batchId));
   const pool = [...existing];
+  const usedPseudonyms = new Set(
+    pool
+      .map((a) => a.pseudonym?.trim().toUpperCase())
+      .filter((v): v is string => Boolean(v)),
+  );
+  let nextSeq = computeNextPseudonymSeq(pool);
   const toInsert: Array<{ displayName: string; pseudonym: string }> = [];
 
   for (const rawName of params.names) {
@@ -302,11 +327,17 @@ export async function upsertAssesseesForBatch(params: {
     const match = findMatchingAssessee(cleaned, pool);
     if (match) continue;
 
-    const seq = pool.length + toInsert.length + 1;
-    const pseudonym = `ASESI-${String(seq).padStart(3, "0")}`;
+    let pseudonym = `ASESI-${String(nextSeq).padStart(3, "0")}`;
+    while (usedPseudonyms.has(pseudonym.toUpperCase())) {
+      nextSeq += 1;
+      pseudonym = `ASESI-${String(nextSeq).padStart(3, "0")}`;
+    }
+    nextSeq += 1;
+    usedPseudonyms.add(pseudonym.toUpperCase());
+
     toInsert.push({ displayName: cleaned, pseudonym });
     pool.push({
-      id: `pending-${seq}`,
+      id: `pending-${pseudonym}`,
       lspId: params.lspId,
       batchId: params.batchId,
       assignedAssessorId: params.userId,
@@ -347,7 +378,7 @@ export async function upsertAssesseesForBatch(params: {
     },
     supabase: async () => {
       const supabase = await getSupabaseServerClient();
-      const { error } = await supabase.from("assessees").insert(
+      const res = await supabase.from("assessees").insert(
         toInsert.map((item) => ({
           lsp_id: params.lspId,
           batch_id: params.batchId,
@@ -360,8 +391,8 @@ export async function upsertAssesseesForBatch(params: {
         })),
       );
 
-      if (error) {
-        console.warn("[AssesseesRepository Warning] insert assessees error:", error.message);
+      if (res?.error) {
+        throw new Error(`ASSESSEE_INSERT_FAILED: ${res.error.message}`);
       }
     },
   });

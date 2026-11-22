@@ -18,7 +18,7 @@
 | `public.scheme_form_manifests` | `id uuid` | `lsp_id` | Per-scheme form registry & versioned `.docx` blanko template references (`template_storage_path`, `template_file_name`, `template_sha256`, `template_version`, `template_uploaded_at`, `template_uploaded_by`) | YES |
 | `public.batches` | `id uuid` | `lsp_id` | Assessment batches linked to Google Drive | YES |
 | `public.batch_assessors` | `(batch_id, assessor_id)` | `lsp_id` | Assessor assignments per batch | YES |
-| `public.assessees` | `id uuid` | `lsp_id` | Candidate / assessee records | YES |
+| `public.assessees` | `id uuid` | `lsp_id` | Candidate / assessee records (unique partial index `assessees_batch_pseudonym_uidx` on `(batch_id, pseudonym)`) | YES |
 | `public.app_config` | `id uuid` | `lsp_id` (optional) | Config parameters (global, lsp, scheme) | YES |
 | `public.audit_log` | `id bigint` | `lsp_id` (optional) | Append-only immutable audit trail | YES |
 | `public.jobs` | `id uuid` | via `created_by` | Background worker queue jobs | YES |
@@ -57,3 +57,4 @@ All assessee mutations are routed through `src/repositories/assessees.repository
 11. `20261119000011_add_triage_unextractable.sql`: Expanded `drive_files.triage_status` CHECK constraint to include `'unextractable'`.
 12. `20261119000012_batch_active_key_and_roster_notes.sql`: Added explicit active FR.IA.06B master key governance columns (`active_master_key_file_id`, `active_master_key_source`, `active_master_key_validation_status`, `active_master_key_validation_summary`, `active_master_key_activated_at`, `active_master_key_activated_by`) on `public.batches`, created append-only `public.batch_roster_notes` table with RLS (`brn_select`, `brn_insert`), and seeded the PII-free retroactive `26 -> 23` reconciliation note for `Demo Audit R4`.
 13. `20261119000013_scheme_blanko_registry.sql`: Added `version` and `.docx` blanko template metadata columns (`template_storage_path`, `template_file_name`, `template_sha256`, `template_version`, `template_uploaded_at`, `template_uploaded_by`) on `public.scheme_form_manifests`, provisioned the private `scheme-blankos` Supabase Storage bucket with multi-tenant RLS (`scheme_blankos_bucket_select/insert/update/delete`), seeded 6 official `.docx` blanko references on `AK3U`, and seeded the second real non-K3 scheme `ICT-PM` (`Okupasi ICT Project Manager (SKM/1522/00008/2/2024/3)`) with 12 registered forms and 5 official `.docx` blankos.
+14. `20261122000014_unique_assessee_pseudonym.sql`: Deduplicated any colliding non-null `pseudonym` rows per batch and added partial unique index `assessees_batch_pseudonym_uidx` on `public.assessees (batch_id, pseudonym) where pseudonym is not null`.
