@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import JSZip from "jszip";
 import { PDFDocument } from "pdf-lib";
+import { renderAk05DocxToPdf, sanitizeWinAnsiText, tokenizeCheckboxSegments } from "@/lib/ak05/docx-to-pdf";
 import {
   validateExportFormat,
   generateAk05Docx,
@@ -160,5 +161,73 @@ describe("Export Format Rule D8 & Document Generators", () => {
     expect(docXml).toContain("0.65");
     expect(docXml).toContain("0.45");
     expect(docXml).toContain("Konfigurasi Global (app_config)");
+  });
+
+  it("paginates 20-candidate AK.05 PDF across multiple pages with vector checkboxes and zero '?' artifacts", async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      no: i + 1,
+      assesseeName: `Peserta Panjang Uji Kompetensi ${i + 1}`,
+      recommendation: (i % 5 === 4 ? "BK" : "K") as "K" | "BK",
+      keterangan: i % 5 === 4 ? "M.71KKK01.001.1 — Belum lengkap" : "Terpenuhi semua unit",
+    }));
+
+    const pdfBuf = await generateAk05Pdf({
+      schemeCode: "AK3U",
+      schemeTitle: "Ahli Keselamatan dan Kesehatan Kerja Umum",
+      schemeNumber: "SKM/2037/00013/2/2021/1",
+      tukName: "TUK Uji Pagination",
+      tukType: "sewaktu",
+      assessorName: "Asesor Penguji",
+      assessorRegNo: "MET.000.999.2026",
+      assessmentDate: "2026-11-22",
+      rows,
+      notesPositiveNegative: "Seluruh 20 peserta mengikuti uji terstruktur.",
+      notesRejection: "-",
+      notesImprovement: "-",
+      signaturePngBytes: SAMPLE_PNG_1X1,
+      signatureMimeType: "image/png",
+    });
+
+    expect(pdfBuf.subarray(0, 5).toString("utf8")).toBe("%PDF-");
+    const parsedPdf = await PDFDocument.load(pdfBuf);
+    expect(parsedPdf.getPageCount()).toBeGreaterThanOrEqual(2);
+
+    // Verify checkbox tokenization and WinAnsi punctuation sanitization produce zero '?' artifacts
+    const tokens = tokenizeCheckboxSegments("Rekomendasi: ☑ K / ☐ BK — TUK “Mandiri”");
+    expect(tokens.some((t) => t.type === "checkbox" && t.checked)).toBe(true);
+    expect(tokens.some((t) => t.type === "checkbox" && !t.checked)).toBe(true);
+    expect(sanitizeWinAnsiText("Unit — “Kompetensi” • → 1")).not.toContain("?");
+  });
+
+  it("renders custom OOXML table DOCX templates into PDF cleanly", async () => {
+    const customZip = new JSZip();
+    customZip.file(
+      "word/document.xml",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:body>
+          <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>LAPORAN CUSTOM SKEMA K3</w:t></w:r></w:p>
+          <w:tbl>
+            <w:tblGrid><w:gridCol w:w="1200"/><w:gridCol w:w="5000"/><w:gridCol w:w="2800"/></w:tblGrid>
+            <w:tr>
+              <w:trPr><w:tblHeader/></w:trPr>
+              <w:tc><w:tcPr><w:shd w:fill="92D050"/></w:tcPr><w:p><w:r><w:t>No</w:t></w:r></w:p></w:tc>
+              <w:tc><w:tcPr><w:shd w:fill="92D050"/></w:tcPr><w:p><w:r><w:t>Nama</w:t></w:r></w:p></w:tc>
+              <w:tc><w:tcPr><w:shd w:fill="92D050"/></w:tcPr><w:p><w:r><w:t>Hasil</w:t></w:r></w:p></w:tc>
+            </w:tr>
+            <w:tr>
+              <w:tc><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc>
+              <w:tc><w:p><w:r><w:t>Rina Puspita</w:t></w:r></w:p></w:tc>
+              <w:tc><w:p><w:r><w:t>☑ K / ☐ BK</w:t></w:r></w:p></w:tc>
+            </w:tr>
+          </w:tbl>
+        </w:body>
+      </w:document>`,
+    );
+    const customDocx = await customZip.generateAsync({ type: "nodebuffer" });
+    const pdfBuf = await renderAk05DocxToPdf(customDocx);
+    expect(pdfBuf.subarray(0, 5).toString("utf8")).toBe("%PDF-");
+    const parsedPdf = await PDFDocument.load(pdfBuf);
+    expect(parsedPdf.getPageCount()).toBe(1);
   });
 });
