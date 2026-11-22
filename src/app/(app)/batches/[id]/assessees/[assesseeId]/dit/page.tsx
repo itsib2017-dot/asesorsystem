@@ -17,10 +17,12 @@ import { Ia04bBlankoPreview } from "@/components/forms/ia04b-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import {
   buildIa04bPayload,
+  extractOfficial04bAssessment,
   resolveSchemeKelompokPekerjaan,
   type RawDecisionRow,
 } from "@/lib/forms/assessee-forms";
 import { DitAnalysisTrigger } from "./_components/dit-analysis-trigger";
+import { Ia04bAssessmentForm } from "./_components/ia04b-assessment-form";
 
 export const metadata = {
   title: "Analisis DIT — AsesorKompetensi",
@@ -79,6 +81,10 @@ export default async function DitAnalysisPage({
     candidateProfileSummary: cvExtracted ?? (fileCv ? "pending-drive-extraction" : null),
   });
 
+  const schemeKelompok = resolveSchemeKelompokPekerjaan(common.scheme);
+  const savedOfficial04b = extractOfficial04bAssessment(
+    analysis as Record<string, unknown> | null,
+  );
   const ia04bPayload = buildIa04bPayload({
     scheme: common.scheme,
     schemeTitle: common.schemeTitle,
@@ -182,7 +188,7 @@ export default async function DitAnalysisPage({
       />
 
       {/* Official FR.IA.04B Section (D14) */}
-      <div className="glass-card rounded-2xl p-6 space-y-4">
+      <div id="form-04b" className="glass-card rounded-2xl p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">
@@ -199,13 +205,20 @@ export default async function DitAnalysisPage({
           )}
         </div>
 
+        <Ia04bAssessmentForm
+          batchId={batchId}
+          assesseeId={assesseeId}
+          kelompokPekerjaan={schemeKelompok}
+          initialAssessment={savedOfficial04b}
+        />
+
         <Ia04bBlankoPreview
           batchId={batchId}
           assesseeId={assesseeId}
           hasActiveSignature={common.hasActiveSignature}
           signatureUrl={common.signatureUrl}
           isNameConfirmed={common.isNameConfirmed}
-          kelompokPekerjaan={resolveSchemeKelompokPekerjaan(common.scheme)}
+          kelompokPekerjaan={schemeKelompok}
           payload={ia04bPayload}
         />
 

@@ -85,6 +85,29 @@ describe("Official AK3U DOCX Template Exports (AK.02, IA.04B, IA.06C)", () => {
     expect(zip.file("word/media/signature.png")).toBeTruthy();
   });
 
+  it("never auto-checks FR.IA.04B items or recommendation from AI coverage_matrix alone", () => {
+    const payload = buildIa04bPayload({
+      schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
+      schemeNumber: "SKM/2037/00013/2/2021/1",
+      tukType: "sewaktu",
+      assessorName: "Daniel Stefanus",
+      assessorRegNo: "MET. 000.003610 2023",
+      assesseeName: "Budi Santoso",
+      assessmentDate: "2026-11-18",
+      decisions: [],
+      ditAnalysis: {
+        coverage_matrix: Array.from({ length: 13 }).map(() => ({
+          status: "Terpenuhi",
+        })),
+        readiness: { recommendation: "Kompeten" },
+      },
+    });
+
+    expect(payload.itemAchievedFlags).toHaveLength(13);
+    expect(payload.itemAchievedFlags.every((f) => f === null)).toBe(true);
+    expect(payload.overallRecommendation).toBeNull();
+  });
+
   it("generates FR.IA.04B preserving 13 tables, KP lists, 13 SDT checkboxes, and signature", async () => {
     const payload = buildIa04bPayload({
       schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
@@ -105,6 +128,15 @@ describe("Official AK3U DOCX Template Exports (AK.02, IA.04B, IA.06C)", () => {
           status: i === 12 ? "Belum Dibahas" : "Terpenuhi",
         })),
         readiness: { recommendation: "Kompeten" },
+        official_04b: {
+          items: Array.from({ length: 13 }).map((_, i) => ({
+            kpIndex: 0,
+            no: i + 1,
+            unitCode: "",
+            achieved: i === 12 ? null : true,
+          })),
+          overallRecommendation: "K",
+        },
       },
       signaturePngBytes: SAMPLE_PNG,
       signatureMimeType: "image/png",

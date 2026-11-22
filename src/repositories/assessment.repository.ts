@@ -78,7 +78,7 @@ export async function saveDitAnalysis(params: {
     },
     supabase: async () => {
       const supabase = await getSupabaseServerClient();
-      await supabase.from("dit_analyses").insert({
+      const { error } = await supabase.from("dit_analyses").insert({
         lsp_id: params.lspId,
         batch_id: params.batchId,
         assessee_id: params.assesseeId,
@@ -94,6 +94,115 @@ export async function saveDitAnalysis(params: {
         raw_output: params.rawOutput,
         created_by: params.userId,
       });
+      if (error) {
+        throw new Error(`DIT_ANALYSIS_INSERT_FAILED: ${error.message}`);
+      }
+    },
+  });
+}
+
+export async function saveOfficial04bAssessment(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  assesseeId: string;
+  official04b: Record<string, unknown>;
+}): Promise<void> {
+  const now = new Date();
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssessmentRepository.saveOfficial04bAssessment",
+    drizzle: async (tx) => {
+      const rows = await tx
+        .select()
+        .from(ditAnalyses)
+        .where(eq(ditAnalyses.assesseeId, params.assesseeId))
+        .orderBy(desc(ditAnalyses.createdAt))
+        .limit(1);
+      const latest = rows[0];
+      if (latest) {
+        const prev =
+          latest.official04b && typeof latest.official04b === "object"
+            ? (latest.official04b as Record<string, unknown>)
+            : {};
+        await tx
+          .update(ditAnalyses)
+          .set({
+            official04b: { ...prev, ...params.official04b },
+            updatedAt: now,
+          })
+          .where(eq(ditAnalyses.id, latest.id));
+        return;
+      }
+
+      await tx.insert(ditAnalyses).values({
+        lspId: params.lspId,
+        batchId: params.batchId,
+        assesseeId: params.assesseeId,
+        model: "manual-assessor-04b",
+        promptVersion: "manual",
+        coverageMatrix: [],
+        gapQuestions: [],
+        questionBank: [],
+        modelAnswers: [],
+        readiness: {},
+        official04b: params.official04b,
+        status: "done",
+        rawOutput: null,
+        createdBy: params.userId,
+      });
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data: latest, error: fetchErr } = await supabase
+        .from("dit_analyses")
+        .select("id, official_04b")
+        .eq("assessee_id", params.assesseeId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (fetchErr) {
+        throw new Error(`DIT_ANALYSIS_FETCH_FAILED: ${fetchErr.message}`);
+      }
+
+      if (latest?.id) {
+        const prev =
+          latest.official_04b && typeof latest.official_04b === "object"
+            ? (latest.official_04b as Record<string, unknown>)
+            : {};
+        const { error: updateErr } = await supabase
+          .from("dit_analyses")
+          .update({
+            official_04b: { ...prev, ...params.official04b },
+            updated_at: now.toISOString(),
+          })
+          .eq("id", latest.id);
+        if (updateErr) {
+          throw new Error(`OFFICIAL_04B_UPDATE_FAILED: ${updateErr.message}`);
+        }
+        return;
+      }
+
+      const { error: insertErr } = await supabase.from("dit_analyses").insert({
+        lsp_id: params.lspId,
+        batch_id: params.batchId,
+        assessee_id: params.assesseeId,
+        model: "manual-assessor-04b",
+        prompt_version: "manual",
+        coverage_matrix: [],
+        gap_questions: [],
+        question_bank: [],
+        model_answers: [],
+        readiness: {},
+        official_04b: params.official04b,
+        status: "done",
+        raw_output: null,
+        created_by: params.userId,
+      });
+      if (insertErr) {
+        throw new Error(`OFFICIAL_04B_INSERT_FAILED: ${insertErr.message}`);
+      }
     },
   });
 }

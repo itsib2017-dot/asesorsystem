@@ -16,6 +16,7 @@ import {
   upsertAssesseesForBatch,
 } from "@/repositories/assessees.repository";
 import {
+  getLatestDitAnalysis,
   saveAk05ReportForBatch,
   saveDitAnalysis,
   saveSimilarityPairsForBatch,
@@ -1087,6 +1088,14 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
     );
   }
 
+  const previousDit = await getLatestDitAnalysis(userId, assessee.id);
+  const prevOfficial04b =
+    previousDit &&
+    typeof (previousDit.official04b ?? previousDit.official_04b) === "object" &&
+    (previousDit.official04b ?? previousDit.official_04b) !== null
+      ? ((previousDit.official04b ?? previousDit.official_04b) as Record<string, unknown>)
+      : {};
+
   await saveDitAnalysis({
     userId,
     lspId: assessee.lspId,
@@ -1103,6 +1112,7 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
     })),
     readiness: result.output.readiness,
     official04b: {
+      ...prevOfficial04b,
       officialQuestionCount: scheme?.manifest?.questionCounts?.official04bCount ?? null,
       decisionRule: scheme?.manifest?.decisionRule ?? "VATM",
     },

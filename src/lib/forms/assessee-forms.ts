@@ -487,6 +487,61 @@ export function buildAk02Payload(params: {
   };
 }
 
+export interface Official04bItemRating {
+  kpIndex: number;
+  no: number;
+  unitCode: string;
+  achieved: boolean | null;
+  note?: string;
+}
+
+export interface Official04bAssessment {
+  items: Official04bItemRating[];
+  overallRecommendation: "K" | "BK" | null;
+  assessorNotes?: string;
+  assessedBy?: string;
+  assessedAt?: string;
+  officialQuestionCount?: number | null;
+  decisionRule?: string;
+}
+
+export function extractOfficial04bAssessment(
+  ditAnalysis?: Record<string, unknown> | null,
+): Official04bAssessment {
+  const raw = ditAnalysis
+    ? readField<Record<string, unknown>>(ditAnalysis, "official04b", "official_04b")
+    : undefined;
+  if (!raw || typeof raw !== "object") {
+    return { items: [], overallRecommendation: null, assessorNotes: "" };
+  }
+
+  const rawItems = Array.isArray(raw.items) ? raw.items : [];
+  const items: Official04bItemRating[] = rawItems
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item, idx) => ({
+      kpIndex: Number(item.kpIndex ?? 1),
+      no: Number(item.no ?? idx + 1),
+      unitCode: String(item.unitCode ?? "").trim(),
+      achieved: item.achieved === true ? true : item.achieved === false ? false : null,
+      note: typeof item.note === "string" ? item.note : undefined,
+    }));
+
+  const rawOverall = raw.overallRecommendation;
+  const overallRecommendation =
+    rawOverall === "K" || rawOverall === "BK" ? rawOverall : null;
+
+  return {
+    items,
+    overallRecommendation,
+    assessorNotes: typeof raw.assessorNotes === "string" ? raw.assessorNotes : "",
+    assessedBy: typeof raw.assessedBy === "string" ? raw.assessedBy : undefined,
+    assessedAt: typeof raw.assessedAt === "string" ? raw.assessedAt : undefined,
+    officialQuestionCount:
+      typeof raw.officialQuestionCount === "number" ? raw.officialQuestionCount : null,
+    decisionRule: typeof raw.decisionRule === "string" ? raw.decisionRule : undefined,
+  };
+}
+
 export function buildIa04bPayload(params: {
   scheme?: SchemeRecord | null;
   schemeTitle: string;
@@ -505,16 +560,7 @@ export function buildIa04bPayload(params: {
   const kelompokPekerjaan = resolveSchemeKelompokPekerjaan(params.scheme);
   const flatAspects = kelompokPekerjaan.flatMap((kp) => kp.aspects);
   const targetUnits = resolveSchemeUnitsList(params.scheme);
-  const matrixRaw = params.ditAnalysis
-    ? readField<Array<{ focusPoint?: string; status?: string }>>(
-        params.ditAnalysis,
-        "coverageMatrix",
-        "coverage_matrix",
-      )
-    : undefined;
-  const readinessRaw = params.ditAnalysis
-    ? readField<{ recommendation?: string }>(params.ditAnalysis, "readiness", "readiness")
-    : undefined;
+  const savedOfficial04b = extractOfficial04bAssessment(params.ditAnalysis);
 
   const decisionMap = new Map<string, string>();
   for (const d of params.decisions) {
@@ -523,14 +569,26 @@ export function buildIa04bPayload(params: {
     if (title) decisionMap.set(title, d.decision);
   }
 
+  const hasExplicit04bItems = savedOfficial04b.items.length > 0;
   const itemAchievedFlags: Array<boolean | null> = flatAspects.map((aspect, idx) => {
-    const rowMatch = Array.isArray(matrixRaw) ? matrixRaw[idx] : undefined;
-    if (rowMatch?.status === "Terpenuhi") return true;
-    if (rowMatch?.status === "Belum Dibahas") return false;
+    if (hasExplicit04bItems) {
+      const matchedItem =
+        savedOfficial04b.items.find(
+          (item) => item.kpIndex === aspect.kpIndex && item.no === aspect.no,
+        ) ??
+        (aspect.unitCode
+          ? savedOfficial04b.items.find(
+              (item) => item.unitCode.toLowerCase() === aspect.unitCode.toLowerCase(),
+            )
+          : undefined) ??
+        savedOfficial04b.items[idx];
+      return matchedItem ? matchedItem.achieved : null;
+    }
+
+    // Fallback strictly to explicit assessor unit decisions (never AI coverageMatrix)
     const dec = decisionMap.get(aspect.unitTitle.toLowerCase());
     if (dec === "K") return true;
     if (dec === "BK") return false;
-    if (rowMatch?.status === "Sebagian") return false;
     return null;
   });
 
@@ -540,40 +598,13 @@ export function buildIa04bPayload(params: {
     manualOverride: params.manualOverride,
   });
 
-  const hasMatrix = Array.isArray(matrixRaw) && matrixRaw.length > 0;
-  const allUnsetWithCompetentDit =
-    hasMatrix &&
-    itemAchievedFlags.every((v) => v === null) &&
-    readinessRaw?.recommendation === "Kompeten" &&
-    resolvedOverall.bkCount === 0;
-  const resolvedFlags = allUnsetWithCompetentDit
-    ? itemAchievedFlags.map(() => true)
-    : itemAchievedFlags;
-
   let overallRecommendation: "K" | "BK" | null;
   if (resolvedOverall.isOverridden) {
     overallRecommendation = resolvedOverall.recommendation;
-  } else if (resolvedOverall.recommendation === "BK") {
-    overallRecommendation = "BK";
-  } else if (resolvedOverall.recommendation === "K") {
-    overallRecommendation = "K";
-  } else if (hasMatrix) {
-    if (
-      readinessRaw?.recommendation === "Belum Kompeten" &&
-      resolvedFlags.some((f) => f === false)
-    ) {
-      overallRecommendation = "BK";
-    } else if (resolvedFlags.length > 0 && resolvedFlags.every((f) => f === true)) {
-      overallRecommendation = "K";
-    } else if (
-      readinessRaw?.recommendation === "Kompeten" &&
-      resolvedOverall.decidedCount > 0 &&
-      resolvedOverall.bkCount === 0
-    ) {
-      overallRecommendation = "K";
-    } else {
-      overallRecommendation = null;
-    }
+  } else if (savedOfficial04b.overallRecommendation) {
+    overallRecommendation = savedOfficial04b.overallRecommendation;
+  } else if (resolvedOverall.recommendation === "BK" || resolvedOverall.recommendation === "K") {
+    overallRecommendation = resolvedOverall.recommendation;
   } else {
     overallRecommendation = null;
   }
@@ -588,7 +619,7 @@ export function buildIa04bPayload(params: {
     assesseeName: params.assesseeName,
     assessmentDate: params.assessmentDate,
     kelompokPekerjaan,
-    itemAchievedFlags: resolvedFlags,
+    itemAchievedFlags,
     overallRecommendation,
     signaturePngBytes: params.signaturePngBytes,
     signatureMimeType: params.signatureMimeType,
