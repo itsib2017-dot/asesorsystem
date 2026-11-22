@@ -618,12 +618,40 @@ export function extractCandidateNamesFromDocumentText(
     }
   }
   if (docType === "surat_tugas") {
-    const afterList = text.split(/DAFTAR\s+(?:PESERTA|ASESI)|PESERTA\s+UJI/i).pop() ?? "";
-    if (afterList && afterList.length < text.length) {
-      const normalizedRows = afterList.replace(/([^\r\n])\s+(?=\d{1,2}[.)]\s+[A-Za-z])/g, "$1\n");
-      for (const m of normalizedRows.matchAll(/^\s*\d+[.)]\s+([A-Za-z][A-Za-z\t .,'()-]{2,70})/gm)) {
-        const val = m[1]?.trim();
-        if (val && !/^(asesor|tuk|tanggal|skema|nama\s+(?:peserta|asesi))/i.test(val)) {
+    const repaired = text
+      .replace(/\r\n?/g, "\n")
+      .replace(/(^|\n)([A-Z])\n([a-z]{2,})/g, "$1$2$3");
+    const matches = Array.from(
+      repaired.matchAll(
+        /\b(?:daftar\s+(?:asesi|peserta(?:\s*uji(?:\s*kompetensi)?)?|kandidat)|peserta\s+uji\s+kompetensi)\b/gi,
+      ),
+    );
+    const nonLampiran = matches.filter((m) => {
+      const idx = m.index ?? 0;
+      const lineStart = repaired.lastIndexOf("\n", Math.max(0, idx - 1)) + 1;
+      return !/lampiran\s*[:\-]\s*$/i.test(repaired.slice(lineStart, idx));
+    });
+    const anchor = nonLampiran.at(-1) ?? matches.at(-1);
+    if (anchor && anchor.index !== undefined) {
+      const rawTail = repaired.slice(anchor.index);
+      const footerIdx = rawTail.search(
+        /^\s*(?:gowork|jl\.|jakarta\s*,|ditetapkan|mengetahui|ketua\b|tembusan|demikian\b)/im,
+      );
+      const tail = footerIdx > 0 ? rawTail.slice(0, footerIdx) : rawTail;
+      const normalizedRows = tail
+        .replace(/([^\n])\s+(?=\d{1,2}[.)]\s+[A-Za-z])/g, "$1\n")
+        .replace(/([^\n])\s+(?=\d{1,2}\s+[A-Za-z][A-Za-z\t .,'()-]{2,50}\s+-\s*(?:\n|$))/g, "$1\n");
+      for (const m of normalizedRows.matchAll(
+        /^\s*\d+[.)]?\s+([A-Za-z][A-Za-z\t .,'()-]{2,70})/gm,
+      )) {
+        const val = m[1]?.replace(/\s+-\s*$/, "").trim();
+        if (
+          val &&
+          !/\b(?:met\.?\s*\d|no\.?\s*reg)\b/i.test(val) &&
+          !/^(?:asesor|tuk|tanggal|skema|nama\s+(?:peserta|asesi|ruang)|menjadi|mempersiapkan|melaksanakan|melaporkan|terlampir|organisasi|alamat|pukul|waktu|dasar|untuk)\b/i.test(
+            val,
+          )
+        ) {
           names.push(val);
         }
       }

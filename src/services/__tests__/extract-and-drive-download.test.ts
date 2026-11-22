@@ -427,4 +427,40 @@ describe("File text extraction & SSRF-guarded Drive download (T2)", () => {
       extractedText: expect.stringContaining("TUK Utama"),
     });
   });
+
+  it("reconstructs Word-style multi-BT coordinates into visual lines and skips binary font streams", () => {
+    const contentStream = [
+      "/F1 11.04 Tf",
+      // Out-of-order footer emitted at bottom (y=41) first
+      "BT 1 0 0 1 71.904 41.04 Tm [(GoWork Lippo Mall)] TJ ET",
+      // Top-of-page fragmented letter number spanning multiple BT/ET blocks on same y=707.02
+      "BT 1 0 0 1 214.61 707.02 Tm (Nomor:) Tj ET",
+      "BT 1 0 0 1 251.21 707.02 Tm (3) Tj ET",
+      "BT 1 0 0 1 256.73 707.02 Tm (801) Tj ET",
+      "BT 1 0 0 1 273.41 707.02 Tm (/ST/LSP-K3N/XI/2026) Tj ET",
+      // Table row where index "2" sits 2.04pt lower than split name "S" + "uhartono"
+      "BT 1 0 0 1 69.624 518.95 Tm (2) Tj ET",
+      "BT 1 0 0 1 96.864 520.99 Tm (S) Tj ET",
+      "BT 1 0 0 1 101.90 520.99 Tm (uhartono) Tj ET",
+      "BT 1 0 0 1 429.34 520.99 Tm (-) Tj ET",
+    ].join("\n");
+    const fontBinaryStream = Buffer.from(
+      "\x00\x01\x00\x00TrueTypeBinaryGarbage(fakeTj)Tj\x00\x00(fakeTJ)TJ",
+      "latin1",
+    );
+    const pdfBuf = Buffer.concat([
+      Buffer.from("%PDF-1.5\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n", "latin1"),
+      zlib.deflateSync(Buffer.from(contentStream, "latin1")),
+      Buffer.from("\nendstream\nendobj\n2 0 obj\n<< /Filter /FlateDecode >>\nstream\n", "latin1"),
+      zlib.deflateSync(fontBinaryStream),
+      Buffer.from("\nendstream\nendobj\n%%EOF", "latin1"),
+    ]);
+
+    const lines = extractTextFromPdfBasic(pdfBuf).split("\n");
+    expect(lines).toEqual([
+      "Nomor: 3801/ST/LSP-K3N/XI/2026",
+      "2 Suhartono -",
+      "GoWork Lippo Mall",
+    ]);
+  });
 });

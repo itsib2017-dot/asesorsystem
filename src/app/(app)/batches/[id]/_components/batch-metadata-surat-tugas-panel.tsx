@@ -81,7 +81,7 @@ export function BatchMetadataSuratTugasPanel({
   const [previewDate, setPreviewDate] = useState("");
   const [previewTuk, setPreviewTuk] = useState("");
   const [applyMetadata, setApplyMetadata] = useState(true);
-  const [importCandidates, setImportCandidates] = useState(true);
+  const [importCandidates, setImportCandidates] = useState(false);
   const [stMsg, setStMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const handleSaveMetadata = async (e: React.FormEvent) => {
@@ -124,6 +124,7 @@ export function BatchMetadataSuratTugasPanel({
     setRosterSummary(null);
     setPreviewDate("");
     setPreviewTuk("");
+    setImportCandidates(false);
     setStMsg(null);
     if (!file) return;
 
@@ -194,6 +195,7 @@ export function BatchMetadataSuratTugasPanel({
       setRosterSummary(null);
       setPreviewDate("");
       setPreviewTuk("");
+      setImportCandidates(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -482,7 +484,7 @@ export function BatchMetadataSuratTugasPanel({
                       checked={importCandidates}
                       onChange={(e) => setImportCandidates(e.target.checked)}
                     />
-                    Tambahkan {rosterSummary.toAdd.length} peserta baru ke roster asesi
+                    Tambahkan {rosterSummary.toAdd.length} peserta baru ke roster asesi (konfirmasi manual — periksa daftar di atas terlebih dahulu)
                   </label>
                 )}
               </div>

@@ -304,16 +304,75 @@ function parsePdfLiteralAt(input: string, openParenIdx: number): { value: string
   return { value: unescapePdfLiteral(raw), nextIdx: i };
 }
 
+// Relative glyph width factors (fraction of font size) calibrated for proportional sans-serif PDF text
+const PDF_CHAR_WIDTH_FACTORS: Readonly<Record<string, number>> = {
+  " ": 0.23, "!": 0.30, '"': 0.38, "#": 0.50, "$": 0.50, "%": 0.72, "&": 0.68, "'": 0.22,
+  "(": 0.30, ")": 0.30, "*": 0.48, "+": 0.50, ",": 0.25, "-": 0.30, ".": 0.25, "/": 0.38,
+  "0": 0.50, "1": 0.50, "2": 0.50, "3": 0.50, "4": 0.50, "5": 0.50, "6": 0.50, "7": 0.50,
+  "8": 0.50, "9": 0.50, ":": 0.26, ";": 0.26, "<": 0.50, "=": 0.50, ">": 0.50, "?": 0.46,
+  "@": 0.88,
+  A: 0.58, B: 0.54, C: 0.53, D: 0.61, E: 0.49, F: 0.46, G: 0.63, H: 0.62, I: 0.25, J: 0.32,
+  K: 0.52, L: 0.42, M: 0.85, N: 0.64, O: 0.66, P: 0.52, Q: 0.67, R: 0.54, S: 0.46, T: 0.49,
+  U: 0.64, V: 0.57, W: 0.88, X: 0.52, Y: 0.49, Z: 0.47,
+  a: 0.48, b: 0.52, c: 0.42, d: 0.52, e: 0.49, f: 0.30, g: 0.47, h: 0.52, i: 0.23, j: 0.24,
+  k: 0.45, l: 0.23, m: 0.79, n: 0.52, o: 0.52, p: 0.52, q: 0.52, r: 0.35, s: 0.39, t: 0.33,
+  u: 0.52, v: 0.45, w: 0.71, x: 0.43, y: 0.45, z: 0.39,
+};
+
+function estimatePdfTextWidth(text: string, fontSize: number): number {
+  let sum = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i] ?? " ";
+    sum += PDF_CHAR_WIDTH_FACTORS[ch] ?? 0.46;
+  }
+  return sum * fontSize;
+}
+
+function isLikelyTextContentStream(decoded: string): boolean {
+  if (decoded.length < 4) return false;
+  // Embedded TrueType/binary streams can contain accidental "Tj"/"TJ" byte sequences; reject if null bytes appear.
+  const sampleLen = Math.min(decoded.length, 512);
+  let nulls = 0;
+  for (let i = 0; i < sampleLen; i += 1) {
+    if (decoded.charCodeAt(i) === 0) nulls += 1;
+  }
+  if (nulls > 2) return false;
+  return /\b(?:Tj|TJ)\b/.test(decoded);
+}
+
+interface PositionedPdfSpan {
+  x: number;
+  y: number;
+  width: number;
+  fontSize: number;
+  text: string;
+  seq: number;
+}
+
 function extractStreamTextWithLayout(stream: string): string[] {
-  const lines: string[] = [];
-  let currentLine = "";
-  let lastY: number | null = null;
+  const spans: PositionedPdfSpan[] = [];
+  let hasExplicitCoords = false;
+  let curX = 0;
+  let curY = 0;
+  let lineX = 0;
+  let lineY = 0;
+  let fontSize = 11;
+  let scaleY = 1;
+  let leading = 14;
+  let seq = 0;
   let numericWindow: number[] = [];
 
-  const flushLine = () => {
-    const cleaned = currentLine.replace(/[ \t]+/g, " ").trim();
-    if (cleaned) lines.push(cleaned);
-    currentLine = "";
+  const pushSpan = (rawText: string, extraAdvancePts = 0) => {
+    const cleaned = rawText.replace(/\r?\n/g, " ");
+    const effSize = Math.max(4, fontSize * scaleY);
+    if (!cleaned.trim()) {
+      curX += estimatePdfTextWidth(cleaned, effSize) + extraAdvancePts;
+      return;
+    }
+    const width = Math.max(0, estimatePdfTextWidth(cleaned, effSize) + extraAdvancePts);
+    spans.push({ x: curX, y: curY, width, fontSize: effSize, text: cleaned, seq });
+    seq += 1;
+    curX += width;
   };
 
   let i = 0;
@@ -337,14 +396,13 @@ function extractStreamTextWithLayout(stream: string): string[] {
       const op2 = stream.slice(j, j + 2);
       const op1 = stream[j] ?? "";
       if (op2 === "Tj" || op1 === "'" || op1 === '"') {
-        if (op1 === "'") flushLine();
-        if (value) {
-          if (currentLine && !currentLine.endsWith(" ") && !value.startsWith(" ")) {
-            currentLine += value;
-          } else {
-            currentLine += value;
-          }
+        if (op1 === "'" || op1 === '"') {
+          lineY -= leading;
+          curX = lineX;
+          curY = lineY;
+          hasExplicitCoords = true;
         }
+        pushSpan(value);
         i = j + (op2 === "Tj" ? 2 : 1);
         numericWindow = [];
         continue;
@@ -357,6 +415,8 @@ function extractStreamTextWithLayout(stream: string): string[] {
     if (ch === "[") {
       let j = i + 1;
       let segment = "";
+      let kernAdvancePts = 0;
+      const effSize = Math.max(4, fontSize * scaleY);
       while (j < len && stream[j] !== "]") {
         const innerCh = stream[j] ?? "";
         if (innerCh === "(") {
@@ -371,6 +431,8 @@ function extractStreamTextWithLayout(stream: string): string[] {
             const adj = Number(numMatch[0]);
             if (adj < -140 && segment && !segment.endsWith(" ")) {
               segment += " ";
+            } else {
+              kernAdvancePts -= (adj / 1000) * effSize;
             }
             j += numMatch[0].length;
             continue;
@@ -382,7 +444,7 @@ function extractStreamTextWithLayout(stream: string): string[] {
         let k = j + 1;
         while (k < len && /\s/.test(stream[k] ?? "")) k += 1;
         if (stream.slice(k, k + 2) === "TJ") {
-          currentLine += segment;
+          pushSpan(segment, kernAdvancePts);
           i = k + 2;
           numericWindow = [];
           continue;
@@ -392,7 +454,7 @@ function extractStreamTextWithLayout(stream: string): string[] {
       continue;
     }
 
-    // Numbers (operands for Td, TD, Tm)
+    // Numbers (operands for Tf, TL, Td, TD, Tm)
     if (ch === "-" || ch === "+" || ch === "." || (ch >= "0" && ch <= "9")) {
       const prevCh = i > 0 ? stream[i - 1] ?? "" : " ";
       if (/\s|\[|\]/.test(prevCh) || i === 0) {
@@ -406,38 +468,52 @@ function extractStreamTextWithLayout(stream: string): string[] {
       }
     }
 
-    // Text positioning / line operators
+    // Text positioning / font / line operators
     if (/[A-Za-z*]/.test(ch)) {
       const tokMatch = stream.slice(i).match(/^[A-Za-z*]+/);
       const tok = tokMatch?.[0] ?? "";
       if (tok === "BT") {
-        lastY = null;
+        curX = 0;
+        curY = 0;
+        lineX = 0;
+        lineY = 0;
+        scaleY = 1;
         numericWindow = [];
       } else if (tok === "ET") {
-        flushLine();
-        lastY = null;
+        numericWindow = [];
+      } else if (tok === "Tf" && numericWindow.length >= 1) {
+        const sz = Math.abs(numericWindow[numericWindow.length - 1] ?? 11);
+        if (sz > 1 && sz < 200) fontSize = sz;
+        numericWindow = [];
+      } else if (tok === "TL" && numericWindow.length >= 1) {
+        leading = numericWindow[numericWindow.length - 1] ?? 14;
         numericWindow = [];
       } else if (tok === "T*") {
-        flushLine();
+        lineY -= leading;
+        curX = lineX;
+        curY = lineY;
+        hasExplicitCoords = true;
         numericWindow = [];
       } else if ((tok === "Td" || tok === "TD") && numericWindow.length >= 2) {
         const dx = numericWindow[numericWindow.length - 2] ?? 0;
         const dy = numericWindow[numericWindow.length - 1] ?? 0;
-        if (Math.abs(dy) > 2) {
-          flushLine();
-        } else if (Math.abs(dx) > 4 && currentLine && !currentLine.endsWith(" ")) {
-          currentLine += " ";
-        }
-        lastY = (lastY ?? 0) + dy;
+        lineX += dx;
+        lineY += dy;
+        curX = lineX;
+        curY = lineY;
+        if (tok === "TD") leading = -dy;
+        hasExplicitCoords = true;
         numericWindow = [];
       } else if (tok === "Tm" && numericWindow.length >= 6) {
+        const dScale = Math.abs(numericWindow[3] ?? 1);
+        const tx = numericWindow[4] ?? 0;
         const ty = numericWindow[5] ?? 0;
-        if (lastY !== null && Math.abs(ty - lastY) > 2) {
-          flushLine();
-        } else if (currentLine && !currentLine.endsWith(" ")) {
-          currentLine += " ";
-        }
-        lastY = ty;
+        scaleY = dScale > 0.1 && dScale < 20 ? dScale : 1;
+        lineX = tx;
+        lineY = ty;
+        curX = tx;
+        curY = ty;
+        hasExplicitCoords = true;
         numericWindow = [];
       } else {
         numericWindow = [];
@@ -449,14 +525,58 @@ function extractStreamTextWithLayout(stream: string): string[] {
     i += 1;
   }
 
-  flushLine();
+  if (spans.length === 0) return [];
+  if (!hasExplicitCoords) {
+    return [spans.map((s) => s.text).join(" ").replace(/\s+/g, " ").trim()].filter(Boolean);
+  }
+
+  // Group spans by visual baseline y (descending top-to-bottom), tolerating small cell vertical offsets (e.g. 2pt)
+  const sortedByY = [...spans].sort((a, b) => b.y - a.y || a.x - b.x || a.seq - b.seq);
+  const rows: Array<{ y: number; fontSize: number; items: PositionedPdfSpan[] }> = [];
+  for (const sp of sortedByY) {
+    const existing = rows.find((r) => {
+      const tol = Math.max(3.5, Math.max(r.fontSize, sp.fontSize) * 0.35);
+      return Math.abs(r.y - sp.y) <= tol;
+    });
+    if (existing) {
+      existing.items.push(sp);
+    } else {
+      rows.push({ y: sp.y, fontSize: sp.fontSize, items: [sp] });
+    }
+  }
+  rows.sort((a, b) => b.y - a.y);
+
+  const lines: string[] = [];
+  for (const row of rows) {
+    row.items.sort((a, b) => a.x - b.x || a.seq - b.seq);
+    let line = "";
+    let prevEndX: number | null = null;
+    let prevFs = row.fontSize;
+    for (const item of row.items) {
+      const piece = item.text;
+      if (prevEndX !== null && line.length > 0) {
+        const gap = item.x - prevEndX;
+        const spaceThreshold = Math.min(prevFs, item.fontSize) * 0.14;
+        const alreadySpaced = line.endsWith(" ") || piece.startsWith(" ");
+        if (!alreadySpaced && gap > spaceThreshold) {
+          line += " ";
+        }
+      }
+      line += piece;
+      prevEndX = item.x + item.width;
+      prevFs = item.fontSize;
+    }
+    const cleaned = line.replace(/[ \t]+/g, " ").trim();
+    if (cleaned) lines.push(cleaned);
+  }
+
   return lines;
 }
 
 /**
  * Lightweight pure-Node PDF text-layer extractor for standard FlateDecode / uncompressed
- * text operators (Tj / TJ / Td / Tm). Preserves reading order and line breaks cleanly
- * and returns "" for scanned image-only PDFs without crashing.
+ * text operators (Tj / TJ / Td / Tm). Preserves visual reading order and line breaks cleanly
+ * across multi-BT blocks and returns "" for scanned image-only PDFs without crashing.
  */
 export function extractTextFromPdfBasic(buffer: Buffer): string {
   if (buffer.length === 0 || buffer.length > MAX_PDF_EXTRACT_BYTES) return "";
@@ -476,7 +596,7 @@ export function extractTextFromPdfBasic(buffer: Buffer): string {
     } catch {
       decoded = rawBytes.toString("latin1");
     }
-    if (decoded && (decoded.includes("Tj") || decoded.includes("TJ"))) {
+    if (decoded && isLikelyTextContentStream(decoded)) {
       streams.push(decoded);
     }
   }

@@ -98,8 +98,50 @@ const INDONESIAN_MONTHS: Record<string, number> = {
   december: 12,
 };
 
-const PARTICIPANT_HEADER_RE =
-  /\b(?:daftar\s+(?:asesi|peserta(?:\s*uji)?|kandidat)|peserta\s+uji\s+kompetensi|nama\s*(?:asesi|peserta))\b/i;
+const DAFTAR_PESERTA_RE =
+  /\bdaftar\s+(?:asesi|peserta(?:\s*uji(?:\s*kompetensi)?)?|kandidat)\b/gi;
+const PESERTA_UJI_RE = /\bpeserta\s+uji\s+kompetensi\b/gi;
+
+function isInsideLampiranLabel(text: string, idx: number): boolean {
+  const lineStart = text.lastIndexOf("\n", Math.max(0, idx - 1)) + 1;
+  return /\blampiran\s*[:\-]\s*$/i.test(text.slice(lineStart, idx));
+}
+
+function findParticipantSectionIndex(text: string): number {
+  const daftarMatches = Array.from(text.matchAll(DAFTAR_PESERTA_RE));
+  const realDaftar = daftarMatches.filter((m) => m.index !== undefined && !isInsideLampiranLabel(text, m.index));
+  if (realDaftar.length > 0) {
+    return realDaftar.at(-1)?.index ?? -1;
+  }
+
+  const pesertaMatches = Array.from(text.matchAll(PESERTA_UJI_RE));
+  const realPeserta = pesertaMatches.filter((m) => m.index !== undefined && !isInsideLampiranLabel(text, m.index));
+  if (realPeserta.length > 0) {
+    return realPeserta.at(-1)?.index ?? -1;
+  }
+
+  if (daftarMatches.length > 0) {
+    return daftarMatches.at(-1)?.index ?? -1;
+  }
+
+  for (const m of text.matchAll(/(?:^|\n)\s*nama\s*(?:asesi|peserta)\b/gi)) {
+    if (m.index === undefined) continue;
+    const after = text.slice(m.index, m.index + 160);
+    if (/\b(?:terlampir|met\.?\s*\d|no\.?\s*reg)\b/i.test(after)) continue;
+    return m.index;
+  }
+
+  return -1;
+}
+
+function preprocessSuratTugasText(rawText: string): { repairedLines: string; flatText: string } {
+  // Repair fragmented PDF tokens where a leading uppercase letter was split onto its own line ("P\nukul" -> "Pukul", "S\nuhartono" -> "Suhartono")
+  const repairedLines = rawText
+    .replace(/\r\n?/g, "\n")
+    .replace(/(^|\n)([A-Z])\n([a-z]{2,})/g, "$1$2$3");
+  const flatText = repairedLines.replace(/\s+/g, " ").trim();
+  return { repairedLines, flatText };
+}
 
 function formatValidIsoDate(year: number, month: number, day: number): string | null {
   if (year < 1990 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
@@ -188,14 +230,15 @@ function cleanParsedField(raw: string | undefined): string | null {
 
 /**
  * Collapses PDF spacing artifacts inside document reference numbers (e.g.
- * "045 / ST - LSP / X I / 20 26" -> "045/ST-LSP/XI/2026").
+ * "3 801 / ST/LSP - K3N/ X I /20 2 6" -> "3801/ST/LSP-K3N/XI/2026").
  */
 export function normalizeLetterNumber(raw: string): string | null {
-  let s = raw
-    .split(
-      /\s+(?:perihal|hal|lampiran|tanggal|tgl\.?|sifat|kepada|menimbang|dasar|dengan\s+ini|yang\s+bertanda|skema|tuk|tempat|hari)\s*[:\-]/i,
-    )[0]
-    ?.split(/\r?\n/)[0] ?? "";
+  let s =
+    raw
+      .split(
+        /\s+(?:(?:perihal|hal|lampiran|tanggal|tgl\.?|sifat|kepada|dasar|menimbang|sehubungan|dengan\s+ini|yang\s+bertanda|daftar\s+(?:peserta|asesi)|skema|tuk|tempat|hari|untuk)\s*[:\-]|\b(?:dasar|sehubungan\s+dengan|menimbang|untuk)\b\s)/i,
+      )[0]
+      ?.split(/\r?\n/)[0] ?? "";
 
   s = s
     .replace(/\s+/g, " ")
@@ -203,6 +246,7 @@ export function normalizeLetterNumber(raw: string): string | null {
     .replace(/(?<=[A-Za-z0-9])\s*\.\s*(?=[A-Za-z0-9])/g, ".")
     .replace(/(?<=\d)\s+(?=\d)/g, "")
     .replace(/(?<=(?:^|[/_-])[A-Z])\s+(?=[A-Z](?:$|[/_-]))/g, "")
+    .replace(/(?<=(?:^|[/_-])[A-Z]{1,2})\s+(?=[A-Z](?:$|[/_-]))/g, "")
     .replace(/(?<=[/_-][A-Z]{1,4})\s+(?=[A-Z]{1,4}(?:$|[/_-]))/g, "")
     .replace(/\s+/g, " ")
     .replace(/[,;:\-/.\s]+$/, "")
@@ -213,19 +257,22 @@ export function normalizeLetterNumber(raw: string): string | null {
   return s;
 }
 
-function extractLetterNumber(headerText: string): string | null {
+function extractLetterNumber(repairedLines: string, flatText: string): string | null {
+  const sources = [repairedLines, flatText];
   const labeledPatterns = [
-    /(?:nomor\s*(?:surat(?:\s*tugas)?|st)?|no\.?\s*surat(?:\s*tugas)?|\bn\s*o\s*m\s*o\s*r)\s*[:\-]\s*([^\n]{3,110})/gi,
-    /^\s*(?:nomor|no\.?)\s*[:\-]?\s*([^\n]{4,110})/gim,
+    /(?:nomor\s*(?:surat(?:\s*tugas)?|st)?|no\.?\s*surat(?:\s*tugas)?|\bn\s*o\s*m\s*o\s*r)\s*[:\-]\s*([^\n]{3,140})/gi,
+    /^\s*(?:nomor|no\.?)\s*[:\-]?\s*([^\n]{4,140})/gim,
   ];
-  for (const re of labeledPatterns) {
-    for (const match of headerText.matchAll(re)) {
-      const prefix = match[0].toLowerCase();
-      if (/\bno\.?\s*(?:reg|hp|ktp|nik|nip|met|telp|urut|peserta)\b/.test(prefix)) {
-        continue;
+  for (const src of sources) {
+    for (const re of labeledPatterns) {
+      for (const match of src.matchAll(re)) {
+        const prefix = match[0].toLowerCase();
+        if (/\bno\.?\s*(?:reg|hp|ktp|nik|nip|met|telp|urut|peserta)\b/.test(prefix)) {
+          continue;
+        }
+        const normalized = normalizeLetterNumber(match[1] ?? "");
+        if (normalized) return normalized;
       }
-      const normalized = normalizeLetterNumber(match[1] ?? "");
-      if (normalized) return normalized;
     }
   }
   return null;
@@ -235,11 +282,12 @@ function extractLetterNumber(headerText: string): string | null {
  * Strips trailing subsequent-field labels and redundant room/floor qualifiers from TUK names.
  */
 export function cleanTukName(raw: string): string | null {
-  let s = raw
-    .split(
-      /\s+(?:hari\s*[/,]?\s*tanggal|tanggal|tgl\.?|waktu|pukul|jam|skema|alamat|asesor|peserta|daftar|keterangan|catatan|metode|jenis\s*tuk)\s*[:\-]/i,
-    )[0]
-    ?.split(/\r?\n/)[0] ?? "";
+  let s =
+    raw
+      .split(
+        /\s+(?:nama\s*ruang(?:an)?|ruang(?:an)?|hari\s*[/,]?\s*tanggal|tanggal(?:\s*(?:asesmen|pelaksanaan|uji(?:\s*kompetensi)?))?|tgl\.?|waktu|pukul|jam|skema|alamat|asesor|peserta|daftar|keterangan|catatan|metode|jenis\s*tuk|lampiran|no\.?\s*surat|dasar|untuk)\s*[:\-]/i,
+      )[0]
+      ?.split(/\r?\n/)[0] ?? "";
 
   s = s.replace(/\s+/g, " ").trim();
   if (!s) return null;
@@ -260,11 +308,12 @@ export function cleanTukName(raw: string): string | null {
 
   s = s.replace(/[\s,;:\-/]+$/, "").replace(/\s+/g, " ").trim();
   if (!s || s.length < 3 || /^[-—_]+$/.test(s)) return null;
-  if (/^(sewaktu|tempat\s*kerja|mandiri)$/i.test(s)) return null;
+  if (/^(?:tuk|sewaktu|tempat\s*kerja|mandiri)$/i.test(s)) return null;
   return s;
 }
 
-function extractTukName(searchText: string): string | null {
+function collectTukMatches(searchText: string): string[] {
+  const candidates: string[] = [];
   const tukPatterns = [
     /(?:tempat\s*uji\s*kompetensi(?:\s*\(tuk\))?|nama\s*tuk)\s*(?:[:\-]|\n\s*[:\-]?)\s*([^\n;]{3,180})/gi,
     /\btuk\s*(?:[:\-]|\n\s*[:\-])\s*([^\n;]{3,180})/gi,
@@ -273,17 +322,62 @@ function extractTukName(searchText: string): string | null {
   for (const re of tukPatterns) {
     for (const match of searchText.matchAll(re)) {
       const cleaned = cleanTukName(match[1] ?? "");
-      if (cleaned) return cleaned;
+      if (cleaned) candidates.push(cleaned);
     }
   }
-  return null;
+  return candidates;
+}
+
+function extractTukName(repairedLines: string, flatText: string): string | null {
+  const lineCandidates = collectTukMatches(repairedLines);
+  const flatCandidates = collectTukMatches(flatText);
+
+  const linePref = lineCandidates.find((c) => /^tuk\b/i.test(c) && c.length >= 12);
+  if (linePref) return linePref;
+
+  const flatPref = flatCandidates.find((c) => /^tuk\b/i.test(c));
+  if (flatPref) return flatPref;
+
+  return lineCandidates[0] ?? flatCandidates[0] ?? null;
+}
+
+function extractAssessmentDate(repairedLines: string, flatText: string): string | null {
+  const priorityDatePatterns = [
+    /(?:tanggal\s*(?:asesmen|pelaksanaan|uji(?:\s*kompetensi)?|kegiatan)|hari\s*[/,]?\s*tanggal|waktu\s*pelaksanaan|dilaksanakan\s*(?:pada(?:\s*tanggal)?|tanggal))\s*[:\-]?\s*([^\n]{5,75})/gi,
+    /\btanggal\s*[:\-]\s*([^\n]{5,70})/gi,
+  ];
+
+  for (const src of [repairedLines, flatText]) {
+    for (const re of priorityDatePatterns) {
+      for (const match of src.matchAll(re)) {
+        const prefix = src.slice(Math.max(0, (match.index ?? 0) - 25), match.index ?? 0);
+        if (/\b(?:tempat\/?\s*|tgl\.?\s*lahir|lahir)\b/i.test(prefix)) continue;
+        const candidate = extractIsoDateFromText(match[1] ?? "");
+        if (candidate) return candidate;
+      }
+    }
+  }
+
+  let signatureDateFallback: string | null = null;
+  for (const line of repairedLines.split("\n")) {
+    if (/\b(?:tempat\/?\s*(?:tanggal|tgl)\.?\s*lahir|ttl)\b/i.test(line)) continue;
+    const found = extractIsoDateFromText(line);
+    if (!found) continue;
+    if (/^[A-Za-z .]{2,30},\s*\d{1,2}\s+/.test(line.trim())) {
+      signatureDateFallback ??= found;
+      continue;
+    }
+    return found;
+  }
+
+  return signatureDateFallback;
 }
 
 function cleanAssessorName(raw: string | undefined): string | null {
   if (!raw) return null;
   const stripped = raw
     .split(
-      /\b(?:met\.?\s*[.:]?\s*\d|no\.?\s*reg|nra\.?\s*[:\-]|nip\.?\s*[:\-]|nik\.?\s*[:\-]|jabatan|skema|tuk|tempat|tanggal|hari|waktu|alamat|untuk\b|sebagai\b)/i,
+      /\b(?:met\.?\s*[.:]?\s*\d|no\.?\s*reg|nra\.?\s*[:\-]|nip\.?\s*[:\-]|nik\.?\s*[:\-]|jabatan|skema|tuk|tempat|tanggal|hari|waktu|alamat|untuk\b|sebagai\b|ahli\s+keselamatan)/i,
     )[0]
     ?.replace(/^\s*(?:kepada|yth\.?|saudara|sdri\.?|sdr\.?|bapak|ibu)\s+/i, "")
     .replace(/[\s,/(;:\-]+$/, "")
@@ -292,50 +386,33 @@ function cleanAssessorName(raw: string | undefined): string | null {
   const cleaned = cleanParsedField(stripped);
   if (!cleaned || cleaned.length < 3 || cleaned.length > 90) return null;
   if (
-    /^(?:sebagai\s+berikut|yang\s+ditugaskan|tersebut|asesor|nama|daftar|met|tuk|tanggal)\b/i.test(
+    /^(?:sebagai(?:\s+berikut)?|yang\s+ditugaskan|tersebut|asesor|nama|daftar|met|tuk|tanggal|terlampir|menjadi|mempersiapkan|melaksanakan|melaporkan|no\.?|pada|sesuai|dengan|kepada|dari|atau|dan|serta|yang|oleh|di|ke)\b/i.test(
       cleaned,
     )
   ) {
     return null;
   }
-  if (/^\d+$/.test(cleaned) || !/[A-Za-z]{2}/.test(cleaned)) return null;
+  if (/^\d+$/.test(cleaned) || !/[A-Za-z]{2}/.test(cleaned) || !/[A-Z]/.test(cleaned)) {
+    return null;
+  }
   return cleaned;
 }
 
-function extractAssessorName(headerText: string): string | null {
+function extractAssessorName(scopeLines: string, scopeFlat: string): string | null {
   // 1. Direct labeled Assessor line (same line or wrapped line after colon)
   const directPatterns = [
-    /(?:nama\s*asesor(?:\s*(?:kompetensi|penguji))?|asesor\s*(?:kompetensi|penguji)|asesor\s*yang\s*ditugaskan|\basesor)\s*[:\-]\s*\n?\s*([^\n;]{3,120})/gi,
-    /^\s*(?:nama\s*asesor|asesor\s*kompetensi|asesor\s*penguji)\s*\n\s*[:\-]?\s*([^\n;]{3,120})/gim,
+    /(?:nama[ \t]+asesor(?:[ \t]+(?:kompetensi|penguji))?|asesor[ \t]+(?:kompetensi|penguji)|asesor[ \t]+yang[ \t]+ditugaskan|\basesor)[ \t]*[:\-]\s*\n?\s*([^\n;]{3,120})/gi,
+    /^[ \t]*(?:nama[ \t]+asesor|asesor[ \t]+kompetensi|asesor[ \t]+penguji)[ \t]*\n[ \t]*[:\-]?[ \t]*([^\n;]{3,120})/gim,
   ];
   for (const re of directPatterns) {
-    for (const match of headerText.matchAll(re)) {
+    for (const match of scopeLines.matchAll(re)) {
       const candidate = cleanAssessorName(match[1]);
       if (candidate) return candidate;
     }
   }
 
-  // 2. Assignment block ("Menugaskan kepada" / "Memberi tugas kepada" / "Menunjuk")
-  const assignMatch = headerText.match(
-    /(?:menugaskan(?:\s*kepada)?|memberikan?\s*tugas(?:\s*kepada)?|ditugaskan\s*kepada|menunjuk)\s*[:\-]?([\s\S]{1,500})/i,
-  );
-  if (assignMatch?.[1]) {
-    const windowText = assignMatch[1];
-    const namaLineMatch = windowText.match(
-      /\bnama(?:\s*(?:lengkap|asesor))?\s*[:\-]\s*\n?\s*([^\n;]{3,120})/i,
-    );
-    const fromNama = cleanAssessorName(namaLineMatch?.[1]);
-    if (fromNama) return fromNama;
-
-    const numberedAssign = windowText.match(
-      /^\s*\d+[.)]?\s+([A-Za-z][A-Za-z\t .,'()-]{2,80})/m,
-    );
-    const fromNum = cleanAssessorName(numberedAssign?.[1]);
-    if (fromNum) return fromNum;
-  }
-
-  // 3. MET / No. Reg anchor in headerText
-  const lines = headerText.split("\n");
+  // 2. MET / No. Reg anchor (multiline lines + flat lookback before MET. <digits>)
+  const lines = scopeLines.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i] ?? "";
     if (!/\b(?:met\.?\s*[.:]?\s*\d|no\.?\s*reg(?:\s*asesor|\s*met)?\s*[:\-]?\s*[A-Z0-9])/i.test(line)) {
@@ -348,86 +425,168 @@ function extractAssessorName(headerText: string): string | null {
     if (sameLineCandidate) return sameLineCandidate;
 
     for (let back = 1; back <= 2; back += 1) {
-      const prevLine = (lines[i - back] ?? "")
-        .replace(/^\s*(?:\d+[.)]?\s*)?(?:nama(?:\s*asesor|\s*lengkap)?\s*[:\-]\s*)?/i, "");
+      const prevLine = (lines[i - back] ?? "").replace(
+        /^\s*(?:\d+[.)]?\s*)?(?:nama(?:\s*(?:asesor|lengkap))?\s*[:\-]\s*)?/i,
+        "",
+      );
       const prevCandidate = cleanAssessorName(prevLine);
       if (prevCandidate) return prevCandidate;
     }
+  }
+
+  for (const m of scopeFlat.matchAll(/\b(?:met\.?\s*[.:]?\s*\d+|no\.?\s*reg\.?\s*met\b)/gi)) {
+    const idx = m.index ?? 0;
+    const lookback = scopeFlat.slice(Math.max(0, idx - 120), idx);
+    const tail = lookback
+      .split(/(?:\d{1,2}[.)]\s+|:\s*|;\s*|\b(?:nama\s*(?:asesi|asesor|lengkap)|no\.?\s*reg\.?)\b\s*[:\-]?)/i)
+      .at(-1);
+    const candidate = cleanAssessorName(tail);
+    if (candidate) return candidate;
+  }
+
+  // 3. Assignment block ("Menugaskan kepada" / "Memberi tugas kepada" / "Menunjuk")
+  const assignMatch = scopeLines.match(
+    /(?:menugaskan(?:\s*kepada)?|memberikan?\s*tugas(?:\s*kepada)?|ditugaskan\s*kepada|menunjuk)\s*[:\-]?([\s\S]{1,500})/i,
+  );
+  if (assignMatch?.[1]) {
+    const windowText = assignMatch[1];
+    const namaLineMatch = windowText.match(
+      /\bnama(?:\s*(?:lengkap|asesor))?\s*[:\-]\s*\n?\s*([^\n;]{3,120})/i,
+    );
+    const fromNama = cleanAssessorName(namaLineMatch?.[1]);
+    if (fromNama) return fromNama;
+
+    const numberedAssign = windowText.match(
+      /^\s*\d+[.)]\s*\n?\s*([A-Za-z][A-Za-z\t .,'()-]{2,80})/m,
+    );
+    const fromNum = cleanAssessorName(numberedAssign?.[1]);
+    if (fromNum) return fromNum;
   }
 
   return null;
 }
 
 const NOISE_PARTICIPANT_RE =
-  /^(?:nama(?:\s*(?:peserta|asesi|lengkap))?|peserta|asesi|asesor|skema|instansi|perusahaan|jabatan|tuk|tanggal|nomor|no\.?|keterangan|tanda\s*tangan|mengetahui|direktur|ketua|lampiran)\b/i;
+  /^(?:nama(?:\s*(?:peserta|asesi|lengkap|ruang))?|peserta|asesi|asesor|skema|instansi|perusahaan|organisasi|jabatan|tuk|tanggal|nomor|no\.?|keterangan|tanda\s*tangan|mengetahui|direktur|ketua|lampiran|alamat|pukul|waktu|dasar|untuk|uji|kompetensi|sewaktu|mandiri|terlampir|menjadi|mempersiapkan|melaksanakan|melaporkan|mengikuti|membuat|menyusun|menyerahkan|bertanggung|hadir|membawa|sesuai)\b/i;
 
 function sanitizeCandidateLine(raw: string): string | null {
   const cleaned = raw
     .split(/\s*[|\t]\s*|\s{2,}/)[0]
     ?.split(
-      /\s+(?:nik|no\.?\s*ktp|nip|telp|no\.?\s*hp|hp|email|e-mail|instansi|perusahaan|jabatan|tuk|lsp|skema)\s*[:\-]/i,
+      /\s+(?:nik|no\.?\s*ktp|nip|telp|no\.?\s*hp|hp|email|e-mail|instansi|perusahaan|organisasi|jabatan|tuk|lsp|skema|met\.?\s*[.:]?\s*\d|no\.?\s*reg)\b/i,
     )[0]
-    ?.replace(/\b08\d{7,}\b.*$/, "")
+    ?.replace(/\s+-\s*$/, "")
+    .replace(/\b08\d{7,}\b.*$/, "")
     .replace(/\b\d{12,}\b.*$/, "")
     .replace(/[\s,;:.\-/]+$/, "")
     .replace(/\s+/g, " ")
     .trim();
 
-  if (!cleaned || cleaned.length < 3) return null;
+  if (!cleaned || cleaned.length < 3 || cleaned.length > 75) return null;
   if (NOISE_PARTICIPANT_RE.test(cleaned)) return null;
+  if (/\b(?:met\.?\s*\d|no\.?\s*reg)\b/i.test(cleaned)) return null;
   if (!/[A-Za-z]{2}/.test(cleaned)) return null;
+  if (cleaned.split(/\s+/).length > 6) return null;
+  if (/\.$/.test(raw.trim()) && cleaned.split(/\s+/).length >= 4) return null;
   return cleaned;
 }
 
-function extractParticipantsFromSuratTugas(normalizedText: string): string[] {
-  const canonicalNames = extractCandidateNamesFromDocumentText("surat_tugas", normalizedText);
+function extractParticipantsFromSuratTugas(repairedLines: string): string[] {
+  const headerIdx = findParticipantSectionIndex(repairedLines);
   const collected: string[] = [];
 
-  const headerIdx = normalizedText.search(PARTICIPANT_HEADER_RE);
   if (headerIdx >= 0) {
-    const tail = normalizedText.slice(headerIdx);
-    // Split inline flattened list items onto separate lines: "1. Budi 2. Ani" -> "1. Budi\n2. Ani"
-    const linePrepared = tail
+    const rawTail = repairedLines.slice(headerIdx);
+    const footerIdx = rawTail.search(
+      /^\s*(?:gowork|jl\.|jakarta\s*,|ditetapkan|mengetahui|ketua\b|tembusan|demikian\b)/im,
+    );
+    const tail = footerIdx > 0 ? rawTail.slice(0, footerIdx) : rawTail;
+
+    // Repair split single-capital names inside flat table rows ("2 S uhartono -" -> "2 Suhartono -")
+    // and insert line breaks before inline rows ("1. A 2. B" or "1 Aryanto - 2 Suhartono -")
+    const flatAwareTail = tail
+      .replace(/\b(\d{1,2})\s+([A-Z])\s+([a-z]{3,})\b/g, "$1 $2$3")
       .replace(/([^\n])\s+(?=\d{1,2}[.)]\s+[A-Za-z])/g, "$1\n")
-      .replace(/([^\n])\s+(?=\d{1,2}\s*[|\t]\s*[A-Za-z])/g, "$1\n");
+      .replace(/([^\n])\s+(?=\d{1,2}\s*[|\t]\s*[A-Za-z])/g, "$1\n")
+      .replace(/([^\n])\s+(?=\d{1,2}\s+[A-Za-z][A-Za-z\t .,'()-]{1,50}\s+-\s*(?:\n|$|\d))/g, "$1\n");
 
-    const lines = linePrepared.split("\n");
+    const lines = flatAwareTail.split("\n");
+    let expectedBareSeqIdx = 1;
+    let sawBareHeader = /\bno\s+nama\b/i.test(flatAwareTail);
+
     for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i] ?? "";
+      const line = lines[i]?.trim() ?? "";
+      if (!line) continue;
 
-      // Form A: "1. Name", "1) Name", "1 | Name | ...", "1\tName"
-      const numberedMatch = line.match(
-        /^\s*\d{1,2}\s*(?:[.)]|[|\t])\s*(?:\|\s*)?([A-Za-z][A-Za-z\t .,'()|/\-]{2,110})/,
-      );
-      if (numberedMatch?.[1]) {
-        const cleaned = sanitizeCandidateLine(numberedMatch[1]);
-        if (cleaned) collected.push(cleaned);
+      if (/^(?:no|no\s+nama(?:\s+organisasi)?)$/i.test(line)) {
+        sawBareHeader = true;
         continue;
       }
 
-      // Form B: DOCX cell-per-line table where index "1" sits alone on one line and name sits on next line
-      if (/^\s*\d{1,2}[.)]?\s*$/.test(line) && i + 1 < lines.length) {
-        const nextLine = (lines[i + 1] ?? "").trim();
-        if (/^[A-Za-z][A-Za-z\t .,'()-]{2,80}$/.test(nextLine)) {
-          const cleaned = sanitizeCandidateLine(nextLine);
+      // Form A1: explicit punctuated/delimited list ("1. Name", "1) Name", "1 | Name", "1\tName")
+      const punctMatch = line.match(
+        /^\s*(\d{1,2})\s*(?:[.)]|[|\t])\s*(?:\|\s*)?([A-Za-z][A-Za-z\t .,'()|/\-]{2,110})/,
+      );
+      if (punctMatch?.[2]) {
+        const cleaned = sanitizeCandidateLine(punctMatch[2]);
+        if (cleaned) {
+          collected.push(cleaned);
+          expectedBareSeqIdx = Number(punctMatch[1]) + 1;
+        }
+        continue;
+      }
+
+      // Form A2: space-separated table row ("1 Aryanto -", "2 Suhartono -")
+      const spaceTableMatch = line.match(
+        /^\s*(\d{1,2})\s+([A-Za-z][A-Za-z .,'()-]{2,70}?)(?:\s+-)?\s*$/,
+      );
+      if (spaceTableMatch?.[1] && spaceTableMatch[2]) {
+        const rowIdx = Number(spaceTableMatch[1]);
+        const looksLikeTableRow =
+          /\s+-\s*$/.test(line) || (sawBareHeader && rowIdx === expectedBareSeqIdx);
+        if (looksLikeTableRow && rowIdx >= 1 && rowIdx <= 99 && rowIdx === expectedBareSeqIdx) {
+          const cleaned = sanitizeCandidateLine(spaceTableMatch[2]);
           if (cleaned) {
             collected.push(cleaned);
-            i += 1;
+            expectedBareSeqIdx = rowIdx + 1;
+            continue;
+          }
+        }
+      }
+
+      // Form B: DOCX/PDF cell-per-line table where index "1" / "1." sits alone on a line and name on next line
+      const bareIdxMatch = line.match(/^(\d{1,2})([.)])?$/);
+      if (bareIdxMatch?.[1] && i + 1 < lines.length) {
+        const rowIdx = Number(bareIdxMatch[1]);
+        const hasPunct = Boolean(bareIdxMatch[2]);
+        const validSeq = hasPunct || (rowIdx === expectedBareSeqIdx && (sawBareHeader || rowIdx === 1));
+        if (validSeq && rowIdx >= 1 && rowIdx <= 99) {
+          const nextLine = (lines[i + 1] ?? "").trim();
+          if (/^[A-Za-z][A-Za-z\t .,'()-]{2,80}$/.test(nextLine)) {
+            const cleaned = sanitizeCandidateLine(nextLine);
+            if (cleaned) {
+              collected.push(cleaned);
+              expectedBareSeqIdx = rowIdx + 1;
+              i += 1;
+            }
           }
         }
       }
     }
   }
 
+  const canonicalNames =
+    collected.length > 0 ? [] : extractCandidateNamesFromDocumentText("surat_tugas", repairedLines);
+
   const deduped: string[] = [];
   const seen = new Set<string>();
-  for (const name of [...canonicalNames, ...collected]) {
-    const norm = name.replace(/\s+/g, " ").trim();
-    if (!norm || NOISE_PARTICIPANT_RE.test(norm)) continue;
-    const key = norm.toLowerCase();
+  for (const name of [...collected, ...canonicalNames]) {
+    const cleaned = sanitizeCandidateLine(name);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
     if (!seen.has(key)) {
       seen.add(key);
-      deduped.push(norm);
+      deduped.push(cleaned);
     }
   }
   return deduped;
@@ -438,47 +597,17 @@ function extractParticipantsFromSuratTugas(normalizedText: string): string[] {
  * and candidate list) from extracted text of an optional BNSP Surat Tugas document.
  */
 export function parseSuratTugasText(text: string): ParsedSuratTugasResult {
-  const normalized = text.replace(/\r\n?/g, "\n");
-  const splitIdx = normalized.search(PARTICIPANT_HEADER_RE);
-  const headerSection = splitIdx > 0 ? normalized.slice(0, splitIdx) : normalized;
-
-  // Assessment Date priority: explicit schedule/assessment lines -> general Tanggal -> standalone non-TTL date
-  let assessmentDate: string | null = null;
-  const priorityDatePatterns = [
-    /(?:tanggal\s*(?:asesmen|pelaksanaan|uji(?:\s*kompetensi)?|kegiatan)|hari\s*[/,]?\s*tanggal|waktu\s*pelaksanaan|dilaksanakan\s*(?:pada(?:\s*tanggal)?|tanggal))\s*[:\-]?\s*([^\n]{5,100})/gi,
-    /\btanggal\s*[:\-]\s*([^\n]{5,80})/gi,
-  ];
-  for (const re of priorityDatePatterns) {
-    for (const match of headerSection.matchAll(re)) {
-      const candidate = extractIsoDateFromText(match[1] ?? "");
-      if (candidate) {
-        assessmentDate = candidate;
-        break;
-      }
-    }
-    if (assessmentDate) break;
-  }
-  if (!assessmentDate) {
-    for (const line of headerSection.split("\n")) {
-      if (/\b(?:tempat\/?\s*(?:tanggal|tgl)\.?\s*lahir|ttl)\b/i.test(line)) continue;
-      const found = extractIsoDateFromText(line);
-      if (found) {
-        assessmentDate = found;
-        break;
-      }
-    }
-  }
-
-  const tukName = extractTukName(headerSection) ?? extractTukName(normalized);
-  const letterNumber = extractLetterNumber(headerSection);
-  const assessorName = extractAssessorName(headerSection);
-  const candidateNames = extractParticipantsFromSuratTugas(normalized);
+  const { repairedLines, flatText } = preprocessSuratTugasText(text);
+  const participantIdx = findParticipantSectionIndex(repairedLines);
+  const assessorScopeLines =
+    participantIdx > 0 ? repairedLines.slice(0, participantIdx) : repairedLines;
+  const assessorScopeFlat = assessorScopeLines.replace(/\s+/g, " ").trim();
 
   return {
-    assessmentDate,
-    tukName,
-    assessorName,
-    letterNumber,
-    candidateNames,
+    assessmentDate: extractAssessmentDate(repairedLines, flatText),
+    tukName: extractTukName(repairedLines, flatText),
+    assessorName: extractAssessorName(assessorScopeLines, assessorScopeFlat),
+    letterNumber: extractLetterNumber(repairedLines, flatText),
+    candidateNames: extractParticipantsFromSuratTugas(repairedLines),
   };
 }
