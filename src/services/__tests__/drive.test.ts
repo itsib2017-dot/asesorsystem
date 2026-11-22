@@ -541,4 +541,75 @@ describe("Drive folder crawling & BNSP path classification", () => {
       expect(cleanCandidateLabel("Materi Pelatihan")).toBe("Materi Pelatihan");
     });
   });
+
+  describe("Presentation 04b and CV auto-classification fixes (Observasi R17 #1)", () => {
+    const ak3uFormsWithLegacyDit = [
+      {
+        formKey: "04a",
+        formName: "FR.IA.04A — Daftar Instruksi Terstruktur (DIT)",
+        filePatterns: ["04a", "ia.04a", "ia 04a", "dit"],
+        instrumentRole: "dit",
+        sortOrder: 6,
+      },
+      {
+        formKey: "04b",
+        formName: "FR.IA.04B — Penilaian Proyek Singkat",
+        filePatterns: ["04b", "ia.04b", "ia 04b", "presentasi"],
+        instrumentRole: "presentation",
+        sortOrder: 7,
+      },
+    ];
+
+    it("classifies presentation slides as 04b even when AK3U 04a carries broad 'dit' pattern", () => {
+      expect(
+        classifyDriveFileName(
+          "Presentasi DIT Budi Santoso.pptx",
+          "Budi Santoso - Kurang Sertifikat Pelatihan",
+          ak3uFormsWithLegacyDit,
+        ).docType,
+      ).toBe("04b");
+      expect(
+        classifyDriveFileName(
+          "Paparan Proyek K3.pptx",
+          "Persyaratan/1. Budi Santoso",
+          ak3uFormsWithLegacyDit,
+        ).docType,
+      ).toBe("04b");
+      expect(
+        classifyDriveFileName(
+          "Budi_Proyek_K3.pptx",
+          "Budi Santoso",
+          ak3uFormsWithLegacyDit,
+        ).docType,
+      ).toBe("04b");
+      expect(
+        classifyDriveFileName(
+          "FR.IA.04A_Daftar_Instruksi_Terstruktur.docx",
+          "MUK",
+          ak3uFormsWithLegacyDit,
+        ).docType,
+      ).toBe("04a");
+      expect(
+        classifyDriveFileName(
+          "Materi Pelatihan K3.pptx",
+          "Materi",
+          ak3uFormsWithLegacyDit,
+        ).docType,
+      ).toBe("materi_pelatihan");
+    });
+
+    it("classifies CV variants by filename and prevents CV text mentioning HIRADC/ERP from flipping to dit_form", () => {
+      expect(classifyDriveFileName("DRH_Budi.pdf", "Budi Santoso").docType).toBe("cv");
+      expect(classifyDriveFileName("Riwayat Hidup Budi.pdf", "Budi Santoso").docType).toBe("cv");
+      expect(classifyDriveFileName("CVBudiSantoso.pdf", "Budi Santoso").docType).toBe("cv");
+      expect(classifyDriveFileName("Resume_HSE_2026.pdf", "Budi Santoso").docType).toBe("cv");
+      expect(classifyDriveFileName("Biodata_Peserta.docx", "Budi Santoso").docType).toBe("cv");
+
+      const cvWithK3Content = classifyDocumentTextContent(
+        "DAFTAR RIWAYAT HIDUP\nPengalaman Kerja: Menyusun HIRADC, ERP, dan inspeksi APD.",
+        "Dokumen_Peserta_02.pdf",
+      );
+      expect(cvWithK3Content?.docType).toBe("cv");
+    });
+  });
 });

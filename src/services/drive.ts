@@ -64,6 +64,19 @@ export function resolveSchemeFormDocType(form: SchemeFormClassifierEntry): strin
   return form.formKey.trim().toLowerCase();
 }
 
+function isExplicit04aSignal(fnBase: string): boolean {
+  return /(?:^|\s)04a(?:$|\s)|ia[\s.]*04a|instruksi\s*terstruktur|daftar\s*instruksi|soal\s*dit|panduan\s*(?:tugas\s*)?dit/i.test(
+    fnBase,
+  );
+}
+
+function isPresentationDeckContext(ctx: NameMatchContext): boolean {
+  return (
+    /\.pptx?$/i.test(ctx.fnLower) ||
+    /\b(?:presentasi|paparan|slide|04b)\b/i.test(ctx.fnBase)
+  );
+}
+
 function matchSchemeFormsByName(
   ctx: NameMatchContext,
   schemeForms?: SchemeFormClassifierEntry[],
@@ -71,8 +84,46 @@ function matchSchemeFormsByName(
   if (!Array.isArray(schemeForms) || schemeForms.length === 0) return null;
   const fnNorm = ctx.fnBase.replace(/\./g, " ").replace(/\s+/g, " ").trim();
   const ordered = [...schemeForms].sort((a, b) => a.sortOrder - b.sortOrder);
+  const explicit04a = isExplicit04aSignal(ctx.fnBase);
+  const isPresentation = isPresentationDeckContext(ctx);
+  const isDitWorksheet = detectDitFormKind(ctx.fnBase, { isContent: false }) !== null;
 
+  // Pass 1: filename matches across all scheme forms before falling back to parent-folder tokens
   for (const form of ordered) {
+    const resolvedDocType = resolveSchemeFormDocType(form);
+    for (const rawPattern of form.filePatterns ?? []) {
+      const patNorm = rawPattern
+        .toLowerCase()
+        .replace(/[._-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!patNorm) continue;
+      if (
+        resolvedDocType === "04a" &&
+        patNorm === "dit" &&
+        !explicit04a &&
+        (isPresentation || isDitWorksheet)
+      ) {
+        continue;
+      }
+
+      const boundaryRe = new RegExp(`(?:^|\\s|/)${escapeRegExp(patNorm)}(?:$|\\s|/)`, "i");
+      if (boundaryRe.test(fnNorm)) {
+        return {
+          docType: resolvedDocType,
+          confidence: 0.94,
+          reason: `Cocok dengan pola manifes skema (${form.formKey}: "${rawPattern}")`,
+        };
+      }
+    }
+  }
+
+  // Pass 2: parent-folder matches (never override presentation decks/DIT worksheets into 04a)
+  for (const form of ordered) {
+    const resolvedDocType = resolveSchemeFormDocType(form);
+    if (resolvedDocType === "04a" && !explicit04a && (isPresentation || isDitWorksheet)) {
+      continue;
+    }
     for (const rawPattern of form.filePatterns ?? []) {
       const patNorm = rawPattern
         .toLowerCase()
@@ -82,13 +133,12 @@ function matchSchemeFormsByName(
       if (!patNorm) continue;
 
       const boundaryRe = new RegExp(`(?:^|\\s|/)${escapeRegExp(patNorm)}(?:$|\\s|/)`, "i");
-      const matchesFile = boundaryRe.test(fnNorm);
       const matchesFolder =
         (patNorm.includes(" ") || patNorm.length >= 6) && boundaryRe.test(ctx.ppNorm);
 
-      if (matchesFile || matchesFolder) {
+      if (matchesFolder) {
         return {
-          docType: resolveSchemeFormDocType(form),
+          docType: resolvedDocType,
           confidence: 0.94,
           reason: `Cocok dengan pola manifes skema (${form.formKey}: "${rawPattern}")`,
         };
@@ -123,6 +173,7 @@ export function extractGoogleSheetId(url: string): string | null {
 interface NameMatchContext {
   fnLower: string;
   fnBase: string;
+  rawBaseName: string;
   ppNorm: string;
 }
 
@@ -197,7 +248,9 @@ const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> 
     docType: "04b",
     confidence: DRIVE_DOC_TYPES["04b"].defaultConfidence,
     matchesName: ({ fnBase }) =>
-      /(?:^|\s)04b(?:$|\s)|ia[\s.]*04b|observasi\s*demonstrasi|presentasi/i.test(fnBase),
+      /(?:^|\s)04b(?:$|\s)|ia[\s.]*04b|observasi\s*demonstrasi|presentasi|paparan/i.test(
+        fnBase,
+      ),
     nameReason: "Presentasi / Demonstrasi DIT FR.IA.04B",
     contentPattern: /\bfr[\s._-]*ia[\s._-]*04b\b|penilaian\s*proyek\s*singkat/i,
     contentReason: "Terdeteksi dari isi dokumen: memuat FR.IA.04B",
@@ -239,8 +292,13 @@ const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> 
   "04b_slides": {
     docType: "04b",
     confidence: DRIVE_DOC_TYPES["04b"].defaultConfidence,
-    matchesName: ({ fnLower, ppNorm }) =>
-      /\.pptx?$/i.test(fnLower) && isDitTaskContext(fnLower, ppNorm, { broadTaskTokens: true }),
+    matchesName: ({ fnLower, fnBase, ppNorm }) =>
+      /\.pptx?$/i.test(fnLower) &&
+      !isExplicit04aSignal(fnBase) &&
+      !/\b(?:materi|silabus|modul|handout|bahan\s*ajar)\b/i.test(fnBase) &&
+      !/(?:^|\/)\s*materi(?:\s|$|\/)/i.test(ppNorm) &&
+      (isDitTaskContext(fnLower, ppNorm, { broadTaskTokens: true }) ||
+        /\.pptx?$/i.test(fnLower)),
     nameReason: "Salindia presentasi / penugasan DIT (.ppt/.pptx)",
   },
   dit_form: {
@@ -269,11 +327,13 @@ const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> 
   cv: {
     docType: "cv",
     confidence: DRIVE_DOC_TYPES.cv.defaultConfidence,
-    matchesName: ({ fnBase }) =>
-      /\bcv\b|curr?iculum\s*vitae|daftar\s*riwayat\s*hidup/i.test(fnBase),
+    matchesName: ({ fnBase, rawBaseName }) =>
+      /\b(?:cv|drh|resume|biodata)\b|curr?iculum\s*vitae|daftar\s*riwayat\s*hidup|riwayat\s*hidup|\bdata\s*diri\b/i.test(
+        fnBase,
+      ) || /(?:^|[\s._-])(?:CV|cv)(?:[A-Z][a-z]+|\d+)/.test(rawBaseName.trim()),
     nameReason: "Daftar riwayat hidup (CV)",
     contentPattern:
-      /daftar\s*riwayat\s*hidup|curriculum\s*vitae|riwayat\s*pendidikan|pengalaman\s*kerja/i,
+      /daftar\s*riwayat\s*hidup|riwayat\s*hidup|curr?iculum\s*vitae|riwayat\s*pendidikan|pengalaman\s*kerja|work\s*experience|education(?:al)?\s*background|personal\s*profile|biodata\s*peserta/i,
     contentReason: "Terdeteksi dari isi dokumen: riwayat hidup / CV",
   },
   surat_tugas: {
@@ -380,13 +440,14 @@ export function classifyDriveFileName(
 ): ClassificationResult {
   const fnLower = fileName.toLowerCase();
   const fnBase = normaliseFileTokens(fileName, true);
+  const rawBaseName = stripKnownFileExtensions(fileName);
   const ppNorm = parentPath
     .toLowerCase()
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  const ctx: NameMatchContext = { fnLower, fnBase, ppNorm };
+  const ctx: NameMatchContext = { fnLower, fnBase, rawBaseName, ppNorm };
 
   if (schemeForms && schemeForms.length > 0) {
     for (const key of PRIORITY_IDENTITY_AND_MATERIAL_RULES) {
@@ -479,6 +540,15 @@ export function classifyDocumentTextContent(
         reason: rule.contentReason,
       };
     }
+  }
+
+  if (/\bdaftar\s*riwayat\s*hidup\b|\bcurr?iculum\s*vitae\b|\briwayat\s*hidup\b/i.test(lower)) {
+    const cvRule = UNIFIED_CLASSIFIER_RULES.cv!;
+    return {
+      docType: cvRule.docType,
+      confidence: cvRule.confidence,
+      reason: cvRule.contentReason!,
+    };
   }
 
   if (detectDitFormKind(lower, { isContent: true }) !== null) {
