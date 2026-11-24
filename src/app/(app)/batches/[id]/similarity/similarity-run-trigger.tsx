@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Play } from "lucide-react";
+import { readApiResponse } from "@/lib/http/read-api-response";
 
 export function SimilarityRunTrigger({ batchId }: { batchId: string }) {
   const router = useRouter();
@@ -25,21 +26,20 @@ export function SimilarityRunTrigger({ batchId }: { batchId: string }) {
           payload: { batchId },
         }),
       });
-      const json = (await res.json()) as {
-        ok?: boolean;
-        data?: { job_id?: string; status?: string };
-        error?: { message?: string };
-      };
-      if (!res.ok || !json.ok) {
+      const parsed = await readApiResponse<{ job_id?: string; status?: string }>(
+        res,
+        "Gagal menjalankan analisis kemiripan.",
+      );
+      if (!parsed.ok) {
         setFeedback({
           type: "error",
-          text: json.error?.message || "Gagal menjalankan analisis kemiripan.",
+          text: parsed.message,
         });
         return;
       }
       setFeedback({
         type: "success",
-        text: `Analisis kemiripan dijalankan (Job ${json.data?.job_id?.slice(0, 8) ?? "-"} · ${json.data?.status ?? "done"}). Segarkan halaman untuk melihat hasil pasangan dan skor.`,
+        text: `Analisis kemiripan dijalankan (Job ${parsed.data?.job_id?.slice(0, 8) ?? "-"} · ${parsed.data?.status ?? "done"}). Segarkan halaman untuk melihat hasil pasangan dan skor.`,
       });
       router.refresh();
     } catch (err) {

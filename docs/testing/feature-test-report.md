@@ -153,3 +153,18 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 | T7 | Tambah `assessment_date` pada buat/ubah batch, parser + unggah opsional Surat Tugas (`surat-tugas.ts`), & auto-isi saat Drive scan | `d4720a1` · `surat-tugas.test.ts` + `drive.test.ts` + `batches/[id]/__tests__/actions.test.ts` + `worker.test.ts` (44/44 PASS) |
 | T8 | `BatchWorkflowStepper` 9 langkah bernomor lintas alur batch & pemberitahuan kapasitas inline ~50 berkas (peringatan >50 berkas) | `399810b` · `batch-workflow-stepper.test.ts` (2/2 PASS) |
 | T9 | Tingkatkan renderer PDF AK.05 (`docx-to-pdf.ts`) dengan tabel OOXML berbatas, checkbox vektor tanpa `?`, tanda tangan aman, & paginasi multi-halaman | `7d70fa5` · `export.test.ts` + `official-forms-export.test.ts` (16/16 PASS) |
+
+---
+
+## Module: Putaran 22 (hal. 2) — DIT Async Enqueue, LLM Guardrails & Non-JSON Error Handling
+
+**Date:** 2026-11-24 · **Mode:** AUDIT MODE · **Constraint:** Nol retry DIT pada produksi.
+
+| Scenario | Result | Evidence | Patch / Follow-up |
+|---|---|---|---|
+| R22-01: RCA log Vercel & DB `6d577c84…` | PASS | `vercel logs requests` → `vr5f7-1795500154382-39a4f9310c55` HTTP 504 (`06:02:34Z`); `drive_files` `f166d221…` terekstrak tuntas `06:02:40Z–06:02:44Z`; job `0b646d0b` tertahan di LLM (`nemotron`, `max_tokens=52100`) | none |
+| R22-02: Benchmark ekstraktor `d6429ad` pada 04A `.docx`, CV `.pdf`, 04B `.pptx` | PASS | Uji lokal live buffer Drive: `04A .docx` `506ms` (`12.534` char), `CV .pdf` `17ms` (`1.361` char), `04B .pptx` `238ms` (`5.215` char), 0 throw | none |
+| R22-03: Respons non-JSON (504 plain-text / 502 HTML) tampil utuh di UI | PASS | `src/lib/http/__tests__/read-api-response.test.ts` (5/5 PASS); diterapkan pada 4 trigger UI & 2 poller | none |
+| R22-04: `POST /api/v1/dit/[assesseeId]/analyse` asinkron (`202` + `after()`) & RBAC `403` | PASS | `src/app/api/v1/dit/[assesseeId]/analyse/__tests__/route.test.ts` (6/6 PASS, `maxDuration=300`, `runImmediately: false`) | none |
+| R22-05: Cap token terstruktur `16_384`, `timeout 115s`, `maxRetries: 0`, `STALE_RUNNING_MS 305s` & detail error worker | PASS | `src/ai/__tests__/llm.test.ts` (3/3 PASS) + `src/worker/__tests__/worker.test.ts` (16/16 PASS) | none |
+| R22-06: Gates penuh (`tsc`, `eslint`, `vitest`, `next build`, Playwright lokal) | PASS | `tsc --noEmit` 0; `eslint --max-warnings 0` 0; `vitest run` 44 files / 208/208 PASS; `next build` PASS; Playwright `next start -p 3199` (`GET /api/health` 200, `POST /api/v1/dit/.../analyse` 401 JSON, `/login` desktop & mobile 0 overflow, `/dit` redirect fail-closed, 0 console/page error) | Live retry DIT produksi menunggu persetujuan pasca-deploy |

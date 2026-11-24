@@ -87,3 +87,12 @@
   - `supabase v3.2.0`: `supabase migration list --remote` dan `supabase db push --remote --yes` berhasil menerapkan migrasi `20261122000014_unique_assessee_pseudonym.sql` dan `20261122000015_refine_ak3u_manifest_and_adr0005_forms.sql` pada proyek `oiplhsmmfuqriaqrxjud`.
   - `vercel v66.2.0` (`npx --no-install vercel`): dipakai strictly read-only (`ls`, `logs`, `env ls`); deploy dipicu otomatis melalui `git push origin main`.
   - `playwright`: dipakai untuk verifikasi rendering UI/UX, layout desktop/mobile, console, dan status HTTP pada build lokal (`npm run start`) tanpa mengubah data batch pemilik.
+
+---
+
+## 6. Sesi 2026-11-24 — Diagnosis & Remediasi Putaran 22 (hal. 2: DIT HTTP 504 Non-JSON)
+
+- **Celah Spesifikasi (`ground_rules_v5.md` §A.1):**
+  - Brief developer Putaran 22 (hal. 2) merujuk bagian lengkap `audit-lengkap-2026-11-18.md` (§AC). Berkas tersebut tidak terdapat di repositori saat pemeriksaan; sesuai §A.1 celah dicatat di sini tanpa menebak isi yang hilang, dan diagnosis seluruhnya bertumpu pada bukti log CDN Vercel (`vr5f7-1795500154382-39a4f9310c55`), query read-only Supabase `oiplhsmmfuqriaqrxjud`, serta benchmark lokal `extractTextFromBuffer`.
+- **Catatan Retensi Log Vercel Hobby:**
+  - `vercel logs runtime` pada paket Hobby menolak rentang waktu di luar jendela 1 jam terakhir (`The hobby plan does not retain runtime logs for the requested time range`), sedangkan `vercel logs requests` (CDN) dan tabel PostgreSQL (`jobs`, `audit_log`, `drive_files`, `assessor_llm_config`) tersedia penuh untuk merekonstruksi kejadian 06:02Z.

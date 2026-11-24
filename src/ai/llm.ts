@@ -52,10 +52,14 @@ function resolveModel(cfg: RuntimeLlmConfig) {
   return google(cfg.model);
 }
 
+export const MAX_STRUCTURED_OUTPUT_TOKENS = 16_384;
+export const DEFAULT_LLM_ATTEMPT_TIMEOUT_MS = 115_000;
+
 /**
  * Unified LLM structured execution wrapper (Rule 42 & §4.4).
  * Uses temperature 0 for deterministic grading/analysis/jury calls.
- * Retries once on structured validation error.
+ * Retries once on structured validation error, caps output tokens, and
+ * bounds each attempt well within Vercel's 300s function limit.
  */
 export async function generateStructured<TSchema extends z.ZodType>(params: {
   config: RuntimeLlmConfig;
@@ -63,12 +67,18 @@ export async function generateStructured<TSchema extends z.ZodType>(params: {
   prompt: string;
   deterministic?: boolean;
   correlationId?: string;
+  timeoutMs?: number;
 }): Promise<
   | { ok: true; output: z.infer<TSchema>; attempts: number }
   | { ok: false; status: "needs_manual_review"; error: string }
 > {
   const model = resolveModel(params.config);
   const temperature = params.deterministic === false ? (params.config.temperature ?? 0.9) : 0;
+  const effectiveMaxTokens = Math.min(
+    Math.max(512, params.config.maxTokens ?? 8_192),
+    MAX_STRUCTURED_OUTPUT_TOKENS,
+  );
+  const attemptTimeoutMs = params.timeoutMs ?? DEFAULT_LLM_ATTEMPT_TIMEOUT_MS;
 
   let lastError = "";
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -79,7 +89,9 @@ export async function generateStructured<TSchema extends z.ZodType>(params: {
         output: Output.object({ schema: params.schema }),
         prompt: params.prompt,
         temperature,
-        maxOutputTokens: params.config.maxTokens ?? 8192,
+        maxOutputTokens: effectiveMaxTokens,
+        maxRetries: 0,
+        timeout: attemptTimeoutMs,
       });
 
       logEvent("info", {
@@ -88,7 +100,7 @@ export async function generateStructured<TSchema extends z.ZodType>(params: {
         resource: `${params.config.provider}/${params.config.model}`,
         outcome: "success",
         duration_ms: Date.now() - started,
-        meta: { attempt },
+        meta: { attempt, maxOutputTokens: effectiveMaxTokens },
       });
 
       const validatedOutput = params.schema.parse(result.output);
@@ -101,14 +113,17 @@ export async function generateStructured<TSchema extends z.ZodType>(params: {
         resource: `${params.config.provider}/${params.config.model}`,
         outcome: "failure",
         duration_ms: Date.now() - started,
-        meta: { attempt, reason: lastError },
+        meta: { attempt, reason: lastError, timeoutMs: attemptTimeoutMs },
       });
     }
   }
 
+  const isTimeout = /\b(?:abort|aborted|timeout|timed out)\b/i.test(lastError);
   return {
     ok: false,
     status: "needs_manual_review",
-    error: `Structured output validation failed after 2 attempts: ${lastError}`,
+    error: isTimeout
+      ? `Permintaan ke model AI (${params.config.provider}/${params.config.model}) melewati batas waktu ${Math.round(attemptTimeoutMs / 1000)} detik per percobaan (${lastError}).`
+      : `Structured output validation failed after 2 attempts: ${lastError}`,
   };
 }

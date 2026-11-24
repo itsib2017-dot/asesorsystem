@@ -25,6 +25,27 @@ export { formatSchemeInstructionsText, selectDitInputFiles };
 
 const DRIVE_FILE_ID_REGEX = /^[a-zA-Z0-9_-]{5,128}$/;
 const MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024;
+export const EXTRACT_FILE_TIMEOUT_MS = 30_000;
+
+async function runWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
 const ALLOWED_DRIVE_DOWNLOAD_DOMAINS = [
   "drive.google.com",
   "drive.usercontent.google.com",
@@ -244,15 +265,21 @@ export async function ensureDriveFileExtracted(params: {
   }
 
   try {
-    const buffer = await downloadPublicDriveFileBuffer({
-      driveFileId: params.file.driveFileId,
-      apiKey: params.apiKey,
-    });
-    const parsed = await extractTextFromBuffer({
-      buffer,
-      fileName: params.file.fileName,
-      mimeType: params.file.mimeType,
-    });
+    const parsed = await runWithTimeout(
+      (async () => {
+        const buffer = await downloadPublicDriveFileBuffer({
+          driveFileId: params.file.driveFileId,
+          apiKey: params.apiKey,
+        });
+        return extractTextFromBuffer({
+          buffer,
+          fileName: params.file.fileName,
+          mimeType: params.file.mimeType,
+        });
+      })(),
+      EXTRACT_FILE_TIMEOUT_MS,
+      "EXTRACTION_TIMEOUT: Batas waktu ekstraksi berkas (30 detik) terlampaui.",
+    );
 
     const trimmed = parsed.text.trim();
     if (!trimmed) {

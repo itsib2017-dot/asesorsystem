@@ -1,3 +1,5 @@
+import { readApiResponse } from "@/lib/http/read-api-response";
+
 export interface JobTerminalState {
   status: "done" | "failed" | "timeout";
   error: string | null;
@@ -14,7 +16,7 @@ export async function waitForJob(
   fetcher: Fetcher = (url) => fetch(url, { cache: "no-store" }),
   options: { timeoutMs?: number; pollMs?: number } = {},
 ): Promise<JobTerminalState> {
-  const timeoutMs = options.timeoutMs ?? 180_000;
+  const timeoutMs = options.timeoutMs ?? 310_000;
   const pollMs = options.pollMs ?? 2_000;
   const deadline = Date.now() + timeoutMs;
 
@@ -22,12 +24,12 @@ export async function waitForJob(
     try {
       const res = await fetcher(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
       if (res.ok) {
-        const body = (await res.json()) as {
-          data?: { status?: string; error?: string | null };
-        };
-        const status = body.data?.status;
-        if (status === "done" || status === "failed") {
-          return { status, error: body.data?.error ?? null };
+        const parsed = await readApiResponse<{ status?: string; error?: string | null }>(res);
+        if (parsed.ok) {
+          const status = parsed.data?.status;
+          if (status === "done" || status === "failed") {
+            return { status, error: parsed.data?.error ?? null };
+          }
         }
       }
     } catch {

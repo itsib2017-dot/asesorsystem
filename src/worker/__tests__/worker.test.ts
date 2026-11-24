@@ -97,6 +97,7 @@ vi.mock("@/repositories/schemes.repository", () => ({
 import JSZip from "jszip";
 import { runWorkerJob } from "../index";
 import { enqueueJob, executeJob } from "../queue";
+import { STALE_RUNNING_MS, isStaleRunningJob } from "../job-staleness";
 
 describe("Worker dispatcher and queue runner", () => {
   beforeEach(() => {
@@ -912,5 +913,86 @@ describe("Worker dispatcher and queue runner", () => {
         tukName: "TUK Sewaktu K3 Prima",
       }),
     );
+  });
+
+  it("surfaces extraction error details on dit_analysis when Drive file extraction fails or PDF is scan-only", async () => {
+    mocks.getAssesseeById.mockResolvedValue({
+      id: "as-scan",
+      lspId: "lsp-1",
+      batchId: "b-scan",
+      displayName: "Asesi Uji",
+      pseudonym: "ASESI-001",
+    });
+    mocks.getBatchById.mockResolvedValue({
+      id: "b-scan",
+      lspId: "lsp-1",
+      schemeId: "scheme-1",
+      name: "Simulasi DIT",
+    });
+    mocks.listDriveFilesForBatch.mockResolvedValue([
+      {
+        id: "f-04a",
+        assesseeId: "as-scan",
+        docType: "04a",
+        fileName: "FR.IA.04A.docx",
+        driveFileId: "drive04a12345",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        extractedText: "Daftar Instruksi Terstruktur lengkap proyek K3.",
+        driveModifiedTime: null,
+      },
+      {
+        id: "f-04b",
+        assesseeId: "as-scan",
+        docType: "04b",
+        fileName: "Presentasi.pptx",
+        driveFileId: "drive04b12345",
+        mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        extractedText: "Slide presentasi pengendalian risiko bahaya ruang terbatas.",
+        driveModifiedTime: null,
+      },
+      {
+        id: "f-cv",
+        assesseeId: "as-scan",
+        docType: "cv",
+        fileName: "CV_Scan.pdf",
+        driveFileId: "drivecvscan123",
+        mimeType: "application/pdf",
+        extractedText: null,
+        driveModifiedTime: null,
+      },
+    ]);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(Buffer.from("%PDF-1.4\n%%EOF", "latin1"), {
+        status: 200,
+        headers: { "content-type": "application/pdf" },
+      }),
+    );
+
+    await expect(
+      runWorkerJob({
+        id: "job-dit-scan-fail",
+        type: "dit_analysis",
+        userId: "user-1",
+        payload: { assesseeId: "as-scan" },
+      }),
+    ).rejects.toThrow(/Bahan DIT belum lengkap setelah ekstraksi.*CV_Scan\.pdf.*lapisan teks/);
+  });
+
+  it("marks running jobs stale right after the 300s Vercel limit (STALE_RUNNING_MS = 305s)", () => {
+    const baseTime = Date.parse("2026-11-24T06:02:45.000Z");
+    expect(STALE_RUNNING_MS).toBe(305_000);
+    expect(
+      isStaleRunningJob(
+        { status: "running", updatedAt: "2026-11-24T06:02:45.000Z" },
+        baseTime + 300_000,
+      ),
+    ).toBe(false);
+    expect(
+      isStaleRunningJob(
+        { status: "running", updatedAt: "2026-11-24T06:02:45.000Z" },
+        baseTime + 306_000,
+      ),
+    ).toBe(true);
   });
 });

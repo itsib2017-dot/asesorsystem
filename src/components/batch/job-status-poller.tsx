@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, Clock, RefreshCw } from "lucide-react";
+import { readApiResponse } from "@/lib/http/read-api-response";
 
 export interface JobStatusPollerProps {
   batchId: string;
@@ -97,26 +98,24 @@ export function JobStatusPoller({
         });
         if (!res.ok || cancelled) return;
 
-        const body = (await res.json()) as {
-          ok?: boolean;
-          data?: {
-            id?: string;
-            status?: string;
-            progress?: number;
-            latestJob?: PolledJobSnapshot | null;
-          };
-        };
+        const parsed = await readApiResponse<{
+          id?: string;
+          status?: string;
+          progress?: number;
+          latestJob?: PolledJobSnapshot | null;
+        }>(res);
+        if (!parsed.ok || cancelled) return;
 
         const snapshot: PolledJobSnapshot | null =
           mode === "job"
-            ? body.data?.id && body.data?.status
+            ? parsed.data?.id && parsed.data?.status
               ? {
-                  id: body.data.id,
-                  status: body.data.status,
-                  progress: Number(body.data.progress ?? 0),
+                  id: parsed.data.id,
+                  status: parsed.data.status,
+                  progress: Number(parsed.data.progress ?? 0),
                 }
               : null
-            : body.data?.latestJob ?? null;
+            : parsed.data?.latestJob ?? null;
 
         if (!snapshot || cancelled) return;
 

@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, FolderOpen } from "lucide-react";
+import { readApiResponse } from "@/lib/http/read-api-response";
 
 interface CreateBatchPanelProps {
   schemes: Array<{ id: string; code: string; name: string }>;
@@ -40,17 +41,13 @@ export function CreateBatchPanel({ schemes }: CreateBatchPanelProps) {
           kelompokSheetUrl: kelompokSheetUrl || undefined,
         }),
       });
-      const json = (await res.json()) as {
-        ok: boolean;
-        data?: { batchId: string };
-        error?: { message: string };
-      };
-      if (!res.ok || !json.ok) {
-        setError(json.error?.message ?? "Gagal membuat batch.");
+      const parsed = await readApiResponse<{ batchId: string }>(res, "Gagal membuat batch.");
+      if (!parsed.ok) {
+        setError(parsed.message);
         return;
       }
       setOpen(false);
-      router.push(`/batches/${json.data?.batchId}`);
+      router.push(`/batches/${parsed.data?.batchId}`);
       router.refresh();
     } catch {
       setError("Koneksi gagal saat membuat batch.");

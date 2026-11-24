@@ -4,6 +4,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Clock, FileWarning, Play } from "lucide-react";
+import { readApiResponse } from "@/lib/http/read-api-response";
 import { waitForJob } from "@/lib/jobs/wait-for-job";
 
 interface InputStatusItem {
@@ -97,44 +98,40 @@ export function DitAnalysisTrigger({
         body: JSON.stringify(payload),
       });
 
-      const json = (await res.json()) as {
-        ok?: boolean;
-        data?: { job_id?: string; status?: string; error?: string };
-        error?: { message?: string; details?: Array<{ issue?: string }> };
-      };
+      const parsed = await readApiResponse<{
+        job_id?: string;
+        status?: string;
+        error?: string;
+      }>(res, "Gagal menjalankan analisis DIT.");
 
-      if (!res.ok || !json.ok) {
-        const detailMsg = json.error?.details
-          ?.map((d) => d.issue)
-          .filter(Boolean)
-          .join("; ");
+      if (!parsed.ok) {
         setFeedback({
           type: "error",
-          text: [json.error?.message || "Gagal menjalankan analisis DIT.", detailMsg]
-            .filter(Boolean)
-            .join(" "),
+          text: parsed.message,
         });
+        router.refresh();
         return;
       }
 
-      if (json.data?.status === "failed") {
+      if (parsed.data?.status === "failed") {
         setFeedback({
           type: "error",
-          text: `Job ${json.data.job_id ?? ""} gagal: ${json.data.error || "Terjadi kesalahan worker."}`,
+          text: `Job ${parsed.data.job_id ?? ""} gagal: ${parsed.data.error || "Terjadi kesalahan worker."}`,
         });
+        router.refresh();
         return;
       }
 
-      const jobId = json.data?.job_id;
+      const jobId = parsed.data?.job_id;
       if (jobId) {
-        const final = await waitForJob(jobId);
+        const final = await waitForJob(jobId, undefined, { timeoutMs: 310_000 });
         if (final.status !== "done") {
           setFeedback({
             type: "error",
             text:
               final.status === "failed"
-                ? `Analisis DIT gagal (Job ${jobId.slice(0, 8)}): ${final.error?.slice(0, 400) ?? "kesalahan worker."} Periksa kuota/mode BYOK Anda di Penyedia AI lalu jalankan ulang.`
-                : `Analisis DIT masih berjalan (Job ${jobId.slice(0, 8)}). Periksa Status Pindai/Job pada halaman batch.`,
+                ? `Analisis DIT gagal (Job ${jobId.slice(0, 8)}): ${final.error ?? "kesalahan worker."} Periksa kuota/mode BYOK Anda di Penyedia AI lalu jalankan ulang.`
+                : `Analisis DIT masih berjalan atau melewati batas waktu tunggu (Job ${jobId.slice(0, 8)}). Periksa Status Pindai/Job pada halaman batch lalu segarkan halaman.`,
           });
           router.refresh();
           return;
@@ -249,7 +246,7 @@ export function DitAnalysisTrigger({
         <div
           role="status"
           aria-live="polite"
-          className={`p-3 rounded-xl text-xs border ${
+          className={`p-3 rounded-xl text-xs border whitespace-pre-wrap break-words ${
             feedback.type === "success"
               ? "bg-emerald-50 border-emerald-200 text-emerald-900"
               : "bg-rose-50 border-rose-200 text-rose-900"

@@ -35,7 +35,7 @@ import {
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import { getActiveSignature } from "@/repositories/signatures.repository";
-import { runDitPipeline } from "@/services/dit";
+import { checkDitCompletenessGate, runDitPipeline } from "@/services/dit";
 import { parseSuratTugasText } from "@/services/surat-tugas";
 import {
   classifyDocumentTextContent,
@@ -1098,6 +1098,20 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
   const presentationTranscript = payload04b || resolvedInputs?.presentationTranscript || "";
   const candidateProfileSummary = payloadCv || resolvedInputs?.candidateProfileSummary || "";
 
+  const earlyGate = checkDitCompletenessGate({
+    frIa04aText,
+    presentationTranscript,
+    candidateProfileSummary,
+  });
+  if (!earlyGate.passed) {
+    const missingLabels = earlyGate.missing.map((m) => m.label).join(", ");
+    const errList = resolvedInputs?.extractionErrors ?? [];
+    const extractionSuffix = errList.length > 0 ? ` (${errList.join("; ")})` : "";
+    throw new Error(
+      `UNPROCESSABLE: Bahan DIT belum lengkap setelah ekstraksi (${missingLabels})${extractionSuffix}`,
+    );
+  }
+
   const llmConfig = await requireLlmConfig(userId);
 
   const result = await runDitPipeline({
@@ -1113,6 +1127,14 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
   });
 
   if (!result.ok) {
+    if (result.reason === "incomplete_inputs" && "missing" in result) {
+      const missingLabels = result.missing.map((m) => m.label).join(", ");
+      const errList = resolvedInputs?.extractionErrors ?? [];
+      const extractionSuffix = errList.length > 0 ? ` (${errList.join("; ")})` : "";
+      throw new Error(
+        `UNPROCESSABLE: Bahan DIT belum lengkap setelah ekstraksi (${missingLabels})${extractionSuffix}`,
+      );
+    }
     throw new Error(
       "error" in result && result.error ? result.error : `DIT_FAILED: ${result.reason}`,
     );

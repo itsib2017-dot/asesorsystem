@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Play } from "lucide-react";
+import { readApiResponse } from "@/lib/http/read-api-response";
 
 interface ExtractFileTriggerProps {
   batchId: string;
@@ -50,21 +51,20 @@ export function ExtractFileTrigger({
           },
         }),
       });
-      const json = (await res.json()) as {
-        ok?: boolean;
-        data?: { job_id?: string; status?: string };
-        error?: { message?: string };
-      };
-      if (!res.ok || !json.ok) {
+      const parsed = await readApiResponse<{ job_id?: string; status?: string }>(
+        res,
+        "Gagal menjalankan ekstraksi berkas.",
+      );
+      if (!parsed.ok) {
         setFeedback({
           type: "error",
-          text: json.error?.message || "Gagal menjalankan ekstraksi berkas.",
+          text: parsed.message,
         });
         return;
       }
       setFeedback({
         type: "success",
-        text: `Ekstraksi berkas dijalankan (Job ${json.data?.job_id?.slice(0, 8) ?? "-"} · ${json.data?.status ?? "done"}). Segarkan halaman untuk melihat hasilnya.`,
+        text: `Ekstraksi berkas dijalankan (Job ${parsed.data?.job_id?.slice(0, 8) ?? "-"} · ${parsed.data?.status ?? "done"}). Segarkan halaman untuk melihat hasilnya.`,
       });
       router.refresh();
     } catch (err) {
