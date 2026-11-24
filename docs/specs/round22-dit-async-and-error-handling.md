@@ -16,9 +16,10 @@
 ## 3. Kriteria Penerimaan (Acceptance Criteria)
 1. `POST /api/v1/dit/[assesseeId]/analyse` melakukan pemeriksaan RBAC (`403` jika bukan `lsp_admin`/`assessor`) dan validasi kelengkapan metadata DB tanpa download Drive sinkron (`422` jika belum lengkap), lalu langsung mengembalikan `202 Accepted` JSON (`runImmediately: false`) dan menjadwalkan `executeJob` lewat Next.js `after()` dengan `maxDuration = 300`.
 2. Worker mengekstrak berkas Drive secara asinkron dengan batas waktu per-berkas `30.000 ms` dan melempar detail error ekstraksi (`UNPROCESSABLE: Bahan DIT belum lengkap setelah ekstraksi ...`) bila dokumen ternyata pindaian gambar kosong.
-3. `generateStructured` membatasi `maxOutputTokens <= 16_384`, `maxRetries: 0`, dan `timeout: 115_000 ms` per percobaan agar 2 percobaan tetap selesai di bawah batas 300 detik dan memunculkan pesan timeout yang jelas bila model lambat.
-4. `STALE_RUNNING_MS` disetel ke `305_000 ms` agar job yang terhenti oleh batas 300s platform langsung berstatus `failed` saat di-poll di `310s`.
-5. Klien UI (`readApiResponse`) membaca `res.text()` sebelum `JSON.parse` dan menampilkan pesan non-JSON platform (HTTP 502/504) maupun error worker secara utuh tanpa pemotongan.
+3. `generateStructured` membatasi `maxOutputTokens <= 16_384`, `maxRetries: 0`, dan memakai anggaran waktu dinamis (`DEFAULT_LLM_TOTAL_BUDGET_MS = 240_000`, `DEFAULT_LLM_ATTEMPT_TIMEOUT_MS = 220_000` untuk Attempt 1, tanpa mengulang panggilan identik bila Attempt 1 timeout, serta `MIN_LLM_RETRY_BUDGET_MS = 30_000` untuk error validasi cepat).
+4. `extractTextFromXlsx` merender `richText`/formula/hyperlinks secara akurat tanpa `[object Object]` serta menduplikasi sel merge; `compactDitPromptSection` membersihkan pengulangan/placeholder pada teks cache DB (`04A <= 16k`, `presentasi/formulir <= 24k`, `CV <= 8k` char) setelah `redactPii`.
+5. `STALE_RUNNING_MS` disetel ke `305_000 ms` agar job yang terhenti oleh batas 300s platform langsung berstatus `failed` saat di-poll di `310s`.
+6. Klien UI (`readApiResponse`, `waitForJob` + `onProgress`, `formatDitJobFailureMessage`) membaca `res.text()` sebelum `JSON.parse`, menampilkan **Job ID lengkap** & status live saat proses berjalan, serta membedakan panduan **timeout** (*bukan masalah kuota*), **kuota**, **konfigurasi BYOK**, dan **masukan/ekstraksi** secara utuh tanpa pemotongan.
 
 ## 4. Daftar Tiket (F5)
 1. `readApiResponse` + pembaruan trigger UI (`dit-analysis-trigger`, `create-batch-panel`, `similarity-run-trigger`, `extract-file-trigger`, `wait-for-job`, `job-status-poller`).

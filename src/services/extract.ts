@@ -233,6 +233,38 @@ export async function extractTextFromPptx(buffer: Buffer): Promise<string> {
   return chunks.join("\n").trim();
 }
 
+const PLACEHOLDER_CELL_RE = /^[….\-_=|:•]+$/;
+
+export function formatExcelCellValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value).trim();
+  }
+  if (value instanceof Date) {
+    return !Number.isNaN(value.getTime()) ? value.toISOString().slice(0, 10) : "";
+  }
+  if (typeof value === "object") {
+    const obj = value as {
+      richText?: Array<{ text?: unknown }>;
+      result?: unknown;
+      text?: unknown;
+    };
+    if (Array.isArray(obj.richText)) {
+      return obj.richText
+        .map((part) => (typeof part?.text === "string" ? part.text : ""))
+        .join("")
+        .trim();
+    }
+    if ("result" in obj && obj.result !== undefined && obj.result !== null) {
+      return formatExcelCellValue(obj.result);
+    }
+    if (typeof obj.text === "string") {
+      return obj.text.trim();
+    }
+  }
+  return "";
+}
+
 export async function extractTextFromXlsx(buffer: Buffer): Promise<string> {
   if (isOleEncryptedBuffer(buffer)) {
     throw new Error("KEY_ENCRYPTED: File Excel terenkripsi memerlukan kata sandi runtime.");
@@ -248,10 +280,25 @@ export async function extractTextFromXlsx(buffer: Buffer): Promise<string> {
 
   workbook.eachSheet((sheet) => {
     lines.push(`--- Sheet: ${sheet.name} ---`);
+    let prevLine = "";
     sheet.eachRow((row) => {
-      const vals = (row.values as unknown[]).slice(1).map((v) => String(v ?? "").trim());
-      if (vals.some(Boolean)) {
-        lines.push(vals.join(" | "));
+      const cells = (row.values as unknown[])
+        .slice(1)
+        .map(formatExcelCellValue)
+        .filter((cell) => cell.length > 0 && !PLACEHOLDER_CELL_RE.test(cell));
+
+      const dedup: string[] = [];
+      for (const cell of cells) {
+        if (dedup[dedup.length - 1] !== cell) {
+          dedup.push(cell);
+        }
+      }
+      if (dedup.length === 0) return;
+
+      const line = dedup.join(" | ");
+      if (line !== prevLine) {
+        lines.push(line);
+        prevLine = line;
       }
     });
   });

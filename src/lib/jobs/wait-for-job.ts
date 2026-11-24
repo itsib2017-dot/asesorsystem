@@ -11,10 +11,19 @@ type Fetcher = (url: string) => Promise<Response>;
  * Wait for a queued job to reach a terminal state. Server Actions enqueue
  * asynchronously; reporting success on HTTP 202 hides worker failures.
  */
+export interface JobProgressSnapshot {
+  status: string;
+  progress: number;
+}
+
 export async function waitForJob(
   jobId: string,
   fetcher: Fetcher = (url) => fetch(url, { cache: "no-store" }),
-  options: { timeoutMs?: number; pollMs?: number } = {},
+  options: {
+    timeoutMs?: number;
+    pollMs?: number;
+    onProgress?: (snapshot: JobProgressSnapshot) => void;
+  } = {},
 ): Promise<JobTerminalState> {
   const timeoutMs = options.timeoutMs ?? 310_000;
   const pollMs = options.pollMs ?? 2_000;
@@ -24,9 +33,19 @@ export async function waitForJob(
     try {
       const res = await fetcher(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
       if (res.ok) {
-        const parsed = await readApiResponse<{ status?: string; error?: string | null }>(res);
+        const parsed = await readApiResponse<{
+          status?: string;
+          progress?: number;
+          error?: string | null;
+        }>(res);
         if (parsed.ok) {
           const status = parsed.data?.status;
+          if (status) {
+            options.onProgress?.({
+              status,
+              progress: Number(parsed.data?.progress ?? 0),
+            });
+          }
           if (status === "done" || status === "failed") {
             return { status, error: parsed.data?.error ?? null };
           }

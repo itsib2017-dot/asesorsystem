@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { checkDitCompletenessGate } from "../dit";
+import { buildDitGapAnalysisPrompt, compactDitPromptSection } from "@/ai/prompts/dit-gap-analysis.v1";
 import { buildDitAnalysisSchema, buildInterviewQuestionsSchema } from "@/ai/schemas";
 
 describe("DIT Completeness Gate & Dynamic Manifest Schema (Rule 26 & D21)", () => {
@@ -105,5 +106,38 @@ describe("DIT Completeness Gate & Dynamic Manifest Schema (Rule 26 & D21)", () =
       },
     });
     expect(missingDimension.success).toBe(false);
+  });
+
+  it("compacts Excel merge repetition, [object Object], and dot placeholders losslessly in buildDitGapAnalysisPrompt", () => {
+    const noisyPresentation = [
+      "--- Sheet: IBPR kosong ---",
+      " |  | ….................. | ….................. | …..................",
+      " |  | DEPARTEMEN : | DEPARTEMEN : | DEPARTEMEN :",
+      "KODE TEMPAT | AKTIVITAS | BAHAYA | RISIKO",
+      "KODE TEMPAT | AKTIVITAS | BAHAYA | RISIKO",
+      "1 | WWT AREA | CLEANING TANKI | Gas H2S dan limbah B3 | Sesak napas dan pencemaran | 16 | Tinggi",
+      "[object Object] | [object Object] | Penilaian risiko kuantitatif",
+    ].join("\n");
+
+    const compacted = compactDitPromptSection(noisyPresentation, 24_000);
+    expect(compacted).not.toContain("[object Object]");
+    expect(compacted).not.toContain("…..................");
+    expect(compacted).not.toContain("DEPARTEMEN : | DEPARTEMEN :");
+    expect(compacted).toContain("CLEANING TANKI | Gas H2S dan limbah B3");
+    expect(compacted).toContain("Penilaian risiko kuantitatif");
+
+    const prompt = buildDitGapAnalysisPrompt({
+      pseudonym: "ASESI-001",
+      schemeName: "Ahli K3 Umum",
+      questionCount: 13,
+      legalRefs: ["Permenaker No. 2/1992"],
+      frIa04aText: "Instruksi proyek terstruktur K3\n\n\n\nDetail penugasan lapangan.",
+      presentationTranscript: noisyPresentation,
+      candidateProfileSummary: "Pengalaman HSE 4 tahun.",
+    });
+
+    expect(prompt).not.toContain("[object Object]");
+    expect(prompt).toContain("CLEANING TANKI | Gas H2S dan limbah B3");
+    expect(prompt).toContain("ASESI-001");
   });
 });

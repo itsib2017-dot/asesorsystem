@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import JSZip from "jszip";
+import ExcelJS from "exceljs";
 import zlib from "node:zlib";
 
 const mocks = vi.hoisted(() => ({
@@ -461,6 +462,34 @@ describe("File text extraction & SSRF-guarded Drive download (T2)", () => {
       "Nomor: 3801/ST/LSP-K3N/XI/2026",
       "2 Suhartono -",
       "GoWork Lippo Mall",
+    ]);
+  });
+
+  it("extracts ExcelJS richText/formula cells cleanly without [object Object] and deduplicates merged cells", async () => {
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet("IBPR");
+    sheet.addRow(["…..................", "…..................", "….................."]);
+    sheet.addRow(["DEPARTEMEN :", "DEPARTEMEN :", "DEPARTEMEN :", "HSE"]);
+    sheet.addRow(["DEPARTEMEN :", "DEPARTEMEN :", "DEPARTEMEN :", "HSE"]);
+    sheet.addRow([
+      { richText: [{ text: "Cleaning " }, { text: "Tanki" }] },
+      { formula: "2*8", result: 16 },
+      { text: "Risiko Tinggi", hyperlink: "https://example.com" },
+    ]);
+    const arrayBuf = await wb.xlsx.writeBuffer();
+    const out = await extractTextFromBuffer({
+      buffer: Buffer.from(arrayBuf),
+      fileName: "IBR Cleaning Tanki.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    expect(out.extractionMethod).toBe("ooxml_xlsx");
+    expect(out.text).not.toContain("[object Object]");
+    expect(out.text).not.toContain("…..................");
+    expect(out.text.split("\n")).toEqual([
+      "--- Sheet: IBPR ---",
+      "DEPARTEMEN : | HSE",
+      "Cleaning Tanki | 16 | Risiko Tinggi",
     ]);
   });
 });

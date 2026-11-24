@@ -3,8 +3,9 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Clock, FileWarning, Play } from "lucide-react";
+import { CheckCircle2, Clock, FileWarning, Play, RefreshCw } from "lucide-react";
 import { readApiResponse } from "@/lib/http/read-api-response";
+import { formatDitJobFailureMessage } from "@/lib/jobs/format-dit-error";
 import { waitForJob } from "@/lib/jobs/wait-for-job";
 
 interface InputStatusItem {
@@ -32,6 +33,11 @@ export function DitAnalysisTrigger({
 }: DitAnalysisTriggerProps) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
+  const [activeJob, setActiveJob] = useState<{
+    id: string;
+    status: string;
+    progress: number;
+  } | null>(null);
   const [manual04a, setManual04a] = useState("");
   const [manual04b, setManual04b] = useState("");
   const [manualCv, setManualCv] = useState("");
@@ -84,6 +90,7 @@ export function DitAnalysisTrigger({
   const handleRunAnalysis = async () => {
     if (running) return;
     setRunning(true);
+    setActiveJob(null);
     setFeedback(null);
 
     try {
@@ -101,6 +108,7 @@ export function DitAnalysisTrigger({
       const parsed = await readApiResponse<{
         job_id?: string;
         status?: string;
+        progress?: number;
         error?: string;
       }>(res, "Gagal menjalankan analisis DIT.");
 
@@ -116,7 +124,10 @@ export function DitAnalysisTrigger({
       if (parsed.data?.status === "failed") {
         setFeedback({
           type: "error",
-          text: `Job ${parsed.data.job_id ?? ""} gagal: ${parsed.data.error || "Terjadi kesalahan worker."}`,
+          text: formatDitJobFailureMessage(
+            parsed.data.job_id ?? "-",
+            parsed.data.error || "Terjadi kesalahan worker.",
+          ),
         });
         router.refresh();
         return;
@@ -124,13 +135,23 @@ export function DitAnalysisTrigger({
 
       const jobId = parsed.data?.job_id;
       if (jobId) {
-        const final = await waitForJob(jobId, undefined, { timeoutMs: 310_000 });
+        setActiveJob({
+          id: jobId,
+          status: parsed.data?.status ?? "pending",
+          progress: Number(parsed.data?.progress ?? 0),
+        });
+        const final = await waitForJob(jobId, undefined, {
+          timeoutMs: 310_000,
+          onProgress: ({ status, progress }) => {
+            setActiveJob({ id: jobId, status, progress });
+          },
+        });
         if (final.status !== "done") {
           setFeedback({
             type: "error",
             text:
               final.status === "failed"
-                ? `Analisis DIT gagal (Job ${jobId.slice(0, 8)}): ${final.error ?? "kesalahan worker."} Periksa kuota/mode BYOK Anda di Penyedia AI lalu jalankan ulang.`
+                ? formatDitJobFailureMessage(jobId, final.error)
                 : `Analisis DIT masih berjalan atau melewati batas waktu tunggu (Job ${jobId.slice(0, 8)}). Periksa Status Pindai/Job pada halaman batch lalu segarkan halaman.`,
           });
           router.refresh();
@@ -150,6 +171,7 @@ export function DitAnalysisTrigger({
       });
     } finally {
       setRunning(false);
+      setActiveJob(null);
     }
   };
 
@@ -241,6 +263,30 @@ export function DitAnalysisTrigger({
           </div>
         </div>
       </details>
+
+      {running && activeJob && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="p-3 rounded-xl text-xs border bg-sky-50 border-sky-200 text-sky-900 flex flex-wrap items-center justify-between gap-2"
+        >
+          <span className="inline-flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+            <span>
+              Analisis DIT sedang berjalan — Job ID:{" "}
+              <code
+                data-testid="dit-active-job-id"
+                className="font-mono font-semibold break-all"
+              >
+                {activeJob.id}
+              </code>
+            </span>
+          </span>
+          <span className="px-2 py-0.5 rounded-full bg-white border border-sky-200 font-mono text-[11px]">
+            {activeJob.status} · {activeJob.progress}%
+          </span>
+        </div>
+      )}
 
       {feedback && (
         <div

@@ -53,13 +53,20 @@ function resolveModel(cfg: RuntimeLlmConfig) {
 }
 
 export const MAX_STRUCTURED_OUTPUT_TOKENS = 16_384;
-export const DEFAULT_LLM_ATTEMPT_TIMEOUT_MS = 115_000;
+export const DEFAULT_LLM_TOTAL_BUDGET_MS = 240_000;
+export const DEFAULT_LLM_ATTEMPT_TIMEOUT_MS = 220_000;
+export const MIN_LLM_RETRY_BUDGET_MS = 30_000;
+
+export function isLlmTimeoutError(message: string): boolean {
+  return /\b(?:abort|aborted|timeout|timed out)\b/i.test(message);
+}
 
 /**
  * Unified LLM structured execution wrapper (Rule 42 & §4.4).
  * Uses temperature 0 for deterministic grading/analysis/jury calls.
- * Retries once on structured validation error, caps output tokens, and
- * bounds each attempt well within Vercel's 300s function limit.
+ * Allocates up to 220s on attempt 1 inside a 240s total budget so reasoning
+ * models finish cleanly under Vercel's 300s limit, retries once only for fast
+ * non-timeout failures when ≥30s budget remains, and caps output tokens.
  */
 export async function generateStructured<TSchema extends z.ZodType>(params: {
   config: RuntimeLlmConfig;
@@ -68,6 +75,7 @@ export async function generateStructured<TSchema extends z.ZodType>(params: {
   deterministic?: boolean;
   correlationId?: string;
   timeoutMs?: number;
+  totalBudgetMs?: number;
 }): Promise<
   | { ok: true; output: z.infer<TSchema>; attempts: number }
   | { ok: false; status: "needs_manual_review"; error: string }
@@ -78,11 +86,24 @@ export async function generateStructured<TSchema extends z.ZodType>(params: {
     Math.max(512, params.config.maxTokens ?? 8_192),
     MAX_STRUCTURED_OUTPUT_TOKENS,
   );
-  const attemptTimeoutMs = params.timeoutMs ?? DEFAULT_LLM_ATTEMPT_TIMEOUT_MS;
+  const attemptCapMs = params.timeoutMs ?? DEFAULT_LLM_ATTEMPT_TIMEOUT_MS;
+  const totalBudgetMs =
+    params.totalBudgetMs ?? Math.max(DEFAULT_LLM_TOTAL_BUDGET_MS, attemptCapMs);
+  const deadline = Date.now() + totalBudgetMs;
 
   let lastError = "";
+  let lastAttemptTimeoutMs = attemptCapMs;
+
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const remainingMs = deadline - Date.now();
+    if (attempt > 1 && remainingMs < MIN_LLM_RETRY_BUDGET_MS) {
+      break;
+    }
+
+    const callTimeoutMs = Math.max(1_000, Math.min(attemptCapMs, remainingMs));
+    lastAttemptTimeoutMs = callTimeoutMs;
     const started = Date.now();
+
     try {
       const result = await generateText({
         model,
@@ -91,7 +112,7 @@ export async function generateStructured<TSchema extends z.ZodType>(params: {
         temperature,
         maxOutputTokens: effectiveMaxTokens,
         maxRetries: 0,
-        timeout: attemptTimeoutMs,
+        timeout: callTimeoutMs,
       });
 
       logEvent("info", {
@@ -100,30 +121,35 @@ export async function generateStructured<TSchema extends z.ZodType>(params: {
         resource: `${params.config.provider}/${params.config.model}`,
         outcome: "success",
         duration_ms: Date.now() - started,
-        meta: { attempt, maxOutputTokens: effectiveMaxTokens },
+        meta: { attempt, maxOutputTokens: effectiveMaxTokens, timeoutMs: callTimeoutMs },
       });
 
       const validatedOutput = params.schema.parse(result.output);
       return { ok: true, output: validatedOutput, attempts: attempt };
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
+      const timedOut = isLlmTimeoutError(lastError);
       logEvent("warn", {
         correlation_id: params.correlationId,
         action: "llm.generateStructured",
         resource: `${params.config.provider}/${params.config.model}`,
         outcome: "failure",
         duration_ms: Date.now() - started,
-        meta: { attempt, reason: lastError, timeoutMs: attemptTimeoutMs },
+        meta: { attempt, reason: lastError, timeoutMs: callTimeoutMs, timedOut },
       });
+
+      // Never re-run an identical prompt after a timeout/abort; fail cleanly instead.
+      if (timedOut) {
+        break;
+      }
     }
   }
 
-  const isTimeout = /\b(?:abort|aborted|timeout|timed out)\b/i.test(lastError);
   return {
     ok: false,
     status: "needs_manual_review",
-    error: isTimeout
-      ? `Permintaan ke model AI (${params.config.provider}/${params.config.model}) melewati batas waktu ${Math.round(attemptTimeoutMs / 1000)} detik per percobaan (${lastError}).`
+    error: isLlmTimeoutError(lastError)
+      ? `Permintaan ke model AI (${params.config.provider}/${params.config.model}) melewati batas waktu ${Math.round(lastAttemptTimeoutMs / 1000)} detik (${lastError}).`
       : `Structured output validation failed after 2 attempts: ${lastError}`,
   };
 }

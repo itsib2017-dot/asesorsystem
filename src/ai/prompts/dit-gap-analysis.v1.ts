@@ -16,10 +16,84 @@ export interface DitPromptInput {
   candidateProfileSummary: string;
 }
 
+export const MAX_DIT_04A_CHARS = 16_000;
+export const MAX_DIT_PRESENTATION_CHARS = 24_000;
+export const MAX_DIT_CV_CHARS = 8_000;
+
+const PLACEHOLDER_CELL_RE = /^[….\-_=|:•]+$/;
+
+/**
+ * Losslessly removes spreadsheet merge repetition, dot-leader placeholders,
+ * literal `[object Object]` artifacts, and excess whitespace from cached DB text
+ * before sending DIT context to the LLM, while enforcing per-section char caps.
+ */
+export function compactDitPromptSection(raw: string, maxChars: number): string {
+  const lines = raw.split(/\r?\n/);
+  const cleanedLines: string[] = [];
+  let prevNonEmptyLower = "";
+  let prevBlank = false;
+
+  for (const rawLine of lines) {
+    let line = rawLine.replace(/\[object Object\]/g, "");
+    if (line.includes(" | ")) {
+      const cells = line
+        .split(" | ")
+        .map((cell) => cell.trim())
+        .filter((cell) => cell.length > 0 && !PLACEHOLDER_CELL_RE.test(cell));
+      const dedup: string[] = [];
+      for (const cell of cells) {
+        if (dedup[dedup.length - 1] !== cell) {
+          dedup.push(cell);
+        }
+      }
+      line = dedup.join(" | ");
+    }
+
+    line = line.replace(/[ \t]{2,}/g, " ").trim();
+    if (!line) {
+      if (!prevBlank && cleanedLines.length > 0) {
+        cleanedLines.push("");
+        prevBlank = true;
+      }
+      continue;
+    }
+
+    if (PLACEHOLDER_CELL_RE.test(line)) {
+      continue;
+    }
+
+    const lower = line.toLowerCase();
+    if (lower === prevNonEmptyLower && line.length >= 12) {
+      continue;
+    }
+
+    cleanedLines.push(line);
+    prevNonEmptyLower = lower;
+    prevBlank = false;
+  }
+
+  const compacted = cleanedLines.join("\n").trim();
+  if (compacted.length <= maxChars) {
+    return compacted;
+  }
+
+  const marker = "\n[...bagian tengah diringkas agar sesuai batas konteks model...]\n";
+  const available = Math.max(200, maxChars - marker.length);
+  const headLen = Math.floor(available * 0.7);
+  const tailLen = available - headLen;
+  return `${compacted.slice(0, headLen).trimEnd()}${marker}${compacted.slice(compacted.length - tailLen).trimStart()}`;
+}
+
 export function buildDitGapAnalysisPrompt(input: DitPromptInput): string {
-  const safe04a = redactPii(input.frIa04aText);
-  const safeTranscript = redactPii(input.presentationTranscript);
-  const safeProfile = redactPii(input.candidateProfileSummary);
+  const safe04a = compactDitPromptSection(redactPii(input.frIa04aText), MAX_DIT_04A_CHARS);
+  const safeTranscript = compactDitPromptSection(
+    redactPii(input.presentationTranscript),
+    MAX_DIT_PRESENTATION_CHARS,
+  );
+  const safeProfile = compactDitPromptSection(
+    redactPii(input.candidateProfileSummary),
+    MAX_DIT_CV_CHARS,
+  );
 
   const prompt = `Anda adalah Spesialis Penilaian Kompetensi Sertifikasi berbasis kerangka RCTFA (Role-Centered, Contextual, Transferable, Fact-Based Assessment) untuk skema "${input.schemeName}".
 ATURAN KETAT:

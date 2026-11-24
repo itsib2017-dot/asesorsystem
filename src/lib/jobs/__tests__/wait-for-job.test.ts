@@ -9,9 +9,9 @@ describe("waitForJob", () => {
   it("returns the real worker failure instead of reporting enqueue success", async () => {
     const fetcher = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse({ status: "running" }))
+      .mockResolvedValueOnce(jsonResponse({ status: "running", progress: 10 }))
       .mockResolvedValueOnce(
-        jsonResponse({ status: "failed", error: "BYOK quota exhausted" }),
+        jsonResponse({ status: "failed", progress: 0, error: "BYOK quota exhausted" }),
       );
 
     await expect(waitForJob("job-1", fetcher, { pollMs: 0 })).resolves.toEqual({
@@ -21,11 +21,27 @@ describe("waitForJob", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
-  it("returns done when the job completes", async () => {
-    const fetcher = vi.fn().mockResolvedValue(jsonResponse({ status: "done" }));
-    await expect(waitForJob("job-2", fetcher, { pollMs: 0 })).resolves.toEqual({
+  it("reports live status & progress updates via onProgress until terminal state", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ status: "pending", progress: 0 }))
+      .mockResolvedValueOnce(jsonResponse({ status: "running", progress: 10 }))
+      .mockResolvedValueOnce(jsonResponse({ status: "done", progress: 100 }));
+    const updates: Array<{ status: string; progress: number }> = [];
+
+    await expect(
+      waitForJob("job-2", fetcher, {
+        pollMs: 0,
+        onProgress: (snap) => updates.push(snap),
+      }),
+    ).resolves.toEqual({
       status: "done",
       error: null,
     });
+    expect(updates).toEqual([
+      { status: "pending", progress: 0 },
+      { status: "running", progress: 10 },
+      { status: "done", progress: 100 },
+    ]);
   });
 });
