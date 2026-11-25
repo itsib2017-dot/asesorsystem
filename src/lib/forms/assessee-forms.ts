@@ -542,6 +542,225 @@ export function extractOfficial04bAssessment(
   };
 }
 
+export function hasSavedOfficial04bAssessment(
+  assessment: Official04bAssessment,
+): boolean {
+  return (
+    assessment.items.length > 0 ||
+    assessment.overallRecommendation !== null ||
+    Boolean(assessment.assessedAt) ||
+    Boolean(assessment.assessedBy)
+  );
+}
+
+export type CoverageMatrixStatus = "Terpenuhi" | "Sebagian" | "Belum Dibahas";
+
+export interface Ia04bAiItemProposal {
+  kpIndex: number;
+  no: number;
+  unitCode: string;
+  achieved: boolean | null;
+  sourceStatus: CoverageMatrixStatus | null;
+  evidenceSpan?: string;
+  notes?: string;
+}
+
+export interface Ia04bAiProposal {
+  hasProposal: boolean;
+  items: Ia04bAiItemProposal[];
+  overallRecommendation: "K" | "BK" | null;
+  readinessPct: number | null;
+  readinessNote: string;
+}
+
+function normalizeMatchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function tokenizeMatchText(value: string): string[] {
+  return normalizeMatchText(value)
+    .split(/\s+/)
+    .filter((w) => w.length >= 3);
+}
+
+function parseCoverageStatus(raw: unknown): CoverageMatrixStatus | null {
+  if (raw === "Terpenuhi" || raw === "Sebagian" || raw === "Belum Dibahas") {
+    return raw;
+  }
+  return null;
+}
+
+function mapCoverageStatusToAchieved(status: CoverageMatrixStatus | null): boolean | null {
+  if (status === "Terpenuhi") return true;
+  if (status === "Belum Dibahas") return false;
+  return null;
+}
+
+function kpMatchesText(kp: SchemeKelompokSpec, text: string): boolean {
+  const norm = normalizeMatchText(text);
+  if (!norm) return false;
+  const kpTitleNorm = normalizeMatchText(kp.title);
+  if (kpTitleNorm && norm.includes(kpTitleNorm)) return true;
+  const kpTokenRe = new RegExp(`(?:kelompok pekerjaan|kp)\\s*0?${kp.kpIndex}\\b`, "i");
+  return kpTokenRe.test(text);
+}
+
+function matchCoverageRowForAspect(
+  aspect: Ia04bAspectSpec,
+  kp: SchemeKelompokSpec,
+  flatIdx: number,
+  totalAspects: number,
+  matrixRows: Array<Record<string, unknown>>,
+): Record<string, unknown> | undefined {
+  if (matrixRows.length === 0) return undefined;
+
+  const unitCodeLower = aspect.unitCode.trim().toLowerCase();
+  if (unitCodeLower) {
+    const byCode = matrixRows.find((row) => {
+      const fp = String(row.focusPoint ?? row.focus_point ?? "").toLowerCase();
+      const kpText = String(row.kelompokPekerjaan ?? row.kelompok_pekerjaan ?? "").toLowerCase();
+      return fp.includes(unitCodeLower) || kpText.includes(unitCodeLower);
+    });
+    if (byCode) return byCode;
+  }
+
+  const titleNorm = normalizeMatchText(aspect.unitTitle);
+  const lingkupNorm = normalizeMatchText(aspect.lingkup);
+  const aspectTokens = Array.from(
+    new Set([...tokenizeMatchText(aspect.unitTitle), ...tokenizeMatchText(aspect.lingkup)]),
+  );
+
+  let bestScore = 0;
+  let bestRow: Record<string, unknown> | undefined;
+  for (const row of matrixRows) {
+    const fpRaw = String(row.focusPoint ?? row.focus_point ?? "");
+    const kpRaw = String(row.kelompokPekerjaan ?? row.kelompok_pekerjaan ?? "");
+    const combinedNorm = normalizeMatchText(`${fpRaw} ${kpRaw}`);
+    if (!combinedNorm) continue;
+
+    let score = 0;
+    if (titleNorm && combinedNorm.includes(titleNorm)) {
+      score += 100;
+    } else if (lingkupNorm && combinedNorm.includes(lingkupNorm)) {
+      score += 90;
+    } else if (aspectTokens.length > 0) {
+      const rowTokens = new Set(tokenizeMatchText(`${fpRaw} ${kpRaw}`));
+      const overlap = aspectTokens.filter((t) => rowTokens.has(t)).length;
+      if (overlap / aspectTokens.length >= 0.5) {
+        score += Math.round((overlap / aspectTokens.length) * 80);
+      }
+    }
+
+    if (score > 0 && kpMatchesText(kp, kpRaw)) {
+      score += 15;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRow = row;
+    }
+  }
+  if (bestRow && bestScore > 0) {
+    return bestRow;
+  }
+
+  if (matrixRows.length === totalAspects) {
+    return matrixRows[flatIdx];
+  }
+  if (matrixRows.length >= totalAspects) {
+    const byNo = matrixRows.find((row) => Number(row.no) === flatIdx + 1);
+    if (byNo) return byNo;
+  }
+
+  const kpMatchedRows = matrixRows.filter((row) =>
+    kpMatchesText(kp, String(row.kelompokPekerjaan ?? row.kelompok_pekerjaan ?? "")),
+  );
+  if (kpMatchedRows.length === 1) {
+    return kpMatchedRows[0];
+  }
+
+  return undefined;
+}
+
+export function buildIa04bAiProposals(params: {
+  scheme?: SchemeRecord | null;
+  ditAnalysis?: Record<string, unknown> | null;
+}): Ia04bAiProposal {
+  const kelompokPekerjaan = resolveSchemeKelompokPekerjaan(params.scheme);
+  const flatPairs = kelompokPekerjaan.flatMap((kp) =>
+    kp.aspects.map((aspect) => ({ kp, aspect })),
+  );
+  const matrixRows = readArrayField(params.ditAnalysis, "coverageMatrix", "coverage_matrix");
+  const readiness = params.ditAnalysis
+    ? readField<Record<string, unknown>>(params.ditAnalysis, "readiness", "readiness")
+    : undefined;
+
+  const rawRec = readiness?.recommendation;
+  const overallRecommendation: "K" | "BK" | null =
+    rawRec === "Kompeten" || rawRec === "K"
+      ? "K"
+      : rawRec === "Belum Kompeten" || rawRec === "BK"
+        ? "BK"
+        : null;
+
+  const rawPct = readiness?.readiness_pct ?? readiness?.readinessPct;
+  const parsedPct = typeof rawPct === "number" ? rawPct : Number(rawPct);
+  const readinessPct =
+    rawPct !== undefined &&
+    rawPct !== null &&
+    rawPct !== "" &&
+    Number.isFinite(parsedPct) &&
+    parsedPct >= 0 &&
+    parsedPct <= 100
+      ? parsedPct
+      : null;
+
+  const readinessNote = readStringField(
+    readiness,
+    "readinessRecommendationNote",
+    "readiness_recommendation_note",
+  );
+
+  const items: Ia04bAiItemProposal[] = flatPairs.map(({ kp, aspect }, flatIdx) => {
+    const row = matchCoverageRowForAspect(
+      aspect,
+      kp,
+      flatIdx,
+      flatPairs.length,
+      matrixRows,
+    );
+    const sourceStatus = row ? parseCoverageStatus(row.status) : null;
+    const evidenceSpan = row
+      ? readStringField(row, "evidenceSpan", "evidence_span")
+      : "";
+    const notes = row ? readStringField(row, "notes", "notes") : "";
+
+    return {
+      kpIndex: kp.kpIndex,
+      no: aspect.no,
+      unitCode: aspect.unitCode,
+      achieved: mapCoverageStatusToAchieved(sourceStatus),
+      sourceStatus,
+      ...(evidenceSpan ? { evidenceSpan } : {}),
+      ...(notes ? { notes } : {}),
+    };
+  });
+
+  const hasProposal =
+    matrixRows.length > 0 || overallRecommendation !== null || readinessPct !== null;
+
+  return {
+    hasProposal,
+    items,
+    overallRecommendation,
+    readinessPct,
+    readinessNote,
+  };
+}
+
 export function buildIa04bPayload(params: {
   scheme?: SchemeRecord | null;
   schemeTitle: string;
@@ -674,24 +893,168 @@ export function buildIa04aPayload(params: {
   };
 }
 
-export function buildIa06cPayload(params: {
+export type WrittenItemVerdict = "Benar" | "Sebagian" | "Salah";
+
+export interface Official06cItemRating {
+  questionNo: number;
+  answerText: string;
+  achieved: boolean | null;
+  note?: string;
+}
+
+export interface Official06cAssessment {
+  items: Official06cItemRating[];
+  overallAchieved: boolean | null;
+  feedbackDetail?: string;
+  assessedBy?: string;
+  assessedAt?: string;
+}
+
+export interface Ia06cAiItemProposal {
+  questionNo: number;
+  answerText: string;
+  achieved: boolean | null;
+  sourceVerdict: WrittenItemVerdict | null;
+  masterSpan?: string;
+  explanation?: string;
+}
+
+export interface Ia06cAiProposal {
+  hasProposal: boolean;
+  items: Ia06cAiItemProposal[];
+  overallAchieved: boolean | null;
+  feedbackDetail: string;
+}
+
+function resolveIa06cSlotCount(
+  scheme?: SchemeRecord | null,
+  itemCount = 0,
+): number {
+  const configuredCount = Math.max(
+    scheme?.manifest?.questionCounts?.written06aCount ?? 0,
+    scheme?.manifest?.writtenQuestions?.length ?? 0,
+  );
+  return scheme
+    ? Math.max(configuredCount || itemCount || 1, itemCount)
+    : Math.max(13, itemCount);
+}
+
+function mapWrittenVerdictToAchieved(verdict: WrittenItemVerdict | null): boolean | null {
+  if (verdict === "Benar") return true;
+  if (verdict === "Salah") return false;
+  return null;
+}
+
+function parseWrittenVerdict(raw: unknown): WrittenItemVerdict | null {
+  if (raw === "Benar" || raw === "Sebagian" || raw === "Salah") {
+    return raw;
+  }
+  return null;
+}
+
+export function extractOfficial06cAssessment(
+  writtenGrading?: Record<string, unknown> | null,
+): Official06cAssessment {
+  if (!writtenGrading || typeof writtenGrading !== "object") {
+    return { items: [], overallAchieved: null, feedbackDetail: "" };
+  }
+
+  const directRaw = readField<Record<string, unknown>>(
+    writtenGrading,
+    "official06c",
+    "official_06c",
+  );
+  const formMapping = readField<Record<string, unknown>>(
+    writtenGrading,
+    "formMapping",
+    "form_mapping",
+  );
+  const raw =
+    directRaw && typeof directRaw === "object"
+      ? directRaw
+      : formMapping &&
+          typeof formMapping === "object" &&
+          formMapping.official06c &&
+          typeof formMapping.official06c === "object"
+        ? (formMapping.official06c as Record<string, unknown>)
+        : undefined;
+
+  if (!raw || typeof raw !== "object") {
+    return { items: [], overallAchieved: null, feedbackDetail: "" };
+  }
+
+  const rawItems = Array.isArray(raw.items) ? raw.items : [];
+  const items: Official06cItemRating[] = rawItems
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item, idx) => ({
+      questionNo: Number(item.questionNo ?? idx + 1),
+      answerText: typeof item.answerText === "string" ? item.answerText : "",
+      achieved: item.achieved === true ? true : item.achieved === false ? false : null,
+      note: typeof item.note === "string" ? item.note : undefined,
+    }));
+
+  const overallAchieved =
+    raw.overallAchieved === true
+      ? true
+      : raw.overallAchieved === false
+        ? false
+        : null;
+
+  const fallbackConfirmedBy = readField<unknown>(
+    writtenGrading,
+    "confirmedBy",
+    "confirmed_by",
+  );
+  const fallbackConfirmedAt = readField<unknown>(
+    writtenGrading,
+    "confirmedAt",
+    "confirmed_at",
+  );
+  const assessedBy =
+    typeof raw.assessedBy === "string" && raw.assessedBy.trim()
+      ? raw.assessedBy
+      : typeof fallbackConfirmedBy === "string" && fallbackConfirmedBy.trim()
+        ? fallbackConfirmedBy
+        : undefined;
+  const assessedAt =
+    typeof raw.assessedAt === "string" && raw.assessedAt.trim()
+      ? raw.assessedAt
+      : fallbackConfirmedAt instanceof Date
+        ? fallbackConfirmedAt.toISOString()
+        : typeof fallbackConfirmedAt === "string" && fallbackConfirmedAt.trim()
+          ? fallbackConfirmedAt
+          : undefined;
+
+  return {
+    items,
+    overallAchieved,
+    feedbackDetail: typeof raw.feedbackDetail === "string" ? raw.feedbackDetail : "",
+    assessedBy,
+    assessedAt,
+  };
+}
+
+export function hasSavedOfficial06cAssessment(
+  assessment: Official06cAssessment,
+): boolean {
+  return (
+    assessment.items.length > 0 ||
+    assessment.overallAchieved !== null ||
+    Boolean(assessment.assessedAt) ||
+    Boolean(assessment.assessedBy)
+  );
+}
+
+export function buildIa06cAiProposals(params: {
   scheme?: SchemeRecord | null;
-  schemeTitle: string;
-  schemeNumber: string;
-  tukType?: string | null;
-  assessorName: string;
-  assessorRegNo: string;
-  assesseeName: string;
-  assessmentDate: string;
   writtenGrading?: Record<string, unknown> | null;
-  signaturePngBytes?: Buffer;
-  signatureMimeType?: "image/png" | "image/jpeg";
-}): Ia06cExportPayload {
+}): Ia06cAiProposal {
   const itemVerdicts = params.writtenGrading
     ? readField<
         Array<{
           questionNo: number;
-          verdict: "Benar" | "Sebagian" | "Salah";
+          verdict: string;
+          masterSpan?: string;
           studentSpan?: string;
           explanation?: string;
         }>
@@ -709,39 +1072,129 @@ export function buildIa06cPayload(params: {
     : [];
 
   const sorted = [...itemVerdicts].sort((a, b) => a.questionNo - b.questionNo);
-  const configuredCount = Math.max(
-    params.scheme?.manifest?.questionCounts?.written06aCount ?? 0,
-    params.scheme?.manifest?.writtenQuestions?.length ?? 0,
-  );
-  const slotCount = params.scheme
-    ? Math.max(configuredCount || sorted.length || 1, sorted.length)
-    : Math.max(13, sorted.length);
-  const answers = Array.from({ length: slotCount }).map((_, idx) => {
-    const item = sorted.find((v) => v.questionNo === idx + 1) ?? sorted[idx];
+  const slotCount = resolveIa06cSlotCount(params.scheme, sorted.length);
+
+  const items: Ia06cAiItemProposal[] = Array.from({ length: slotCount }).map((_, idx) => {
+    const qNo = idx + 1;
+    const item = sorted.find((v) => v.questionNo === qNo) ?? sorted[idx];
     if (!item) {
       return {
-        questionNo: idx + 1,
+        questionNo: qNo,
         answerText: "",
         achieved: null,
+        sourceVerdict: null,
       };
     }
+
+    const sourceVerdict = parseWrittenVerdict(item.verdict);
     const baseText = item.studentSpan?.trim() || item.explanation?.trim() || "";
     const answerText =
-      item.verdict === "Sebagian" && baseText
+      sourceVerdict === "Sebagian" && baseText
         ? `[Sebagian] ${baseText}`
         : baseText;
+    const masterSpan = item.masterSpan?.trim() || "";
+    const explanation = item.explanation?.trim() || "";
+
     return {
-      questionNo: idx + 1,
+      questionNo: qNo,
       answerText,
-      achieved: item.verdict === "Benar",
+      achieved: mapWrittenVerdictToAchieved(sourceVerdict),
+      sourceVerdict,
+      ...(masterSpan ? { masterSpan } : {}),
+      ...(explanation ? { explanation } : {}),
     };
   });
 
   const bkUnits = vatmRecs.filter((u) => u.recommendation === "BK");
-  const overallAchieved: boolean | null =
-    sorted.length === 0
-      ? null
-      : bkUnits.length === 0 && !sorted.some((v) => v.verdict === "Salah");
+  let overallAchieved: boolean | null = null;
+  if (sorted.length > 0 || vatmRecs.length > 0) {
+    if (bkUnits.length > 0 || sorted.some((v) => parseWrittenVerdict(v.verdict) === "Salah")) {
+      overallAchieved = false;
+    } else if (
+      sorted.length > 0 &&
+      sorted.every((v) => parseWrittenVerdict(v.verdict) === "Benar")
+    ) {
+      overallAchieved = true;
+    } else {
+      overallAchieved = null;
+    }
+  }
+
+  const feedbackDetail =
+    bkUnits.length > 0
+      ? bkUnits.map((u) => `${u.unitCode} (${u.unitTitle})`).join(", ")
+      : "";
+
+  return {
+    hasProposal: sorted.length > 0 || vatmRecs.length > 0,
+    items,
+    overallAchieved,
+    feedbackDetail,
+  };
+}
+
+export function buildIa06cPayload(params: {
+  scheme?: SchemeRecord | null;
+  schemeTitle: string;
+  schemeNumber: string;
+  tukType?: string | null;
+  assessorName: string;
+  assessorRegNo: string;
+  assesseeName: string;
+  assessmentDate: string;
+  writtenGrading?: Record<string, unknown> | null;
+  signaturePngBytes?: Buffer;
+  signatureMimeType?: "image/png" | "image/jpeg";
+}): Ia06cExportPayload {
+  const savedOfficial06c = extractOfficial06cAssessment(params.writtenGrading);
+  const hasSaved = hasSavedOfficial06cAssessment(savedOfficial06c);
+
+  const itemVerdicts = params.writtenGrading
+    ? readField<
+        Array<{
+          questionNo: number;
+          verdict: "Benar" | "Sebagian" | "Salah";
+          studentSpan?: string;
+          explanation?: string;
+        }>
+      >(params.writtenGrading, "itemVerdicts", "item_verdicts") ?? []
+    : [];
+
+  const sorted = [...itemVerdicts].sort((a, b) => a.questionNo - b.questionNo);
+  const maxItemCount = Math.max(sorted.length, savedOfficial06c.items.length);
+  const slotCount = resolveIa06cSlotCount(params.scheme, maxItemCount);
+
+  const answers = Array.from({ length: slotCount }).map((_, idx) => {
+    const qNo = idx + 1;
+    const aiItem = sorted.find((v) => v.questionNo === qNo) ?? sorted[idx];
+    const baseText = aiItem
+      ? aiItem.studentSpan?.trim() || aiItem.explanation?.trim() || ""
+      : "";
+    const aiAnswerText =
+      aiItem?.verdict === "Sebagian" && baseText
+        ? `[Sebagian] ${baseText}`
+        : baseText;
+
+    if (hasSaved) {
+      const savedItem =
+        savedOfficial06c.items.find((s) => s.questionNo === qNo) ??
+        savedOfficial06c.items[idx];
+      return {
+        questionNo: qNo,
+        answerText: savedItem?.answerText?.trim() ? savedItem.answerText : aiAnswerText,
+        achieved: savedItem ? savedItem.achieved : null,
+      };
+    }
+
+    // Official blanko & DOCX remain neutral (achieved: null) until assessor explicitly saves
+    return {
+      questionNo: qNo,
+      answerText: aiAnswerText,
+      achieved: null,
+    };
+  });
+
+  const savedFeedback = savedOfficial06c.feedbackDetail?.trim() || undefined;
 
   return {
     schemeTitle: params.schemeTitle,
@@ -753,11 +1206,8 @@ export function buildIa06cPayload(params: {
     assessmentDate: params.assessmentDate,
     durationText: "60 Menit",
     answers,
-    overallAchieved,
-    feedbackDetail:
-      bkUnits.length > 0
-        ? bkUnits.map((u) => `${u.unitCode} (${u.unitTitle})`).join(", ")
-        : undefined,
+    overallAchieved: hasSaved ? savedOfficial06c.overallAchieved : null,
+    feedbackDetail: hasSaved ? savedFeedback : undefined,
     signaturePngBytes: params.signaturePngBytes,
     signatureMimeType: params.signatureMimeType,
   };

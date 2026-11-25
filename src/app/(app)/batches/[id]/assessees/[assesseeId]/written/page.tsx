@@ -9,9 +9,13 @@ import { resolveBatchActiveMasterKey } from "@/lib/written/master-key";
 import { Ia06cBlankoPreview } from "@/components/forms/ia06c-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import {
+  buildIa06cAiProposals,
   buildIa06cPayload,
+  extractOfficial06cAssessment,
+  hasSavedOfficial06cAssessment,
   resolveSchemeWrittenQuestions,
 } from "@/lib/forms/assessee-forms";
+import { Ia06cAssessmentForm } from "./_components/ia06c-assessment-form";
 import { WrittenKeyForm } from "./_components/written-key-form";
 
 export const metadata = {
@@ -40,6 +44,15 @@ export default async function WrittenGradingPage({
     getLatestWrittenGrading(user.id, assesseeId),
     listDriveFilesForBatch(user.id, batchId),
   ]);
+
+  const savedOfficial06c = extractOfficial06cAssessment(
+    grading as Record<string, unknown> | null,
+  );
+  const hasSavedOfficial06c = hasSavedOfficial06cAssessment(savedOfficial06c);
+  const aiProposal06c = buildIa06cAiProposals({
+    scheme: common.scheme,
+    writtenGrading: grading as Record<string, unknown> | null,
+  });
 
   const ia06cPayload = buildIa06cPayload({
     scheme: common.scheme,
@@ -246,8 +259,8 @@ export default async function WrittenGradingPage({
         </div>
       )}
 
-      {/* Official Unaltered FR.IA.06C Blanko Preview & DOCX Export */}
-      <div className="glass-card rounded-2xl p-6 space-y-4">
+      {/* Official Unaltered FR.IA.06C Assessment Form, Blanko Preview & DOCX Export */}
+      <div id="form-06c" className="glass-card rounded-2xl p-6 space-y-4">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">
             Formulir Resmi FR.IA.06C (Lembar Jawaban Pertanyaan Tertulis Esai)
@@ -256,6 +269,25 @@ export default async function WrittenGradingPage({
             Tampilan blanko asli BNSP beserta pencapaian Ya/Tidak dan umpan balik untuk asesi.
           </p>
         </div>
+        <Ia06cAssessmentForm
+          key={String(grading?.id ?? "none")}
+          batchId={batchId}
+          assesseeId={assesseeId}
+          schemeQuestions={schemeWrittenQuestions}
+          initialAssessment={savedOfficial06c}
+          hasSavedAssessment={hasSavedOfficial06c}
+          aiProposal={aiProposal06c}
+        />
+        {!hasSavedOfficial06c && aiProposal06c.hasProposal && (
+          <div
+            role="status"
+            className="rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-950"
+          >
+            <strong>Pratinjau Blanko Resmi Menunggu Simpan:</strong> Usulan AI sudah terisi pada
+            formulir di atas, namun tanda centang pada blanko resmi &amp; ekspor DOCX tetap netral
+            sampai asesor memeriksa/mengoreksi dan menekan <strong>Simpan Penilaian FR.IA.06C</strong>.
+          </div>
+        )}
         <Ia06cBlankoPreview
           batchId={batchId}
           assesseeId={assesseeId}

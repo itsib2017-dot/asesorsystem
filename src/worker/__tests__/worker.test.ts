@@ -95,6 +95,9 @@ vi.mock("@/repositories/schemes.repository", () => ({
 }));
 
 import JSZip from "jszip";
+import * as assessmentRepo from "@/repositories/assessment.repository";
+import * as encryption from "@/lib/crypto/encryption";
+import * as gradingService from "@/services/grading";
 import { runWorkerJob } from "../index";
 import { enqueueJob, executeJob } from "../queue";
 import { STALE_RUNNING_MS, isStaleRunningJob } from "../job-staleness";
@@ -994,5 +997,111 @@ describe("Worker dispatcher and queue runner", () => {
         baseTime + 306_000,
       ),
     ).toBe(true);
+  });
+
+  it("preserves existing saved official06c and confirmedBy/confirmedAt when written_grading re-runs", async () => {
+    const savedOfficial06c = {
+      items: [{ questionNo: 1, answerText: "Jawaban resmi", achieved: true }],
+      overallAchieved: true,
+      feedbackDetail: "Ditetapkan oleh asesor.",
+      assessedBy: "user-1",
+      assessedAt: "2026-11-25T08:00:00.000Z",
+    };
+
+    mocks.getAssesseeById.mockResolvedValue({
+      id: "as-wg-retain",
+      lspId: "lsp-1",
+      batchId: "b-wg-retain",
+      displayName: "Budi Santoso",
+      pseudonym: "ASESI-001",
+    });
+    mocks.getBatchById.mockResolvedValue({
+      id: "b-wg-retain",
+      lspId: "lsp-1",
+      schemeId: "scheme-1",
+      name: "Batch Written Retain",
+      activeMasterKeyFileId: "key-1",
+      activeMasterKeyValidationStatus: "valid",
+    });
+    mocks.listDriveFilesForBatch.mockResolvedValue([
+      {
+        id: "key-1",
+        assesseeId: null,
+        docType: "06b",
+        fileName: "FR.IA.06B_Kunci.docx",
+        extractedText: "1. Kunci jawaban nomor 1 lengkap.\n2. Kunci jawaban nomor 2 lengkap.",
+      },
+      {
+        id: "ans-1",
+        assesseeId: "as-wg-retain",
+        docType: "06c",
+        fileName: "FR.IA.06C_Budi.docx",
+        extractedText: "1. Jawaban kandidat 1.\n2. Jawaban kandidat 2.",
+      },
+    ]);
+    mocks.getLatestProviderConfigForAssessor.mockResolvedValue({
+      provider: "openai",
+      encryptedApiKey: "iv:tag:cipher",
+      baseUrl: null,
+      encryptedGatewayToken: null,
+      model: "gpt-4o-mini",
+      temperature: 0,
+      maxTokens: 4096,
+    });
+    vi.spyOn(encryption, "decryptSecret").mockReturnValue("sk-test-fake");
+    vi.mocked(assessmentRepo.getLatestWrittenGrading).mockResolvedValueOnce({
+      id: "wg-prev",
+      lspId: "lsp-1",
+      batchId: "b-wg-retain",
+      assesseeId: "as-wg-retain",
+      formMapping: {
+        soal: "06A",
+        kunci: "06B",
+        jawaban: "06C",
+        official06c: savedOfficial06c,
+      },
+      confirmedBy: "user-1",
+      confirmedAt: "2026-11-25T08:00:00.000Z",
+    } as never);
+    vi.spyOn(gradingService, "runWrittenGradingPipeline").mockResolvedValueOnce({
+      ok: true,
+      promptVersion: "v1.0.0",
+      output: {
+        pseudonym: "ASESI-001",
+        itemVerdicts: [
+          {
+            questionNo: 1,
+            verdict: "Salah",
+            masterSpan: "Kunci 1",
+            studentSpan: "Jawaban 1",
+            explanation: "AI baru menganggap salah.",
+          },
+        ],
+        ringkasanKesalahan: [1],
+        vatmUnitRecommendations: [],
+        plagiarismReport: { status: "Bersih", reasoning: "Unik", flaggedQuestions: [] },
+      },
+    });
+
+    const res = await runWorkerJob({
+      id: "job-wg-retain",
+      type: "written_grading",
+      userId: "user-1",
+      payload: { batchId: "b-wg-retain", assesseeId: "as-wg-retain" },
+    });
+
+    expect(res.status).toBe("done");
+    expect(assessmentRepo.saveWrittenGrading).toHaveBeenCalledWith(
+      expect.objectContaining({
+        formMapping: expect.objectContaining({
+          soal: "06A",
+          kunci: "06B",
+          jawaban: "06C",
+          official06c: savedOfficial06c,
+        }),
+        confirmedBy: "user-1",
+        confirmedAt: "2026-11-25T08:00:00.000Z",
+      }),
+    );
   });
 });

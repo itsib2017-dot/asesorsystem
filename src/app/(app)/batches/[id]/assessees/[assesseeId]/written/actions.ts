@@ -5,6 +5,7 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { requireLspRole } from "@/lib/auth/get-role";
 import { getUser } from "@/lib/auth/get-session";
+import { checkRateLimit } from "@/lib/security/rate-limit";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
   parseMasterKey06bFile,
@@ -12,6 +13,8 @@ import {
   resolveBatchActiveMasterKey,
   validateMasterKey06bContent,
 } from "@/lib/written/master-key";
+import { getAssesseeById } from "@/repositories/assessees.repository";
+import { saveOfficial06cAssessment } from "@/repositories/assessment.repository";
 import {
   getBatchById,
   listDriveFilesForBatch,
@@ -210,5 +213,155 @@ export async function runWrittenGradingWithKeyAction(formData: FormData): Promis
     ok: true,
     jobId: jobRes.job.id,
     message: "Kunci 06B tersimpan dan penilaian tertulis FR.IA.06 selesai dijalankan.",
+  };
+}
+
+const ia06cItemSchema = z.object({
+  questionNo: z.number().int().min(1).max(200),
+  answerText: z.string().max(4000).default(""),
+  achieved: z.boolean().nullable(),
+  note: z.string().max(1000).optional(),
+});
+
+const saveIa06cSchema = z.object({
+  batchId: z.string().uuid("Parameter batchId tidak valid."),
+  assesseeId: z.string().uuid("Parameter assesseeId tidak valid."),
+  items: z.array(ia06cItemSchema).min(1),
+  overallAchieved: z.boolean().nullable(),
+  feedbackDetail: z.string().max(4000).default(""),
+});
+
+export async function saveIa06cAssessmentAction(formData: FormData): Promise<{
+  ok: boolean;
+  message?: string;
+  error?: string;
+}> {
+  const user = await getUser();
+  if (!user) {
+    return { ok: false, error: "Unauthorized: Silakan masuk terlebih dahulu." };
+  }
+
+  let parsedItems: unknown = [];
+  try {
+    parsedItems = JSON.parse(String(formData.get("itemsJson") ?? "[]"));
+  } catch {
+    return { ok: false, error: "Format data penilaian FR.IA.06C tidak valid." };
+  }
+
+  const rawOverall = String(formData.get("overallAchieved") ?? "").trim();
+  const overallAchieved =
+    rawOverall === "true" || rawOverall === "K"
+      ? true
+      : rawOverall === "false" || rawOverall === "BK"
+        ? false
+        : null;
+
+  const parsed = saveIa06cSchema.safeParse({
+    batchId: String(formData.get("batchId") ?? "").trim(),
+    assesseeId: String(formData.get("assesseeId") ?? "").trim(),
+    items: parsedItems,
+    overallAchieved,
+    feedbackDetail: String(formData.get("feedbackDetail") ?? "").trim(),
+  });
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Data penilaian FR.IA.06C tidak valid.",
+    };
+  }
+
+  const data = parsed.data;
+  if (data.overallAchieved === false && !data.feedbackDetail) {
+    return {
+      ok: false,
+      error: "Catatan umpan balik wajib diisi apabila hasil FR.IA.06C adalah Belum Tercapai (BK).",
+    };
+  }
+
+  const rate = checkRateLimit(`ia06c:save:${user.id}:${data.assesseeId}`, 30, 60_000);
+  if (!rate.allowed) {
+    return {
+      ok: false,
+      error: `Terlalu banyak permintaan penyimpanan FR.IA.06C. Coba lagi dalam ${rate.retryAfterSeconds} detik.`,
+    };
+  }
+
+  const [batch, assessee] = await Promise.all([
+    getBatchById(user.id, data.batchId),
+    getAssesseeById(user.id, data.assesseeId),
+  ]);
+  if (!batch || !assessee || assessee.batchId !== batch.id) {
+    return { ok: false, error: "Batch atau asesi tidak ditemukan." };
+  }
+
+  const authz = await requireLspRole(batch.lspId, user.id, ["lsp_admin", "assessor"]);
+  if (!authz.allowed) {
+    return {
+      ok: false,
+      error: "Akses ditolak: hanya Asesor atau Admin LSP yang berwenang mengisi FR.IA.06C.",
+    };
+  }
+
+  try {
+    await saveOfficial06cAssessment({
+      userId: user.id,
+      lspId: batch.lspId,
+      batchId: batch.id,
+      assesseeId: assessee.id,
+      official06c: {
+        items: data.items,
+        overallAchieved: data.overallAchieved,
+        feedbackDetail: data.feedbackDetail,
+        assessedBy: user.id,
+        assessedAt: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Gagal menyimpan penilaian FR.IA.06C.",
+    };
+  }
+
+  const yaCount = data.items.filter((i) => i.achieved === true).length;
+  const tidakCount = data.items.filter((i) => i.achieved === false).length;
+  const belumCount = data.items.filter((i) => i.achieved === null).length;
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        lsp_id: batch.lspId,
+        actor_id: user.id,
+        action: "written.ia06c.save",
+        resource: "assessees",
+        resource_id: assessee.id,
+        after_summary: {
+          batchId: batch.id,
+          itemCount: data.items.length,
+          yaCount,
+          tidakCount,
+          belumCount,
+          overallAchieved: data.overallAchieved,
+        },
+      },
+      supabase,
+    );
+  } catch (err) {
+    console.warn(
+      "[SaveIa06cAction] audit log failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  revalidatePath(`/batches/${batch.id}/assessees/${assessee.id}`);
+  revalidatePath(`/batches/${batch.id}/assessees/${assessee.id}/written`);
+  revalidatePath(`/batches/${batch.id}/ak05`);
+  revalidatePath("/settings/audit");
+
+  return {
+    ok: true,
+    message: `Penilaian formulir FR.IA.06C (${yaCount} Ya · ${tidakCount} Tidak) tersimpan.`,
   };
 }

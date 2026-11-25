@@ -270,7 +270,17 @@ export async function saveWrittenGrading(params: {
   plagiarismReport: unknown;
   model: string;
   promptVersion: string;
+  confirmedBy?: string | null;
+  confirmedAt?: Date | string | null;
 }): Promise<void> {
+  const confirmedAtDate =
+    params.confirmedAt instanceof Date
+      ? params.confirmedAt
+      : typeof params.confirmedAt === "string" && params.confirmedAt.trim()
+        ? new Date(params.confirmedAt)
+        : null;
+  const confirmedAtIso = confirmedAtDate ? confirmedAtDate.toISOString() : null;
+
   return runRepositoryDualPath({
     userId: params.userId,
     label: "AssessmentRepository.saveWrittenGrading",
@@ -286,11 +296,13 @@ export async function saveWrittenGrading(params: {
         plagiarismReport: params.plagiarismReport,
         model: params.model,
         promptVersion: params.promptVersion,
+        ...(params.confirmedBy ? { confirmedBy: params.confirmedBy } : {}),
+        ...(confirmedAtDate ? { confirmedAt: confirmedAtDate } : {}),
       });
     },
     supabase: async () => {
       const supabase = await getSupabaseServerClient();
-      await supabase.from("written_gradings").insert({
+      const { error } = await supabase.from("written_gradings").insert({
         lsp_id: params.lspId,
         batch_id: params.batchId,
         assessee_id: params.assesseeId,
@@ -301,7 +313,128 @@ export async function saveWrittenGrading(params: {
         plagiarism_report: params.plagiarismReport,
         model: params.model,
         prompt_version: params.promptVersion,
+        ...(params.confirmedBy ? { confirmed_by: params.confirmedBy } : {}),
+        ...(confirmedAtIso ? { confirmed_at: confirmedAtIso } : {}),
       });
+      if (error) {
+        throw new Error(`WRITTEN_GRADING_INSERT_FAILED: ${error.message}`);
+      }
+    },
+  });
+}
+
+export async function saveOfficial06cAssessment(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  assesseeId: string;
+  official06c: Record<string, unknown>;
+}): Promise<void> {
+  const now = new Date();
+  return runRepositoryDualPath({
+    userId: params.userId,
+    label: "AssessmentRepository.saveOfficial06cAssessment",
+    drizzle: async (tx) => {
+      const rows = await tx
+        .select()
+        .from(writtenGradings)
+        .where(eq(writtenGradings.assesseeId, params.assesseeId))
+        .orderBy(desc(writtenGradings.createdAt))
+        .limit(1);
+      const latest = rows[0];
+      if (latest) {
+        const prevMapping =
+          latest.formMapping && typeof latest.formMapping === "object"
+            ? (latest.formMapping as Record<string, unknown>)
+            : {};
+        await tx
+          .update(writtenGradings)
+          .set({
+            formMapping: { ...prevMapping, official06c: params.official06c },
+            confirmedBy: params.userId,
+            confirmedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(writtenGradings.id, latest.id));
+        return;
+      }
+
+      await tx.insert(writtenGradings).values({
+        lspId: params.lspId,
+        batchId: params.batchId,
+        assesseeId: params.assesseeId,
+        formMapping: {
+          soal: "06A",
+          kunci: "06B",
+          jawaban: "06C",
+          official06c: params.official06c,
+        },
+        itemVerdicts: [],
+        errorSummary: [],
+        vatmUnitRecommendations: [],
+        plagiarismReport: {},
+        model: "manual-assessor-06c",
+        promptVersion: "manual",
+        confirmedBy: params.userId,
+        confirmedAt: now,
+      });
+    },
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data: latest, error: fetchErr } = await supabase
+        .from("written_gradings")
+        .select("id, form_mapping")
+        .eq("assessee_id", params.assesseeId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (fetchErr) {
+        throw new Error(`WRITTEN_GRADING_FETCH_FAILED: ${fetchErr.message}`);
+      }
+
+      if (latest?.id) {
+        const prevMapping =
+          latest.form_mapping && typeof latest.form_mapping === "object"
+            ? (latest.form_mapping as Record<string, unknown>)
+            : {};
+        const { error: updateErr } = await supabase
+          .from("written_gradings")
+          .update({
+            form_mapping: { ...prevMapping, official06c: params.official06c },
+            confirmed_by: params.userId,
+            confirmed_at: now.toISOString(),
+            updated_at: now.toISOString(),
+          })
+          .eq("id", latest.id);
+        if (updateErr) {
+          throw new Error(`OFFICIAL_06C_UPDATE_FAILED: ${updateErr.message}`);
+        }
+        return;
+      }
+
+      const { error: insertErr } = await supabase.from("written_gradings").insert({
+        lsp_id: params.lspId,
+        batch_id: params.batchId,
+        assessee_id: params.assesseeId,
+        form_mapping: {
+          soal: "06A",
+          kunci: "06B",
+          jawaban: "06C",
+          official06c: params.official06c,
+        },
+        item_verdicts: [],
+        error_summary: [],
+        vatm_unit_recommendations: [],
+        plagiarism_report: {},
+        model: "manual-assessor-06c",
+        prompt_version: "manual",
+        confirmed_by: params.userId,
+        confirmed_at: now.toISOString(),
+      });
+      if (insertErr) {
+        throw new Error(`OFFICIAL_06C_INSERT_FAILED: ${insertErr.message}`);
+      }
     },
   });
 }

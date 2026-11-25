@@ -159,6 +159,33 @@ describe("Official AK3U DOCX Template Exports (AK.02, IA.04B, IA.06C)", () => {
     expect(docXml).toContain("rIdSig1");
   });
 
+  it("never auto-checks FR.IA.06C items or overallAchieved from AI item_verdicts alone", () => {
+    const payload = buildIa06cPayload({
+      schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
+      schemeNumber: "SKM/2037/00013/2/2021/1",
+      tukType: "sewaktu",
+      assessorName: "Daniel Stefanus",
+      assessorRegNo: "MET. 000.003610 2023",
+      assesseeName: "Budi Santoso",
+      assessmentDate: "2026-11-18",
+      writtenGrading: {
+        item_verdicts: [
+          { questionNo: 1, verdict: "Benar", studentSpan: "HIRADC dilakukan sebelum pekerjaan dimulai." },
+          { questionNo: 2, verdict: "Salah", studentSpan: "Jawaban tidak lengkap." },
+        ],
+        vatm_unit_recommendations: [
+          { unitCode: "M.71KKK01.001.1", unitTitle: "Risk Control", recommendation: "BK" },
+        ],
+      },
+    });
+
+    expect(payload.answers).toHaveLength(13);
+    expect(payload.answers[0]?.answerText).toBe("HIRADC dilakukan sebelum pekerjaan dimulai.");
+    expect(payload.answers.every((a) => a.achieved === null)).toBe(true);
+    expect(payload.overallAchieved).toBeNull();
+    expect(payload.feedbackDetail).toBeUndefined();
+  });
+
   it("generates FR.IA.06C preserving 5 tables, ListParagraph numbering, SDT checkboxes, and adding Content_Types", async () => {
     const payload = buildIa06cPayload({
       schemeTitle: "AHLI KESELAMATAN DAN KESEHATAN KERJA UMUM",
@@ -176,6 +203,21 @@ describe("Official AK3U DOCX Template Exports (AK.02, IA.04B, IA.06C)", () => {
         vatm_unit_recommendations: [
           { unitCode: "M.71KKK01.001.1", unitTitle: "Risk Control", recommendation: "K" },
         ],
+        form_mapping: {
+          soal: "06A",
+          kunci: "06B",
+          jawaban: "06C",
+          official06c: {
+            items: [
+              { questionNo: 1, answerText: "HIRADC dilakukan sebelum pekerjaan dimulai.", achieved: true },
+              { questionNo: 2, answerText: "Jawaban tidak lengkap.", achieved: false },
+            ],
+            overallAchieved: false,
+            feedbackDetail: "Perlu pendalaman soal 2.",
+            assessedBy: "user-1",
+            assessedAt: "2026-11-25T09:00:00.000Z",
+          },
+        },
       },
       signaturePngBytes: SAMPLE_PNG,
       signatureMimeType: "image/png",

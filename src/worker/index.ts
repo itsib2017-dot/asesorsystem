@@ -17,6 +17,7 @@ import {
 } from "@/repositories/assessees.repository";
 import {
   getLatestDitAnalysis,
+  getLatestWrittenGrading,
   saveAk05ReportForBatch,
   saveDitAnalysis,
   saveSimilarityPairsForBatch,
@@ -1280,18 +1281,50 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
     throw new Error(graded.error);
   }
 
+  const previousWritten = await getLatestWrittenGrading(userId, assessee.id);
+  const prevFormMapping =
+    previousWritten &&
+    typeof (previousWritten.formMapping ?? previousWritten.form_mapping) === "object" &&
+    (previousWritten.formMapping ?? previousWritten.form_mapping) !== null
+      ? ((previousWritten.formMapping ?? previousWritten.form_mapping) as Record<
+          string,
+          unknown
+        >)
+      : null;
+  const prevOfficial06c =
+    prevFormMapping &&
+    typeof prevFormMapping.official06c === "object" &&
+    prevFormMapping.official06c !== null
+      ? (prevFormMapping.official06c as Record<string, unknown>)
+      : null;
+  const prevConfirmedBy =
+    previousWritten &&
+    typeof (previousWritten.confirmedBy ?? previousWritten.confirmed_by) === "string"
+      ? ((previousWritten.confirmedBy ?? previousWritten.confirmed_by) as string)
+      : null;
+  const prevConfirmedAt =
+    previousWritten
+      ? ((previousWritten.confirmedAt ?? previousWritten.confirmed_at) as
+          | Date
+          | string
+          | null
+          | undefined) ?? null
+      : null;
+
   await saveWrittenGrading({
     userId,
     lspId: assessee.lspId,
     batchId: batch.id,
     assesseeId: assessee.id,
-    formMapping: mapping,
+    formMapping: prevOfficial06c ? { ...mapping, official06c: prevOfficial06c } : mapping,
     itemVerdicts: graded.output.itemVerdicts,
     errorSummary: graded.output.ringkasanKesalahan,
     vatmUnitRecommendations: graded.output.vatmUnitRecommendations,
     plagiarismReport: graded.output.plagiarismReport,
     model: `${llmConfig.provider}/${llmConfig.model}`,
     promptVersion: graded.promptVersion,
+    ...(prevOfficial06c && prevConfirmedBy ? { confirmedBy: prevConfirmedBy } : {}),
+    ...(prevOfficial06c && prevConfirmedAt ? { confirmedAt: prevConfirmedAt } : {}),
   });
 
   await syncAssesseeVatmRecommendations({

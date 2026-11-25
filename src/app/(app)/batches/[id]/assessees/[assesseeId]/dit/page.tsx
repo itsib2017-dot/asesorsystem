@@ -17,8 +17,10 @@ import { Ia04bBlankoPreview } from "@/components/forms/ia04b-blanko-preview";
 import { BatchWorkflowStepper } from "@/components/batch/batch-workflow-stepper";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import {
+  buildIa04bAiProposals,
   buildIa04bPayload,
   extractOfficial04bAssessment,
+  hasSavedOfficial04bAssessment,
   resolveSchemeKelompokPekerjaan,
   type RawDecisionRow,
 } from "@/lib/forms/assessee-forms";
@@ -86,6 +88,11 @@ export default async function DitAnalysisPage({
   const savedOfficial04b = extractOfficial04bAssessment(
     analysis as Record<string, unknown> | null,
   );
+  const hasSavedOfficial04b = hasSavedOfficial04bAssessment(savedOfficial04b);
+  const aiProposal04b = buildIa04bAiProposals({
+    scheme: common.scheme,
+    ditAnalysis: analysis as Record<string, unknown> | null,
+  });
   const ia04bPayload = buildIa04bPayload({
     scheme: common.scheme,
     schemeTitle: common.schemeTitle,
@@ -212,11 +219,25 @@ export default async function DitAnalysisPage({
         </div>
 
         <Ia04bAssessmentForm
+          key={String(analysis?.id ?? "none")}
           batchId={batchId}
           assesseeId={assesseeId}
           kelompokPekerjaan={schemeKelompok}
           initialAssessment={savedOfficial04b}
+          hasSavedAssessment={hasSavedOfficial04b}
+          aiProposal={aiProposal04b}
         />
+
+        {!hasSavedOfficial04b && aiProposal04b.hasProposal && (
+          <div
+            role="status"
+            className="rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-950"
+          >
+            <strong>Pratinjau Blanko Resmi Menunggu Simpan:</strong> Usulan AI sudah terisi pada
+            formulir di atas, namun tanda centang pada blanko resmi &amp; ekspor DOCX tetap netral
+            sampai asesor memeriksa/mengoreksi dan menekan <strong>Simpan Penilaian FR.IA.04B</strong>.
+          </div>
+        )}
 
         <Ia04bBlankoPreview
           batchId={batchId}
