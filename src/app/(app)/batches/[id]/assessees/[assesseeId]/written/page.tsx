@@ -18,6 +18,8 @@ import {
 import { Ia06cAssessmentForm } from "./_components/ia06c-assessment-form";
 import { WrittenKeyForm } from "./_components/written-key-form";
 
+export const maxDuration = 300;
+
 export const metadata = {
   title: "Penilaian Tertulis FR.IA.06 — AsesorKompetensi",
 };
