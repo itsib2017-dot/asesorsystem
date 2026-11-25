@@ -448,7 +448,7 @@ export function buildAk02Payload(params: {
     ? resolved.overrideReason
       ? `Override Manual Asesor: ${resolved.overrideReason}${bkFollowUp ? ` (Unit BK: ${bkFollowUp})` : ""}`
       : bkFollowUp || "Override Manual Asesor"
-    : bkFollowUp || "-";
+    : bkFollowUp || (resolved.recommendation === "BK" ? resolved.keterangan : "-");
 
   let assessorComment: string;
   if (resolved.isOverridden) {
@@ -457,7 +457,10 @@ export function buildAk02Payload(params: {
       ? `Keputusan akhir ditetapkan secara manual oleh asesor (${verdictWord}): ${resolved.overrideReason}`
       : `Keputusan akhir ditetapkan secara manual oleh asesor (${verdictWord}).`;
   } else if (resolved.recommendation === "BK") {
-    assessorComment = `Terdapat ${bkDecisions.length} unit kompetensi yang memerlukan tindak lanjut asesmen ulang.`;
+    assessorComment =
+      bkDecisions.length > 0
+        ? `Terdapat ${bkDecisions.length} unit kompetensi yang memerlukan tindak lanjut asesmen ulang.`
+        : `Terdapat hasil Belum Kompeten yang memerlukan tindak lanjut asesmen ulang (${resolved.keterangan}).`;
   } else if (resolved.recommendation === "K") {
     assessorComment =
       "Asesi memenuhi seluruh persyaratan bukti kompetensi sesuai skema sertifikasi.";
@@ -569,8 +572,16 @@ export interface Ia04bAiProposal {
   hasProposal: boolean;
   items: Ia04bAiItemProposal[];
   overallRecommendation: "K" | "BK" | null;
+  readinessRecommendation?: "K" | "BK" | null;
   readinessPct: number | null;
   readinessNote: string;
+}
+
+export function sanitizeReadinessNote(raw: string): string {
+  return raw.replace(
+    /\b([Mm])enenangkan(?=\s+(?:persyaratan|kriteria|standar|kompetensi|ketentuan)\b)/g,
+    (_, first: string) => (first === "M" ? "Memenuhi" : "memenuhi"),
+  );
 }
 
 function normalizeMatchText(value: string): string {
@@ -699,7 +710,7 @@ export function buildIa04bAiProposals(params: {
     : undefined;
 
   const rawRec = readiness?.recommendation;
-  const overallRecommendation: "K" | "BK" | null =
+  const readinessRecommendation: "K" | "BK" | null =
     rawRec === "Kompeten" || rawRec === "K"
       ? "K"
       : rawRec === "Belum Kompeten" || rawRec === "BK"
@@ -718,10 +729,12 @@ export function buildIa04bAiProposals(params: {
       ? parsedPct
       : null;
 
-  const readinessNote = readStringField(
-    readiness,
-    "readinessRecommendationNote",
-    "readiness_recommendation_note",
+  const readinessNote = sanitizeReadinessNote(
+    readStringField(
+      readiness,
+      "readinessRecommendationNote",
+      "readiness_recommendation_note",
+    ),
   );
 
   const items: Ia04bAiItemProposal[] = flatPairs.map(({ kp, aspect }, flatIdx) => {
@@ -749,13 +762,24 @@ export function buildIa04bAiProposals(params: {
     };
   });
 
+  // Strict 100% pass rule: K only if ALL items are Ya; any Tidak -> BK; any Belum -> null (undecided)
+  let overallRecommendation: "K" | "BK" | null = null;
+  if (items.length > 0) {
+    if (items.some((item) => item.achieved === false)) {
+      overallRecommendation = "BK";
+    } else if (items.every((item) => item.achieved === true)) {
+      overallRecommendation = "K";
+    }
+  }
+
   const hasProposal =
-    matrixRows.length > 0 || overallRecommendation !== null || readinessPct !== null;
+    matrixRows.length > 0 || readinessRecommendation !== null || readinessPct !== null;
 
   return {
     hasProposal,
     items,
     overallRecommendation,
+    readinessRecommendation,
     readinessPct,
     readinessNote,
   };
@@ -1105,15 +1129,13 @@ export function buildIa06cAiProposals(params: {
     };
   });
 
+  // Strict 100% pass rule across ALL slots: BK if any BK unit or any Tidak; K only if all slots are Ya
   const bkUnits = vatmRecs.filter((u) => u.recommendation === "BK");
   let overallAchieved: boolean | null = null;
   if (sorted.length > 0 || vatmRecs.length > 0) {
-    if (bkUnits.length > 0 || sorted.some((v) => parseWrittenVerdict(v.verdict) === "Salah")) {
+    if (bkUnits.length > 0 || items.some((item) => item.achieved === false)) {
       overallAchieved = false;
-    } else if (
-      sorted.length > 0 &&
-      sorted.every((v) => parseWrittenVerdict(v.verdict) === "Benar")
-    ) {
+    } else if (items.length > 0 && items.every((item) => item.achieved === true)) {
       overallAchieved = true;
     } else {
       overallAchieved = null;

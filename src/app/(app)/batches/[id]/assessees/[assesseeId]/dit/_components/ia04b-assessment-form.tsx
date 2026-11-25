@@ -124,8 +124,9 @@ function resolveOverallProvenance(params: {
   overallTouched: boolean;
   overall: "K" | "BK" | null;
   proposedOverall: "K" | "BK" | null;
+  hasProposal: boolean;
 }): ProvenanceBadge {
-  const { isSaved, overallTouched, overall, proposedOverall } = params;
+  const { isSaved, overallTouched, overall, proposedOverall, hasProposal } = params;
   if (isSaved) {
     if (overallTouched) {
       return { label: "Diubah (Belum Disimpan)", tone: "amber" };
@@ -144,6 +145,9 @@ function resolveOverallProvenance(params: {
   }
   if (proposedOverall !== null) {
     return { label: "Usulan AI", tone: "amber" };
+  }
+  if (hasProposal) {
+    return { label: "Usulan AI: Belum Dapat Diputuskan (Perlu Nilai Asesor)", tone: "amber" };
   }
   return { label: "Belum Ditetapkan", tone: "slate" };
 }
@@ -267,6 +271,7 @@ export function Ia04bAssessmentForm({
     overallTouched,
     overall,
     proposedOverall: aiProposal.overallRecommendation,
+    hasProposal: aiProposal.hasProposal,
   });
 
   return (
@@ -312,7 +317,8 @@ export function Ia04bAssessmentForm({
           </div>
           {aiProposal.readinessPct !== null && (
             <span className="font-mono text-[11px] bg-white border border-emerald-200 px-2 py-0.5 rounded">
-              Kesiapan DIT AI: {aiProposal.readinessPct}% ({aiProposal.overallRecommendation ?? "-"})
+              Info Kesiapan DIT AI: {aiProposal.readinessPct}% (
+              {aiProposal.readinessRecommendation ?? "-"})
             </span>
           )}
         </div>
@@ -326,12 +332,16 @@ export function Ia04bAssessmentForm({
               <Sparkles className="w-4 h-4 text-amber-700 shrink-0" />
               <span>Usulan AI dari DIT (Belum Disimpan — Menunggu Keputusan Asesor)</span>
             </div>
-            {aiProposal.readinessPct !== null && (
-              <span className="font-mono text-[11px] bg-white border border-amber-200 px-2 py-0.5 rounded">
-                Kesiapan DIT: {aiProposal.readinessPct}% · Usulan:{" "}
-                {aiProposal.overallRecommendation ?? "-"}
+            <div className="flex flex-wrap items-center gap-1.5 font-mono text-[11px]">
+              {aiProposal.readinessPct !== null && (
+                <span className="bg-white border border-amber-200 px-2 py-0.5 rounded">
+                  Info Kesiapan DIT: {aiProposal.readinessPct}%
+                </span>
+              )}
+              <span className="bg-white border border-amber-200 px-2 py-0.5 rounded">
+                Usulan 04B: {aiProposal.overallRecommendation ?? "Belum dapat diputuskan"}
               </span>
-            )}
+            </div>
           </div>
           {aiProposal.readinessNote && (
             <p className="text-[11px] text-amber-900">{aiProposal.readinessNote}</p>

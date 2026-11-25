@@ -19,6 +19,7 @@ import { BatchWorkflowStepper } from "@/components/batch/batch-workflow-stepper"
 import { Ak02BlankoPreview } from "@/components/forms/ak02-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import {
+  deriveOfficialChannelVerdicts,
   resolveAssesseeOverallDecision,
   type UnitDecisionLike,
 } from "@/lib/ak05/decision-rules";
@@ -108,6 +109,11 @@ export default async function AssesseeDetailPage({
     unitDecisions: decisions as unknown as UnitDecisionLike[],
     totalSchemeUnits: schemeUnitsList.length,
     manualOverride: decisionOverride,
+    channelVerdicts: deriveOfficialChannelVerdicts({
+      ditAnalysis: ditAnalysis as Record<string, unknown> | null,
+      writtenGrading: writtenGrading as Record<string, unknown> | null,
+      interviewAssessment: interviewAssessment as Record<string, unknown> | null,
+    }),
   });
   const canOverride = role === "lsp_admin" || role === "assessor";
 

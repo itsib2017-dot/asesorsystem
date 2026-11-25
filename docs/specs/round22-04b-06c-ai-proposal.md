@@ -24,12 +24,15 @@
    - Sumber: `dit_analyses.coverage_matrix` dan `dit_analyses.readiness`.
    - Pencocokan aspek: prioritas `unitCode` → kecocokan teks judul/lingkup & KP → posisi baris bila panjang sama → fallback baris KP tunggal.
    - Status: `Terpenuhi` → `Ya` (`true`); `Belum Dibahas` → `Tidak` (`false`); `Sebagian` → `Belum` (`null`, bukti parsial wajib dinilai asesor).
-   - Rekomendasi keseluruhan: `Kompeten` → `K`, `Belum Kompeten` → `BK`, selain itu `null`.
+   - Usulan keseluruhan 04B (**Putaran 22 hal. 5**): diturunkan ketat dari daftar item (`>= 1 Tidak` → `BK`; `100% Ya` → `K`; bila belum ada `Tidak` tetapi masih ada `Belum` → `null` / *Belum dapat diputuskan*). `readiness.recommendation` & `readiness_pct` tampil hanya sebagai konteks informasi (dengan pembersihan typo `"menenangkan persyaratan..."` → `"memenuhi persyaratan..."`).
 2. **FR.IA.06C (`buildIa06cAiProposals`):**
    - Sumber: `written_gradings.item_verdicts` dan `written_gradings.vatm_unit_recommendations`.
    - Status per soal: `Benar` → `Ya` (`true`); `Salah` → `Tidak` (`false`); `Sebagian` → `Belum` (`null`, bukti parsial wajib dinilai asesor).
-   - Umpan balik keseluruhan: `false` (Belum Tercapai / BK) bila ada unit `BK` atau soal `Salah`; `true` (Tercapai / K) bila semua soal `Benar` dan tanpa unit `BK`; `null` bila hanya `Benar` + `Sebagian` atau kosong.
-3. **Retensi Keputusan Asesor:**
+   - Umpan balik keseluruhan: diturunkan lintas seluruh slot soal (`slotCount`) — `false` (Belum Tercapai / BK) bila ada unit `BK` atau soal `Tidak`; `true` (Tercapai / K) hanya bila `100%` seluruh slot `Ya` dan tanpa unit `BK`; `null` bila masih ada `Belum` tanpa `Tidak`/`BK`.
+3. **VATM Per Unit & Roll-Up Lintas Kanal AK.02 / AK.05 (Putaran 22 hal. 5):**
+   - `computeVatmUnitRollup`: unit tanpa baris cakupan DIT yang cocok tetap **netral** (`aiRecommendation: null`, tidak mewarisi `ditReadiness.recommendation` keseluruhan); status `Sebagian` juga netral; keputusan `official_04b` tersimpan asesor diprioritaskan per `unitCode`.
+   - `deriveOfficialChannelVerdicts` & `resolveAssesseeOverallDecision`: satu `BK` pada unit `decisions` atau kanal tersimpan mana pun (`FR.IA.04B`, `FR.IA.06C`, `FR.IA.09`) langsung menetapkan rekomendasi otomatis AK.02 & AK.05 ke `BK`. Status `K` otomatis hanya tercapai jika 100% unit skema bernilai `K` tanpa `BK` di kanal mana pun (override manual asesor tetap sebagai keputusan final).
+4. **Retensi Keputusan Asesor:**
    - Bila `official_04b` atau `form_mapping.official06c` sudah tersimpan, formulir wajib menampilkan keputusan tersimpan (tidak tertimpa usulan AI).
    - Pekerja `handleDitAnalysisJob` mempertahankan `prevOfficial04b` dan `handleWrittenGradingJob` mempertahankan `prevOfficial06c` beserta `confirmedBy`/`confirmedAt` saat analisis ulang dijalankan.
 

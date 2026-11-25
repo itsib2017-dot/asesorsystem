@@ -39,6 +39,29 @@ export async function getLatestDitAnalysis(userId: string, assesseeId: string) {
   });
 }
 
+export async function listDitAnalysesForBatch(userId: string, batchId: string) {
+  return runRepositoryDualPath({
+    userId,
+    label: "AssessmentRepository.listDitAnalysesForBatch",
+    drizzle: async (tx) =>
+      tx
+        .select()
+        .from(ditAnalyses)
+        .where(eq(ditAnalyses.batchId, batchId))
+        .orderBy(desc(ditAnalyses.createdAt)),
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("dit_analyses")
+        .select("*")
+        .eq("batch_id", batchId)
+        .order("created_at", { ascending: false });
+
+      return data ?? [];
+    },
+  });
+}
+
 export async function saveDitAnalysis(params: {
   userId: string;
   lspId: string;
@@ -753,6 +776,29 @@ export async function getLatestInterviewAssessment(userId: string, assesseeId: s
         .maybeSingle();
 
       return data ?? null;
+    },
+  });
+}
+
+export async function listInterviewAssessmentsForBatch(userId: string, batchId: string) {
+  return runRepositoryDualPath({
+    userId,
+    label: "AssessmentRepository.listInterviewAssessmentsForBatch",
+    drizzle: async (tx) =>
+      tx
+        .select()
+        .from(interviewAssessments)
+        .where(eq(interviewAssessments.batchId, batchId))
+        .orderBy(desc(interviewAssessments.createdAt)),
+    supabase: async () => {
+      const supabase = await getSupabaseServerClient();
+      const { data } = await supabase
+        .from("interview_assessments")
+        .select("*")
+        .eq("batch_id", batchId)
+        .order("created_at", { ascending: false });
+
+      return data ?? [];
     },
   });
 }

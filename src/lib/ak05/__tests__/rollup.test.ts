@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
-import { computeAk05RowForAssessee, resolveAssesseeOverallDecision } from "../rollup";
+import {
+  computeAk05RowForAssessee,
+  deriveOfficialChannelVerdicts,
+  resolveAssesseeOverallDecision,
+} from "../rollup";
 import { generateAk05Docx, generateAk05Pdf } from "@/services/export";
 
 describe("AK.05 Decision Roll-up (T4 / Cacat 2)", () => {
@@ -173,5 +177,89 @@ describe("AK.05 Decision Roll-up (T4 / Cacat 2)", () => {
     expect(reverted.recommendation).toBe("BK");
     expect(reverted.isOverridden).toBe(false);
     expect(reverted.source).toBe("auto_rollup");
+  });
+
+  it("propagates saved BK from any channel (04B, 06C, 09) to AK.05 even if unit decisions are K, and ignores unsaved AI proposals", () => {
+    const allUnitsK = [
+      { unitCode: "M.71KKK01.001.1", unitTitle: "Identifikasi Risiko", decision: "K" },
+      { unitCode: "M.71KKK01.002.1", unitTitle: "Tanggap Darurat", decision: "K" },
+    ];
+
+    const unsavedChannels = deriveOfficialChannelVerdicts({
+      ditAnalysis: {
+        coverage_matrix: [{ status: "Belum Dibahas" }],
+        readiness: { recommendation: "Belum Kompeten" },
+        official_04b: { officialQuestionCount: 13, decisionRule: "VATM" },
+      },
+      writtenGrading: {
+        item_verdicts: [{ questionNo: 1, verdict: "Salah" }],
+        vatm_unit_recommendations: [{ unitCode: "U1", recommendation: "BK" }],
+      },
+    });
+    const rowFromUnsavedAi = computeAk05RowForAssessee({
+      no: 1,
+      assessee: { id: "a1", displayName: "Asesi 1", certificateNameConfirmed: "Asesi 1" },
+      unitDecisions: allUnitsK,
+      totalSchemeUnits: 2,
+      channelVerdicts: unsavedChannels,
+    });
+    expect(rowFromUnsavedAi.recommendation).toBe("K");
+
+    const saved04bBk = deriveOfficialChannelVerdicts({
+      ditAnalysis: {
+        official_04b: {
+          items: [
+            { kpIndex: 1, no: 1, unitCode: "M.71KKK01.001.1", achieved: true },
+            { kpIndex: 2, no: 1, unitCode: "M.71KKK01.006.1", achieved: false },
+          ],
+          overallRecommendation: "BK",
+          assessedBy: "user-1",
+          assessedAt: "2026-11-25T12:00:00.000Z",
+        },
+      },
+    });
+    const row04bBk = computeAk05RowForAssessee({
+      no: 2,
+      assessee: { id: "a2", displayName: "Asesi 2", certificateNameConfirmed: "Asesi 2" },
+      unitDecisions: allUnitsK,
+      totalSchemeUnits: 2,
+      channelVerdicts: saved04bBk,
+    });
+    expect(row04bBk.recommendation).toBe("BK");
+    expect(row04bBk.keterangan).toContain("FR.IA.04B: BK");
+    expect(row04bBk.keterangan).toContain("M.71KKK01.006.1");
+
+    const saved06cBk = deriveOfficialChannelVerdicts({
+      writtenGrading: {
+        form_mapping: {
+          official06c: {
+            items: [{ questionNo: 1, answerText: "Salah", achieved: false }],
+            overallAchieved: false,
+          },
+        },
+      },
+    });
+    const row06cBk = computeAk05RowForAssessee({
+      no: 3,
+      assessee: { id: "a3", displayName: "Asesi 3", certificateNameConfirmed: "Asesi 3" },
+      unitDecisions: allUnitsK,
+      totalSchemeUnits: 2,
+      channelVerdicts: saved06cBk,
+    });
+    expect(row06cBk.recommendation).toBe("BK");
+    expect(row06cBk.keterangan).toContain("FR.IA.06C: BK");
+
+    const savedInterviewBk = deriveOfficialChannelVerdicts({
+      interviewAssessment: { overall_recommendation: "BK" },
+    });
+    const rowInterviewBk = computeAk05RowForAssessee({
+      no: 4,
+      assessee: { id: "a4", displayName: "Asesi 4", certificateNameConfirmed: "Asesi 4" },
+      unitDecisions: [],
+      totalSchemeUnits: 2,
+      channelVerdicts: savedInterviewBk,
+    });
+    expect(rowInterviewBk.recommendation).toBe("BK");
+    expect(rowInterviewBk.keterangan).toContain("FR.IA.09 Wawancara: BK");
   });
 });

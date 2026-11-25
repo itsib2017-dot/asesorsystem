@@ -117,8 +117,9 @@ function resolveOverallProvenance(params: {
   overallTouched: boolean;
   overall: boolean | null;
   proposedOverall: boolean | null;
+  hasProposal: boolean;
 }): ProvenanceBadge {
-  const { isSaved, overallTouched, overall, proposedOverall } = params;
+  const { isSaved, overallTouched, overall, proposedOverall, hasProposal } = params;
   if (isSaved) {
     if (overallTouched) {
       return { label: "Diubah (Belum Disimpan)", tone: "amber" };
@@ -137,6 +138,9 @@ function resolveOverallProvenance(params: {
   }
   if (proposedOverall !== null) {
     return { label: "Usulan AI", tone: "amber" };
+  }
+  if (hasProposal) {
+    return { label: "Usulan AI: Belum Dapat Diputuskan (Perlu Nilai Asesor)", tone: "amber" };
   }
   return { label: "Belum Ditetapkan", tone: "slate" };
 }
@@ -280,6 +284,7 @@ export function Ia06cAssessmentForm({
     overallTouched,
     overall: overallAchieved,
     proposedOverall: aiProposal.overallAchieved,
+    hasProposal: aiProposal.hasProposal,
   });
 
   return (

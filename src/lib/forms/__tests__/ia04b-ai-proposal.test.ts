@@ -51,14 +51,20 @@ describe("FR.IA.04B AI proposals and official-on-save boundary", () => {
     expect(proposal.readinessNote).toBe("Unit pengukuran bahaya belum tuntas.");
   });
 
-  it("enforces strict binary K/BK recommendation and rejects conditional third values", () => {
+  it("enforces strict binary K/BK on readinessRecommendation while deriving overallRecommendation from items only", () => {
     const proposalK = buildIa04bAiProposals({
       ditAnalysis: {
         coverage_matrix: [],
-        readiness: { recommendation: "Kompeten", readiness_pct: 92 },
+        readiness: {
+          recommendation: "Kompeten",
+          readiness_pct: 92,
+          readiness_recommendation_note: "Asesi menenangkan persyaratan sertifikasi dengan baik.",
+        },
       },
     });
-    expect(proposalK.overallRecommendation).toBe("K");
+    expect(proposalK.readinessRecommendation).toBe("K");
+    expect(proposalK.overallRecommendation).toBeNull();
+    expect(proposalK.readinessNote).toBe("Asesi memenuhi persyaratan sertifikasi dengan baik.");
 
     const proposalThird = buildIa04bAiProposals({
       ditAnalysis: {
@@ -66,7 +72,56 @@ describe("FR.IA.04B AI proposals and official-on-save boundary", () => {
         readiness: { recommendation: "Kompeten Bersyarat", readiness_pct: 60 },
       },
     });
+    expect(proposalThird.readinessRecommendation).toBeNull();
     expect(proposalThird.overallRecommendation).toBeNull();
+  });
+
+  it("never proposes K when any aspect is Belum or Tidak (live ASESI-001 8 Ya / 5 Belum case)", () => {
+    const flatAspects = IA04B_KELOMPOK_PEKERJAAN.flatMap((kp) => kp.aspects);
+    const eightYaFiveBelum = flatAspects.map((asp, idx) => ({
+      no: idx + 1,
+      kelompokPekerjaan: `Kelompok Pekerjaan ${asp.kpIndex}`,
+      focusPoint: `${asp.unitCode} ${asp.lingkup}`,
+      status: idx < 8 ? "Terpenuhi" : "Sebagian",
+    }));
+
+    const partialProposal = buildIa04bAiProposals({
+      ditAnalysis: {
+        coverageMatrix: eightYaFiveBelum,
+        readiness: { recommendation: "Kompeten", readiness_pct: 100 },
+      },
+    });
+    expect(partialProposal.items.filter((i) => i.achieved === true)).toHaveLength(8);
+    expect(partialProposal.items.filter((i) => i.achieved === null)).toHaveLength(5);
+    expect(partialProposal.overallRecommendation).toBeNull();
+    expect(partialProposal.readinessPct).toBe(100);
+    expect(partialProposal.readinessRecommendation).toBe("K");
+
+    const oneTidakProposal = buildIa04bAiProposals({
+      ditAnalysis: {
+        coverageMatrix: flatAspects.map((asp, idx) => ({
+          no: idx + 1,
+          kelompokPekerjaan: `Kelompok Pekerjaan ${asp.kpIndex}`,
+          focusPoint: `${asp.unitCode} ${asp.lingkup}`,
+          status: idx === 12 ? "Belum Dibahas" : "Terpenuhi",
+        })),
+        readiness: { recommendation: "Kompeten", readiness_pct: 95 },
+      },
+    });
+    expect(oneTidakProposal.overallRecommendation).toBe("BK");
+
+    const allYaProposal = buildIa04bAiProposals({
+      ditAnalysis: {
+        coverageMatrix: flatAspects.map((asp, idx) => ({
+          no: idx + 1,
+          kelompokPekerjaan: `Kelompok Pekerjaan ${asp.kpIndex}`,
+          focusPoint: `${asp.unitCode} ${asp.lingkup}`,
+          status: "Terpenuhi",
+        })),
+        readiness: { recommendation: "Kompeten", readiness_pct: 100 },
+      },
+    });
+    expect(allYaProposal.overallRecommendation).toBe("K");
   });
 
   it("matches aspects by unitCode or focusPoint even when coverageMatrix is shuffled or partial", () => {

@@ -60,6 +60,9 @@ vi.mock("@/repositories/assessees.repository", () => ({
 vi.mock("@/repositories/assessment.repository", () => ({
   listDecisionsForAssessee: vi.fn(),
   listDecisionsForBatch: vi.fn().mockResolvedValue([]),
+  listDitAnalysesForBatch: vi.fn().mockResolvedValue([]),
+  listWrittenGradingsForBatch: vi.fn().mockResolvedValue([]),
+  listInterviewAssessmentsForBatch: vi.fn().mockResolvedValue([]),
   getLatestDitAnalysis: vi.fn().mockResolvedValue(null),
   getLatestWrittenGrading: vi.fn().mockResolvedValue(null),
   getLatestInterviewAssessment: vi.fn().mockResolvedValue(null),

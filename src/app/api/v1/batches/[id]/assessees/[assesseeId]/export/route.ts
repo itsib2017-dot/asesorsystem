@@ -24,11 +24,17 @@ import {
   type ExportFormat,
 } from "@/services/export";
 import {
+  deriveOfficialChannelVerdicts,
+  resolveAssesseeOverallDecision,
+  type UnitDecisionLike,
+} from "@/lib/ak05/decision-rules";
+import {
   buildAk02Payload,
   buildIa04aPayload,
   buildIa04bPayload,
   buildIa06cPayload,
   extractSchemeMeta,
+  resolveSchemeUnitsList,
   type RawDecisionRow,
 } from "@/lib/forms/assessee-forms";
 
@@ -150,6 +156,16 @@ export async function GET(
   };
 
   let docxBuf: Buffer;
+  const resolvedOverall = resolveAssesseeOverallDecision({
+    unitDecisions: rawDecisions as unknown as UnitDecisionLike[],
+    totalSchemeUnits: resolveSchemeUnitsList(scheme).length,
+    manualOverride: decisionOverride,
+    channelVerdicts: deriveOfficialChannelVerdicts({
+      ditAnalysis: ditAnalysis as Record<string, unknown> | null,
+      writtenGrading: writtenGrading as Record<string, unknown> | null,
+      interviewAssessment: interviewAssessment as Record<string, unknown> | null,
+    }),
+  });
   if (form === "ak02") {
     const templateBuffer = await resolveSchemeTemplateBuffer({
       scheme,
@@ -170,6 +186,7 @@ export async function GET(
         assessmentDate,
         decisions: rawDecisions,
         manualOverride: decisionOverride,
+        resolvedOverall,
         hasDit: Boolean(ditAnalysis),
         hasWritten: Boolean(writtenGrading),
         hasInterview: Boolean(interviewAssessment),

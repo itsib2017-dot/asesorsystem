@@ -1,3 +1,7 @@
+import {
+  extractOfficial04bAssessment,
+  hasSavedOfficial04bAssessment,
+} from "@/lib/forms/assessee-forms";
 import { readArrayField, readField, readStringField } from "@/lib/utils/record-fields";
 
 export interface SchemeUnitRef {
@@ -44,8 +48,8 @@ export function computeVatmUnitRollup(params: {
     "coverageMatrix",
     "coverage_matrix",
   );
-  const ditReadiness =
-    (params.ditAnalysis?.readiness as { recommendation?: string } | undefined) ?? undefined;
+  const savedOfficial04b = extractOfficial04bAssessment(params.ditAnalysis);
+  const hasSaved04b = hasSavedOfficial04bAssessment(savedOfficial04b);
   const interviewOverall = readField<"K" | "BK">(
     params.interviewAssessment,
     "overallRecommendation",
@@ -105,21 +109,42 @@ export function computeVatmUnitRollup(params: {
     }
 
     if (params.ditAnalysis) {
-      const matchedDit = ditCoverage.find((row) => {
-        const kp = normalizeUnitKey(String(row.kelompokPekerjaan ?? ""));
-        const fp = normalizeUnitKey(String(row.focusPoint ?? ""));
-        return (titleKey && kp.includes(titleKey.slice(0, 16))) || (titleKey && fp.includes(titleKey.slice(0, 16)));
-      });
-      if (matchedDit) {
-        const status = String(matchedDit.status ?? "");
-        const rec: "K" | "BK" = status === "Terpenuhi" ? "K" : "BK";
+      const saved04bItem = hasSaved04b
+        ? savedOfficial04b.items.find(
+            (item) =>
+              codeKey &&
+              item.unitCode.trim().toLowerCase() === codeKey,
+          )
+        : undefined;
+
+      if (saved04bItem && saved04bItem.achieved !== null) {
+        const rec: "K" | "BK" = saved04bItem.achieved ? "K" : "BK";
         channelVerdicts.push(rec);
-        reasons.push(`[DIT 04A/04B: ${rec}] Status fokus: ${status}.`);
-      } else if (ditReadiness?.recommendation) {
-        const rec: "K" | "BK" =
-          ditReadiness.recommendation === "Kompeten" ? "K" : "BK";
-        channelVerdicts.push(rec);
-        reasons.push(`[DIT 04A/04B: ${rec}] Kesiapan DIT: ${ditReadiness.recommendation}.`);
+        reasons.push(`[FR.IA.04B Asesor: ${rec}] Keputusan asesor pada aspek unit ini.`);
+      } else {
+        const matchedDit = ditCoverage.find((row) => {
+          const kp = normalizeUnitKey(String(row.kelompokPekerjaan ?? row.kelompok_pekerjaan ?? ""));
+          const fp = normalizeUnitKey(String(row.focusPoint ?? row.focus_point ?? ""));
+          return (
+            (codeKey && (fp.includes(codeKey) || kp.includes(codeKey))) ||
+            (titleKey && kp.includes(titleKey.slice(0, 16))) ||
+            (titleKey && fp.includes(titleKey.slice(0, 16)))
+          );
+        });
+        if (matchedDit) {
+          const status = String(matchedDit.status ?? "");
+          if (status === "Terpenuhi") {
+            channelVerdicts.push("K");
+            reasons.push("[DIT 04A/04B: K] Status fokus: Terpenuhi.");
+          } else if (status === "Belum Dibahas") {
+            channelVerdicts.push("BK");
+            reasons.push("[DIT 04A/04B: BK] Status fokus: Belum Dibahas.");
+          } else if (status === "Sebagian") {
+            reasons.push("[DIT 04A/04B: Sebagian] Bukti parsial — perlu penilaian asesor.");
+          }
+        } else {
+          reasons.push("[DIT 04A/04B: Netral] Belum ada cakupan bukti DIT untuk unit ini.");
+        }
       }
     }
 

@@ -59,8 +59,27 @@ describe("FR.IA.06C AI proposals and official-on-save boundary", () => {
     expect(proposal.feedbackDetail).toContain("M.71KKK01.005.1");
   });
 
-  it("proposes overall true when all verdicts are Benar, and null when Sebagian exists without Salah/BK", () => {
+  it("proposes overall true only when 100% of scheme slots are Benar, and null when any slot is Belum without Salah/BK", () => {
+    const twoSlotScheme = {
+      id: "scheme-2",
+      lspId: "lsp-1",
+      code: "TEST-2",
+      name: "Test 2 Soal",
+      version: 1,
+      forms: [],
+      manifest: {
+        questionCounts: { official04bCount: 2, written06aCount: 2, questionBankCount: 2 },
+        decisionRule: "VATM",
+        decisionRuleRef: "SKKNI",
+        prerequisites: [],
+        registrationRequirements: [],
+        units: [],
+        formSuffixMapping: { soal: "06A", kunci: "06B", jawaban: "06C" },
+      },
+    };
+
     const allBenar = buildIa06cAiProposals({
+      scheme: twoSlotScheme,
       writtenGrading: {
         itemVerdicts: [
           { questionNo: 1, verdict: "Benar", studentSpan: "A" },
@@ -73,7 +92,20 @@ describe("FR.IA.06C AI proposals and official-on-save boundary", () => {
     });
     expect(allBenar.overallAchieved).toBe(true);
 
+    // Default 13-slot scheme with only 2/13 Benar has 11 Belum slots -> must remain null, never true
+    const incompleteSlots = buildIa06cAiProposals({
+      writtenGrading: {
+        itemVerdicts: [
+          { questionNo: 1, verdict: "Benar", studentSpan: "A" },
+          { questionNo: 2, verdict: "Benar", studentSpan: "B" },
+        ],
+        vatmUnitRecommendations: [],
+      },
+    });
+    expect(incompleteSlots.overallAchieved).toBeNull();
+
     const partialOnly = buildIa06cAiProposals({
+      scheme: twoSlotScheme,
       writtenGrading: {
         itemVerdicts: [
           { questionNo: 1, verdict: "Benar", studentSpan: "A" },

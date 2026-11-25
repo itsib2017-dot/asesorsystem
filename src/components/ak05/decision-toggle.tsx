@@ -63,13 +63,22 @@ export function DecisionToggle({
         <div>
           <div className="text-xs font-mono text-slate-500">{unitCode}</div>
           <div className="text-sm font-semibold text-slate-900">{unitTitle}</div>
-          {aiRecommendation && (
+          {aiRecommendation ? (
             <div className="mt-1 text-xs text-slate-600">
               <span className="underline decoration-dotted font-semibold text-teal-700">
                 Rekomendasi AI (VATM): {aiRecommendation}
               </span>{" "}
               {vatmReasoning ? `— ${vatmReasoning}` : ""}
             </div>
+          ) : (
+            vatmReasoning && (
+              <div className="mt-1 text-xs text-slate-500">
+                <span className="font-medium text-slate-600">
+                  Rekomendasi AI (VATM): Netral / Belum Dinilai
+                </span>{" "}
+                — {vatmReasoning}
+              </div>
+            )
           )}
         </div>
 
