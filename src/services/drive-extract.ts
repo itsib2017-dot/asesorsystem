@@ -333,7 +333,7 @@ async function extractMultipleDriveFiles(params: {
 }): Promise<string> {
   if (params.files.length === 0) return "";
   const chunks: string[] = [];
-  const CONCURRENCY = 4;
+  const CONCURRENCY = 2;
 
   for (let i = 0; i < params.files.length; i += CONCURRENCY) {
     const slice = params.files.slice(i, i + CONCURRENCY);
@@ -608,7 +608,7 @@ export async function enrichFilesByContent<T extends ContentEnrichableFile>(para
     networkQueue.push({ file, parentPath, currentConf });
   }
 
-  const CONCURRENCY = 4;
+  const CONCURRENCY = 2;
   for (let i = 0; i < networkQueue.length; i += CONCURRENCY) {
     const chunk = networkQueue.slice(i, i + CONCURRENCY);
     await Promise.all(

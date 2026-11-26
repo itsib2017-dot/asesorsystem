@@ -1,3 +1,4 @@
+import { isUuid } from "@/db";
 import { getUser } from "@/lib/auth/get-session";
 import { apiError } from "@/lib/errors";
 import {
@@ -31,6 +32,10 @@ export async function GET(
 
   const url = new URL(req.url);
   const format = (url.searchParams.get("format") || "pdf") as ExportFormat;
+  const rawAssesseeId = url.searchParams.get("assesseeId")?.trim() ?? "";
+  if (rawAssesseeId && !isUuid(rawAssesseeId)) {
+    return apiError("VALIDATION_ERROR", "Parameter assesseeId tidak valid.");
+  }
   const check = validateExportFormat("ak05", format);
   if (!check.allowed) {
     return apiError("EXPORT_FORMAT_NOT_ALLOWED", check.reason);
@@ -57,11 +62,21 @@ export async function GET(
     getAk05ReportForBatch(user.id, batchId),
   ]);
 
-  const unconfirmed = assessees.filter((a) => !a.certificateNameConfirmed);
+  const singleAssessee = rawAssesseeId
+    ? assessees.find((a) => a.id === rawAssesseeId) ?? null
+    : null;
+  if (rawAssesseeId && !singleAssessee) {
+    return apiError("NOT_FOUND", "Asesi tidak ditemukan pada batch ini.");
+  }
+
+  const targetAssessees = singleAssessee ? [singleAssessee] : assessees;
+  const unconfirmed = targetAssessees.filter((a) => !a.certificateNameConfirmed);
   if (unconfirmed.length > 0) {
     return apiError(
       "UNPROCESSABLE",
-      `Ekspor diblokir: ${unconfirmed.length} asesi belum memiliki konfirmasi nama sertifikat.`,
+      singleAssessee
+        ? "Ekspor AK.05 diblokir: nama sertifikat asesi ini belum dikonfirmasi (otoritas KTP)."
+        : `Ekspor diblokir: ${unconfirmed.length} asesi belum memiliki konfirmasi nama sertifikat. Gunakan ekspor AK.05 per asesi untuk asesi yang sudah dikonfirmasi.`,
     );
   }
 
@@ -108,7 +123,7 @@ export async function GET(
     },
   });
 
-  const rollupRows = await resolveAk05BatchRows(user.id, batchId, assessees, {
+  const rollupRows = await resolveAk05BatchRows(user.id, batchId, targetAssessees, {
     totalSchemeUnits: schemeUnits.length,
   });
 
@@ -138,13 +153,17 @@ export async function GET(
     templateBuffer,
   };
 
+  const fileSlug = singleAssessee
+    ? `FR-AK-05-${batchId.slice(0, 8)}-${(singleAssessee.pseudonym || singleAssessee.id.slice(0, 8)).replace(/[^A-Za-z0-9_-]/g, "")}`
+    : `FR-AK-05-${batchId.slice(0, 8)}`;
+
   if (format === "pdf") {
     const pdfBuf = await generateAk05Pdf(payload);
     return new Response(new Uint8Array(pdfBuf), {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="FR-AK-05-${batchId.slice(0, 8)}.pdf"`,
+        "Content-Disposition": `attachment; filename="${fileSlug}.pdf"`,
       },
     });
   }
@@ -155,7 +174,7 @@ export async function GET(
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "Content-Disposition": `attachment; filename="FR-AK-05-${batchId.slice(0, 8)}.docx"`,
+      "Content-Disposition": `attachment; filename="${fileSlug}.docx"`,
     },
   });
 }

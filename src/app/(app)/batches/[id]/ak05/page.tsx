@@ -47,6 +47,9 @@ export default async function Ak05Page({
   const unconfirmedCount = assessees.filter(
     (a) => !a.certificateNameConfirmed,
   ).length;
+  const confirmedById = new Map(
+    assessees.map((a) => [a.id, Boolean(a.certificateNameConfirmed)]),
+  );
   const rows = await resolveAk05BatchRows(user.id, batchId, assessees, {
     totalSchemeUnits: schemeUnits.length,
   });
@@ -83,7 +86,9 @@ export default async function Ak05Page({
           undecidedCount={undecidedCount}
           rows={rows.map((r) => ({
             no: r.no,
+            assesseeId: r.assesseeId,
             assesseeName: r.assesseeName,
+            isNameConfirmed: confirmedById.get(r.assesseeId) ?? false,
             recommendation: r.recommendation,
             keterangan: r.keterangan,
           }))}

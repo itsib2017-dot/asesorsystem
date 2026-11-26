@@ -7,6 +7,7 @@ export interface ParsedSuratTugasResult {
   assessorName: string | null;
   letterNumber: string | null;
   candidateNames: string[];
+  schemeGroups?: Array<{ schemeName: string; candidateNames: string[] }>;
 }
 
 export interface SuratTugasRosterSummary {
@@ -491,9 +492,24 @@ function sanitizeCandidateLine(raw: string): string | null {
   return cleaned;
 }
 
-function extractParticipantsFromSuratTugas(repairedLines: string): string[] {
+function extractParticipantsFromSuratTugas(repairedLines: string): {
+  candidateNames: string[];
+  schemeGroups: Array<{ schemeName: string; candidateNames: string[] }>;
+} {
   const headerIdx = findParticipantSectionIndex(repairedLines);
   const collected: string[] = [];
+  const schemeMap = new Map<string, string[]>();
+  let currentScheme: string | null = null;
+
+  const recordCandidate = (name: string) => {
+    collected.push(name);
+    if (!currentScheme) return;
+    const list = schemeMap.get(currentScheme) ?? [];
+    if (!list.some((n) => n.toLowerCase() === name.toLowerCase())) {
+      list.push(name);
+      schemeMap.set(currentScheme, list);
+    }
+  };
 
   if (headerIdx >= 0) {
     const rawTail = repairedLines.slice(headerIdx);
@@ -518,8 +534,19 @@ function extractParticipantsFromSuratTugas(repairedLines: string): string[] {
       const line = lines[i]?.trim() ?? "";
       if (!line) continue;
 
+      const skemaMatch = line.match(/^skema(?:\s+uji(?:\s+kompetensi)?)?\s*[:\-]\s*(.+)$/i);
+      if (skemaMatch?.[1]) {
+        const schemeTitle = skemaMatch[1].replace(/\s+/g, " ").trim();
+        if (schemeTitle && !/^[-—_:]+$/.test(schemeTitle)) {
+          currentScheme = schemeTitle;
+          expectedBareSeqIdx = 1;
+        }
+        continue;
+      }
+
       if (/^(?:no|no\s+nama(?:\s+organisasi)?)$/i.test(line)) {
         sawBareHeader = true;
+        expectedBareSeqIdx = 1;
         continue;
       }
 
@@ -530,7 +557,7 @@ function extractParticipantsFromSuratTugas(repairedLines: string): string[] {
       if (punctMatch?.[2]) {
         const cleaned = sanitizeCandidateLine(punctMatch[2]);
         if (cleaned) {
-          collected.push(cleaned);
+          recordCandidate(cleaned);
           expectedBareSeqIdx = Number(punctMatch[1]) + 1;
         }
         continue;
@@ -547,7 +574,7 @@ function extractParticipantsFromSuratTugas(repairedLines: string): string[] {
         if (looksLikeTableRow && rowIdx >= 1 && rowIdx <= 99 && rowIdx === expectedBareSeqIdx) {
           const cleaned = sanitizeCandidateLine(spaceTableMatch[2]);
           if (cleaned) {
-            collected.push(cleaned);
+            recordCandidate(cleaned);
             expectedBareSeqIdx = rowIdx + 1;
             continue;
           }
@@ -565,7 +592,7 @@ function extractParticipantsFromSuratTugas(repairedLines: string): string[] {
           if (/^[A-Za-z][A-Za-z\t .,'()-]{2,80}$/.test(nextLine)) {
             const cleaned = sanitizeCandidateLine(nextLine);
             if (cleaned) {
-              collected.push(cleaned);
+              recordCandidate(cleaned);
               expectedBareSeqIdx = rowIdx + 1;
               i += 1;
             }
@@ -589,7 +616,11 @@ function extractParticipantsFromSuratTugas(repairedLines: string): string[] {
       deduped.push(cleaned);
     }
   }
-  return deduped;
+  const schemeGroups = Array.from(schemeMap.entries()).map(([schemeName, names]) => ({
+    schemeName,
+    candidateNames: names,
+  }));
+  return { candidateNames: deduped, schemeGroups };
 }
 
 /**
@@ -602,12 +633,14 @@ export function parseSuratTugasText(text: string): ParsedSuratTugasResult {
   const assessorScopeLines =
     participantIdx > 0 ? repairedLines.slice(0, participantIdx) : repairedLines;
   const assessorScopeFlat = assessorScopeLines.replace(/\s+/g, " ").trim();
+  const participants = extractParticipantsFromSuratTugas(repairedLines);
 
   return {
     assessmentDate: extractAssessmentDate(repairedLines, flatText),
     tukName: extractTukName(repairedLines, flatText),
     assessorName: extractAssessorName(assessorScopeLines, assessorScopeFlat),
     letterNumber: extractLetterNumber(repairedLines, flatText),
-    candidateNames: extractParticipantsFromSuratTugas(repairedLines),
+    candidateNames: participants.candidateNames,
+    ...(participants.schemeGroups.length > 0 ? { schemeGroups: participants.schemeGroups } : {}),
   };
 }

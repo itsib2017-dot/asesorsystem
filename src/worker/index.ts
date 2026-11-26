@@ -374,6 +374,8 @@ async function expandZipArchivesForScan(
           extractedText,
           extractionMethod,
         });
+        // Release uncompressed member bytes immediately to prevent 2048 MB heap OOM on large ZIPs.
+        item.entry.buffer = Buffer.alloc(0);
       }
     } catch (err) {
       const reason = err instanceof Error ? err.message : "ZIP tidak dapat dibuka";

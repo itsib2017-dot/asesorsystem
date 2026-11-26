@@ -337,4 +337,58 @@ describe("parseSuratTugasText", () => {
       expect(parsed.candidateNames).toEqual(["Aryanto", "Suhartono"]);
     }
   });
+
+  it("extracts all participants across multiple scheme tables in one Surat Tugas (3897 multi-scheme)", () => {
+    const multiScheme = `
+      SURAT TUGAS ASESMEN
+      Nomor: 3897/ST/LSP-K3N/XI/2026
+      No. Nama No. Reg. Skema Uji Kompetensi Nama Asesi
+      1. Daniel Stefanus MET. 000.003610 2023 - Ahli Keselamatan dan Kesehatan Kerja Umum - Operator Keselamatan dan Kesehatan Kerja Terlampir
+      Tanggal : 26 November 2026
+      TUK : TUK Sewaktu LSP K3 Nasional - PT Patrari Jaya Utama
+      DAFTAR PESERTA
+      UJI KOMPETENSI
+      Skema : Ahli Keselamatan dan Kesehatan Kerja Umum
+      TUK : Sewaktu LSP K3 Nasional - PT Patrari Jaya Utama
+      Tanggal Uji Kompetensi : 26 November 2026
+      NO NAMA ORGANISASI
+      1 Amin Fauzi -
+      2 Ady M Ramadhan -
+      3 Silvia Yopi Putri Mila -
+      Skema : Operator Keselamatan dan Kesehatan Kerja
+      TUK : Sewaktu LSP K3 Nasional - PT Patrari Jaya Utama
+      Tanggal Uji Kompetensi : 26 November 2026
+      NO NAMA ORGANISASI
+      1 Aji Caya Dika -
+      2 Bram Juminarko -
+      3 Ricky Razab -
+      4 Gusti Roni -
+      GoWork Lippo Mall Puri, unit GF 101
+    `;
+
+    const parsed = parseSuratTugasText(multiScheme);
+    expect(parsed.letterNumber).toBe("3897/ST/LSP-K3N/XI/2026");
+    expect(parsed.assessmentDate).toBe("2026-11-26");
+    expect(parsed.tukName).toBe("TUK Sewaktu LSP K3 Nasional - PT Patrari Jaya Utama");
+    expect(parsed.assessorName).toBe("Daniel Stefanus");
+    expect(parsed.candidateNames).toEqual([
+      "Amin Fauzi",
+      "Ady M Ramadhan",
+      "Silvia Yopi Putri Mila",
+      "Aji Caya Dika",
+      "Bram Juminarko",
+      "Ricky Razab",
+      "Gusti Roni",
+    ]);
+    expect(parsed.schemeGroups).toEqual([
+      {
+        schemeName: "Ahli Keselamatan dan Kesehatan Kerja Umum",
+        candidateNames: ["Amin Fauzi", "Ady M Ramadhan", "Silvia Yopi Putri Mila"],
+      },
+      {
+        schemeName: "Operator Keselamatan dan Kesehatan Kerja",
+        candidateNames: ["Aji Caya Dika", "Bram Juminarko", "Ricky Razab", "Gusti Roni"],
+      },
+    ]);
+  });
 });

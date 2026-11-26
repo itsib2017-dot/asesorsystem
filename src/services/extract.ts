@@ -8,6 +8,14 @@ export { sanitizeExtractedText };
 
 const OLE_MAGIC_BYTES = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 const MAX_PDF_EXTRACT_BYTES = 15 * 1024 * 1024;
+const MAX_PDF_INFLATE_BYTES = 4 * 1024 * 1024;
+const MAX_PDF_TEXT_STREAM_CHARS = 2 * 1024 * 1024;
+const MAX_PDF_RAW_FALLBACK_BYTES = 512 * 1024;
+
+// Sticky regexes avoid allocating millions of `stream.slice(i)` substrings in PDF loops.
+const STICKY_NEG_NUM_RE = /-?\d+(?:\.\d+)?/y;
+const STICKY_SIGNED_NUM_RE = /[+-]?\d+(?:\.\d+)?/y;
+const STICKY_OP_TOKEN_RE = /[A-Za-z*]+/y;
 
 /**
  * Checks whether a buffer starts with the OLE Compound File Binary signature
@@ -400,6 +408,7 @@ interface PositionedPdfSpan {
 }
 
 function extractStreamTextWithLayout(stream: string): string[] {
+  if (stream.length > MAX_PDF_TEXT_STREAM_CHARS) return [];
   const spans: PositionedPdfSpan[] = [];
   let hasExplicitCoords = false;
   let curX = 0;
@@ -476,7 +485,8 @@ function extractStreamTextWithLayout(stream: string): string[] {
           continue;
         }
         if (innerCh === "-" || (innerCh >= "0" && innerCh <= "9") || innerCh === ".") {
-          const numMatch = stream.slice(j).match(/^-?\d+(?:\.\d+)?/);
+          STICKY_NEG_NUM_RE.lastIndex = j;
+          const numMatch = STICKY_NEG_NUM_RE.exec(stream);
           if (numMatch?.[0]) {
             const adj = Number(numMatch[0]);
             if (adj < -140 && segment && !segment.endsWith(" ")) {
@@ -508,7 +518,8 @@ function extractStreamTextWithLayout(stream: string): string[] {
     if (ch === "-" || ch === "+" || ch === "." || (ch >= "0" && ch <= "9")) {
       const prevCh = i > 0 ? stream[i - 1] ?? "" : " ";
       if (/\s|\[|\]/.test(prevCh) || i === 0) {
-        const numMatch = stream.slice(i).match(/^[+-]?\d+(?:\.\d+)?/);
+        STICKY_SIGNED_NUM_RE.lastIndex = i;
+        const numMatch = STICKY_SIGNED_NUM_RE.exec(stream);
         if (numMatch?.[0]) {
           numericWindow.push(Number(numMatch[0]));
           if (numericWindow.length > 6) numericWindow.shift();
@@ -520,7 +531,8 @@ function extractStreamTextWithLayout(stream: string): string[] {
 
     // Text positioning / font / line operators
     if (/[A-Za-z*]/.test(ch)) {
-      const tokMatch = stream.slice(i).match(/^[A-Za-z*]+/);
+      STICKY_OP_TOKEN_RE.lastIndex = i;
+      const tokMatch = STICKY_OP_TOKEN_RE.exec(stream);
       const tok = tokMatch?.[0] ?? "";
       if (tok === "BT") {
         curX = 0;
@@ -642,16 +654,21 @@ export function extractTextFromPdfBasic(buffer: Buffer): string {
     const rawBytes = Buffer.from(body, "latin1");
     let decoded: string | null = null;
     try {
-      decoded = zlib.inflateSync(rawBytes).toString("latin1");
+      decoded = zlib.inflateSync(rawBytes, { maxOutputLength: MAX_PDF_INFLATE_BYTES }).toString("latin1");
     } catch {
-      decoded = rawBytes.toString("latin1");
+      decoded = rawBytes.length <= MAX_PDF_INFLATE_BYTES ? rawBytes.toString("latin1") : null;
     }
     if (decoded && isLikelyTextContentStream(decoded)) {
       streams.push(decoded);
     }
   }
 
-  const targetStreams = streams.length > 0 ? streams : [latin];
+  const targetStreams =
+    streams.length > 0
+      ? streams
+      : latin.length <= MAX_PDF_RAW_FALLBACK_BYTES && isLikelyTextContentStream(latin)
+        ? [latin]
+        : [];
   const allLines: string[] = [];
   for (const st of targetStreams) {
     allLines.push(...extractStreamTextWithLayout(st));

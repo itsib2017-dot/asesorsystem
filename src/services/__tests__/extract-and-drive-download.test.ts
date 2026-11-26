@@ -618,4 +618,13 @@ describe("File text extraction & SSRF-guarded Drive download (T2)", () => {
     expect(resolved.extractionErrors).toEqual([]);
     expect(resolved.candidateProfileSummary).toBe("");
   });
+
+  it("skips oversized raw binary PDFs cleanly instead of scanning multi-MB streams (OOM fix)", () => {
+    const oversizedBinaryPdf = Buffer.concat([
+      Buffer.from("%PDF-1.4\n", "latin1"),
+      Buffer.alloc(600 * 1024, 0x41),
+      Buffer.from(" BT (Fake) Tj ET %%EOF", "latin1"),
+    ]);
+    expect(extractTextFromPdfBasic(oversizedBinaryPdf)).toBe("");
+  });
 });

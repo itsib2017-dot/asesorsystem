@@ -1,14 +1,18 @@
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { z } from "zod";
 import { getUser } from "@/lib/auth/get-session";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
 import { apiError, apiSuccess } from "@/lib/errors";
+import { logEvent } from "@/lib/logger";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { createBatchRecord, listBatchesForUser } from "@/repositories/batches.repository";
 import { listJobsForUser } from "@/repositories/jobs.repository";
 import { validateSafeExternalUrl } from "@/lib/security/ssrf";
-import { enqueueJob } from "@/worker/queue";
+import { enqueueJob, executeJob } from "@/worker/queue";
+
+export const maxDuration = 300;
 
 const createBatchSchema = z.object({
   schemeId: z.string().uuid({ message: "Skema sertifikasi wajib dipilih." }),
@@ -121,11 +125,30 @@ export async function POST(req: Request) {
     userId: user.id,
     lspId: authz.lspId,
     type: "drive_scan",
+    runImmediately: false,
     payload: {
       batchId: result.batchId,
       driveFolderUrl: parsed.data.driveFolderUrl,
     },
   });
+
+  if (scanJob.ok) {
+    after(async () => {
+      try {
+        await executeJob(user.id, scanJob.job.id, { lspId: authz.lspId });
+      } catch (err) {
+        logEvent("error", {
+          correlation_id: scanJob.job.id,
+          user_id: user.id,
+          tenant_id: authz.lspId ?? undefined,
+          action: "batch.create.drive_scan_after",
+          resource: "jobs",
+          outcome: "failure",
+          meta: { error: err instanceof Error ? err.message : String(err) },
+        });
+      }
+    });
+  }
 
   const supabase = await getSupabaseServerClient();
   await writeAuditLog(

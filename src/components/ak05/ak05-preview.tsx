@@ -31,7 +31,9 @@ interface Ak05PreviewProps {
   undecidedCount?: number;
   rows: Array<{
     no: number;
+    assesseeId?: string;
     assesseeName: string;
+    isNameConfirmed?: boolean;
     recommendation: "K" | "BK" | "-";
     keterangan: string;
   }>;
@@ -106,7 +108,7 @@ export function Ak05Preview(props: Ak05PreviewProps) {
             )}
             {props.unconfirmedNamesCount > 0 && (
               <li>
-                Terdapat {props.unconfirmedNamesCount} asesi yang belum memiliki konfirmasi nama sertifikat (otoritas KTP).
+                Terdapat {props.unconfirmedNamesCount} asesi yang belum memiliki konfirmasi nama sertifikat (otoritas KTP) untuk ekspor tingkat batch. Asesi yang namanya sudah terkonfirmasi tetap dapat diekspor per asesi di bawah.
               </li>
             )}
             {(props.undecidedCount ?? 0) > 0 && (
@@ -157,6 +159,83 @@ export function Ak05Preview(props: Ak05PreviewProps) {
           </a>
         </div>
       </div>
+
+      {/* Per-Assessee Export Card (P0-3: never block confirmed assessee on unconfirmed peers) */}
+      {props.rows.some((r) => Boolean(r.assesseeId)) && (
+        <div className="glass-card rounded-2xl p-4 space-y-3 border border-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                Ekspor FR.AK.05 Per Asesi (PDF / DOCX)
+              </h2>
+              <p className="text-[11px] text-slate-500">
+                Asesi dengan nama sertifikat terkonfirmasi dapat langsung diekspor tanpa menunggu asesi lain di batch.
+              </p>
+            </div>
+          </div>
+          <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl bg-white overflow-hidden">
+            {props.rows.map((r) => {
+              const canExportAssessee =
+                props.hasActiveSignature && Boolean(r.isNameConfirmed) && Boolean(r.assesseeId);
+              return (
+                <div
+                  key={r.assesseeId ?? r.no}
+                  className="px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs"
+                >
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="font-mono text-slate-500">{r.no}.</span>
+                    <span className="font-medium text-slate-900 truncate">{r.assesseeName}</span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                        r.isNameConfirmed
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-amber-50 text-amber-800 border-amber-200"
+                      }`}
+                    >
+                      {r.isNameConfirmed ? "Nama Terkonfirmasi" : "Belum Konfirmasi KTP"}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
+                      {r.recommendation}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <a
+                      href={
+                        canExportAssessee
+                          ? `/api/v1/batches/${props.batchId}/ak05/export?format=pdf&assesseeId=${r.assesseeId}`
+                          : undefined
+                      }
+                      aria-disabled={!canExportAssessee}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-medium inline-flex items-center gap-1 ${
+                        canExportAssessee
+                          ? "bg-teal-700 hover:bg-teal-800 text-white"
+                          : "bg-slate-100 text-slate-400 cursor-not-allowed pointer-events-none"
+                      }`}
+                    >
+                      <Download className="w-3 h-3" /> PDF
+                    </a>
+                    <a
+                      href={
+                        canExportAssessee
+                          ? `/api/v1/batches/${props.batchId}/ak05/export?format=docx&assesseeId=${r.assesseeId}`
+                          : undefined
+                      }
+                      aria-disabled={!canExportAssessee}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-medium inline-flex items-center gap-1 border ${
+                        canExportAssessee
+                          ? "bg-white hover:bg-slate-50 border-slate-300 text-slate-800"
+                          : "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed pointer-events-none"
+                      }`}
+                    >
+                      <FileText className="w-3 h-3" /> DOCX
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Sheet 1: Faithful Official Blanko FR.AK.05 Page 1 */}
       <BlankoA4Sheet>

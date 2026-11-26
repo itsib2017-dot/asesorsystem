@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -21,13 +22,16 @@ import { listSchemes } from "@/repositories/schemes.repository";
 import { resolveBatchActiveMasterKey } from "@/lib/written/master-key";
 import { resolveSchemeDocColumns } from "@/lib/forms/assessee-forms";
 import { pickLatestDriveFile } from "@/services/drive-revisions";
-import { enqueueJob } from "@/worker/queue";
+import { logEvent } from "@/lib/logger";
+import { enqueueJob, executeJob } from "@/worker/queue";
 import { CompletenessMatrix, type CompletenessRow } from "@/components/batch/completeness-matrix";
 import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
 import { BatchWorkflowStepper } from "@/components/batch/batch-workflow-stepper";
 import { JobStatusPoller } from "@/components/batch/job-status-poller";
 import { BatchMetadataSuratTugasPanel } from "./_components/batch-metadata-surat-tugas-panel";
 import { RescanDriveButton } from "./_components/rescan-drive-button";
+
+export const maxDuration = 300;
 
 export const metadata = {
   title: "Detail Batch — AsesorKompetensi",
@@ -78,8 +82,26 @@ export default async function BatchDetailPage({
       lspId: batchLspId,
       triggerAction: "rescan",
       type: "drive_scan",
+      runImmediately: false,
       payload: { batchId, driveFolderUrl },
     });
+    if (scan.ok) {
+      after(async () => {
+        try {
+          await executeJob(userId, scan.job.id, { lspId: batchLspId });
+        } catch (err) {
+          logEvent("error", {
+            correlation_id: scan.job.id,
+            user_id: userId,
+            tenant_id: batchLspId,
+            action: "batch.rescan.drive_scan_after",
+            resource: "jobs",
+            outcome: "failure",
+            meta: { error: err instanceof Error ? err.message : String(err) },
+          });
+        }
+      });
+    }
     revalidatePath(`/batches/${batchId}`);
     if (scan.ok) {
       revalidatePath(`/batches/${batchId}/ingest/${scan.job.id}`);
