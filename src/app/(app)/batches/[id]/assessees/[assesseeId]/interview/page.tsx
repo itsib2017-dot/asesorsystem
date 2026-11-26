@@ -106,6 +106,23 @@ export default async function InterviewPage({
   const savedQuestions = Array.isArray(latestInterview?.questions)
     ? (latestInterview.questions as InterviewQuestionItem[])
     : null;
+  const draftFile = assesseeFiles.find(
+    (f) => f.docType === "ia09_draft" && Boolean(f.extractedText?.trim()),
+  );
+  let draftQuestions: InterviewQuestionItem[] = [];
+  if (draftFile?.extractedText) {
+    try {
+      const parsed = JSON.parse(draftFile.extractedText);
+      if (Array.isArray(parsed)) {
+        draftQuestions = parsed.filter(
+          (item): item is InterviewQuestionItem =>
+            Boolean(item && typeof item === "object" && typeof (item as { question?: unknown }).question === "string"),
+        );
+      }
+    } catch {
+      draftQuestions = [];
+    }
+  }
   const parsed09Questions = extracted09Text.trim()
     ? parseQuestionsFromText(extracted09Text, schemeUnits)
     : [];
@@ -118,14 +135,20 @@ export default async function InterviewPage({
       unitCode: q.unitCode || schemeUnits[idx]?.code,
     }),
   );
-  const initialQuestions =
+  const rawInitialQuestions =
     savedQuestions && savedQuestions.length > 0
       ? savedQuestions
-      : parsed09Questions.length > 0 && extracted09Text.trim().length > 0
-        ? parsed09Questions
-        : manifestFallbackQuestions.length > 0
-          ? manifestFallbackQuestions
-          : parseQuestionsFromText("", schemeUnits);
+      : draftQuestions.length > 0
+        ? draftQuestions
+        : parsed09Questions.length > 0 && extracted09Text.trim().length > 0
+          ? parsed09Questions
+          : manifestFallbackQuestions.length > 0
+            ? manifestFallbackQuestions
+            : parseQuestionsFromText("", schemeUnits);
+  const initialQuestions = rawInitialQuestions.map((q, idx) => ({
+    ...q,
+    no: idx + 1,
+  }));
 
   const savedUnits = Array.isArray(
     latestInterview?.vatm_unit_recommendations ?? latestInterview?.vatmUnitRecommendations,

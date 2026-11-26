@@ -7,6 +7,7 @@ import { CheckCircle2, Save, XCircle } from "lucide-react";
 import {
   generateInterviewQuestionsAction,
   saveInterviewAssessmentAction,
+  saveInterviewDraftAction,
 } from "../actions";
 
 export type InterviewDimensionCode = "TS" | "TMS" | "CMS" | "JRES" | "TrS";
@@ -53,6 +54,7 @@ export function InterviewAssessmentForm({
   const [notes, setNotes] = useState(initialNotes);
   const [applyToDecisions, setApplyToDecisions] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [status, setStatus] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -69,8 +71,9 @@ export function InterviewAssessmentForm({
         setStatus({ type: "error", text: res.error ?? "Gagal membuat pertanyaan wawancara." });
         return;
       }
-      setQuestions(res.questions);
+      setQuestions(res.questions.map((q, i) => ({ ...q, no: i + 1 })));
       setStatus({ type: "success", text: res.message ?? "Pertanyaan wawancara dibuat." });
+      router.refresh();
     } catch (err) {
       setStatus({
         type: "error",
@@ -81,10 +84,79 @@ export function InterviewAssessmentForm({
     }
   };
 
+  const handleSaveDraft = async () => {
+    if (savingDraft || saving) return;
+    setSavingDraft(true);
+    setStatus(null);
+    try {
+      const fd = new FormData();
+      fd.append("batchId", batchId);
+      fd.append("assesseeId", assesseeId);
+      fd.append(
+        "questionsJson",
+        JSON.stringify(questions.map((q, i) => ({ ...q, no: i + 1 }))),
+      );
+      const res = await saveInterviewDraftAction(fd);
+      if (!res.ok) {
+        setStatus({ type: "error", text: res.error ?? "Gagal menyimpan draf pertanyaan." });
+        return;
+      }
+      setStatus({ type: "success", text: res.message ?? "Draf pertanyaan wawancara tersimpan." });
+      router.refresh();
+    } catch (err) {
+      setStatus({
+        type: "error",
+        text: err instanceof Error ? err.message : "Terjadi kesalahan jaringan.",
+      });
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
   const updateQuestion = (idx: number, patch: Partial<InterviewQuestionItem>) => {
-    setQuestions((prev) =>
-      prev.map((q, i) => (i === idx ? { ...q, ...patch } : q)),
+    const nextQuestions = questions.map((q, i) =>
+      i === idx ? { ...q, ...patch, no: i + 1 } : { ...q, no: i + 1 },
     );
+    setQuestions(nextQuestions);
+
+    // P1-4: auto-fill per-unit roll-up & overall verdict from item Ya/Tidak verdicts.
+    if (patch.achieved === "Ya" || patch.achieved === "Tidak") {
+      const targetQ = nextQuestions[idx];
+      const targetUnitCode = targetQ?.unitCode?.trim().toLowerCase() ?? "";
+      const nextUnits = units.map((u, uIdx) => {
+        const uCode = u.unitCode.trim().toLowerCase();
+        const isMatched = targetUnitCode
+          ? uCode === targetUnitCode
+          : nextQuestions.length === units.length && uIdx === idx;
+        if (!isMatched) return u;
+
+        const linked = nextQuestions.filter((item, qIdx) =>
+          targetUnitCode
+            ? (item.unitCode?.trim().toLowerCase() ?? "") === uCode
+            : qIdx === uIdx,
+        );
+        const hasTidak = linked.some((item) => item.achieved === "Tidak");
+        const allYa = linked.length > 0 && linked.every((item) => item.achieved === "Ya");
+        if (!hasTidak && !allYa) return u;
+
+        const recommendation: "K" | "BK" = hasTidak ? "BK" : "K";
+        return {
+          ...u,
+          recommendation,
+          reasoning:
+            u.reasoning ||
+            (recommendation === "BK"
+              ? "Bukti wawancara FR.IA.09 belum memenuhi kriteria VATM unit ini."
+              : "Wawancara FR.IA.09 memenuhi kriteria VATM."),
+        };
+      });
+      setUnits(nextUnits);
+      if (nextUnits.some((u) => u.recommendation === "BK")) {
+        setOverall("BK");
+      } else if (nextUnits.length > 0 && nextUnits.every((u) => u.recommendation === "K")) {
+        setOverall("K");
+      }
+    }
   };
 
   const updateUnitRec = (idx: number, recommendation: "K" | "BK") => {
@@ -186,31 +258,42 @@ export function InterviewAssessmentForm({
               Catat kesimpulan jawaban asesi dan tentukan pencapaian Ya / Tidak per butir wawancara.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={generating}
-            className="px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white text-xs font-medium cursor-pointer"
-          >
-            {generating ? "Membuat..." : "Hasilkan Pertanyaan (AI)"}
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              setQuestions((prev) => [
-                ...prev,
-                {
-                  no: prev.length + 1,
-                  question: "",
-                  answerSummary: "",
-                  achieved: null,
-                },
-              ])
-            }
-            className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-700 cursor-pointer"
-          >
-            + Tambah Pertanyaan
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={generating || savingDraft || saving}
+              className="px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white text-xs font-medium cursor-pointer"
+            >
+              {generating ? "Membuat..." : "Hasilkan Pertanyaan (AI)"}
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveDraft}
+              disabled={savingDraft || saving || generating}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Save className="w-3.5 h-3.5" />
+              {savingDraft ? "Menyimpan Draf..." : "Simpan Draf Soal"}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setQuestions((prev) => [
+                  ...prev,
+                  {
+                    no: prev.length + 1,
+                    question: "",
+                    answerSummary: "",
+                    achieved: null,
+                  },
+                ])
+              }
+              className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-xs font-medium text-slate-700 cursor-pointer"
+            >
+              + Tambah Pertanyaan
+            </button>
+          </div>
         </div>
 
         <div className="space-y-3">
@@ -219,10 +302,10 @@ export function InterviewAssessmentForm({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-bold text-slate-900">
-                    Pertanyaan #{q.no} {q.unitCode ? `(${q.unitCode})` : ""}
+                    Pertanyaan #{idx + 1} {q.unitCode ? `(${q.unitCode})` : ""}
                   </span>
                   <select
-                    aria-label={`Dimensi pertanyaan ${q.no}`}
+                    aria-label={`Dimensi pertanyaan ${idx + 1}`}
                     value={q.dimension ?? ""}
                     onChange={(e) => {
                       const val = e.target.value as InterviewDimensionCode | "";

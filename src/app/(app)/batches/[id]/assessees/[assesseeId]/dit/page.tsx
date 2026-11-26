@@ -133,13 +133,33 @@ export default async function DitAnalysisPage({
           </p>
         </div>
 
-        <a
-          href={`/api/v1/batches/${batchId}/assessees/${assesseeId}/export?form=ia04a&format=docx`}
-          className="px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-xs font-medium text-white shadow-sm inline-flex items-center gap-2 shrink-0"
-        >
-          <FileText className="w-4 h-4" />
-          Ekspor FR.IA.04A (.docx)
-        </a>
+        {(() => {
+          const canExport04a = common.isNameConfirmed && common.hasActiveSignature;
+          const disabledReason = !common.hasActiveSignature
+            ? "Unggah tanda tangan asesor di Pengaturan → Profil terlebih dahulu."
+            : !common.isNameConfirmed
+              ? "Konfirmasi nama sertifikat (otoritas KTP) asesi terlebih dahulu."
+              : undefined;
+          return (
+            <a
+              href={
+                canExport04a
+                  ? `/api/v1/batches/${batchId}/assessees/${assesseeId}/export?form=ia04a&format=docx`
+                  : undefined
+              }
+              aria-disabled={!canExport04a}
+              title={disabledReason}
+              className={`px-4 py-2 rounded-xl text-xs font-medium inline-flex items-center gap-2 shrink-0 ${
+                canExport04a
+                  ? "bg-teal-700 hover:bg-teal-800 text-white shadow-sm"
+                  : "bg-slate-200 text-slate-400 cursor-not-allowed pointer-events-none"
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              Ekspor FR.IA.04A (.docx)
+            </a>
+          );
+        })()}
       </div>
 
       {/* Rule 26: Completeness Gate */}

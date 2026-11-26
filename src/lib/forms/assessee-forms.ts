@@ -878,6 +878,7 @@ export function buildIa04aPayload(params: {
   assesseeName: string;
   assessmentDate: string;
   ditAnalysis?: Record<string, unknown> | null;
+  extracted04aText?: string | null;
 }): Ia04aExportPayload {
   const readinessRaw = params.ditAnalysis
     ? readField<{ recommendation?: string }>(params.ditAnalysis, "readiness", "readiness")
@@ -911,7 +912,8 @@ export function buildIa04aPayload(params: {
     assessorRegNo: params.assessorRegNo,
     assesseeName: params.assesseeName,
     assessmentDate: params.assessmentDate,
-    ditExtractedText: rawOutput?.frIa04aText ?? undefined,
+    ditExtractedText:
+      rawOutput?.frIa04aText?.trim() || params.extracted04aText?.trim() || undefined,
     modelAnswers,
     readiness: readinessRaw?.recommendation ?? null,
   };

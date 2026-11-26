@@ -1,6 +1,8 @@
 "use client";
+// Client interactivity required for KTP name confirmation and manual override form.
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { ShieldCheck, AlertTriangle, Check, Edit3, HelpCircle, Clock } from "lucide-react";
 
 interface NameJuryCardProps {
@@ -30,6 +32,7 @@ export function NameJuryCard({
   confirmedName,
   onConfirmAction,
 }: NameJuryCardProps) {
+  const router = useRouter();
   const [customMode, setCustomMode] = useState(false);
   const [typedName, setTypedName] = useState(proposedName || ktpOcrName || "");
   const [overrideReason, setOverrideReason] = useState("");
@@ -48,6 +51,9 @@ export function NameJuryCard({
     setStatusMsg(res.message ?? (res.ok ? "Nama sertifikat dikonfirmasi." : "Gagal menyimpan."));
     setPending(false);
     setCustomMode(false);
+    if (res.ok) {
+      router.refresh();
+    }
   };
 
   const verdictBadge =
@@ -157,8 +163,8 @@ export function NameJuryCard({
       {!customMode ? (
         <div className="flex flex-wrap items-center gap-3 pt-2">
           {(proposedName || ktpOcrName) &&
-            verdict !== "needs_human" &&
-            (verdict !== "not_run" || Boolean(ktpOcrName.trim())) && (
+          verdict !== "needs_human" &&
+          (verdict !== "not_run" || Boolean(ktpOcrName.trim())) ? (
             <button
               type="button"
               disabled={pending}
@@ -168,6 +174,22 @@ export function NameJuryCard({
               <Check className="w-4 h-4" />
               Konfirmasi Nama: {proposedName || ktpOcrName}
             </button>
+          ) : (
+            apl01Name.trim() &&
+            apl01Name.trim() !== "-" && (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  setTypedName(apl01Name.trim());
+                  setCustomMode(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-sm font-medium transition-all flex items-center gap-2 cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                Gunakan Nama Tampilan (Isi Form)
+              </button>
+            )
           )}
 
           <button

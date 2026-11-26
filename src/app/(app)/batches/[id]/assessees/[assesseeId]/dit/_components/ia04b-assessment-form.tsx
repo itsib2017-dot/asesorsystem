@@ -228,6 +228,17 @@ export function Ia04bAssessmentForm({
     setOverallTouched(true);
   };
 
+  const handleBulkAchieved = (achieved: true | null) => {
+    if (
+      isSaved &&
+      !window.confirm("Timpa nilai tersimpan pada formulir FR.IA.04B ini?")
+    ) {
+      return;
+    }
+    setItems((prev) => prev.map((item) => ({ ...item, achieved })));
+    setTouchedItems(new Set(items.map((item) => aspectKey(item.kpIndex, item.no))));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (saving || items.length === 0) return;
@@ -294,10 +305,26 @@ export function Ia04bAssessmentForm({
             </p>
           </div>
         </div>
-        <div className="text-xs font-mono text-slate-600 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
-          Ya: {items.filter((i) => i.achieved === true).length} · Tidak:{" "}
-          {items.filter((i) => i.achieved === false).length} · Belum:{" "}
-          {items.filter((i) => i.achieved === null).length}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleBulkAchieved(true)}
+            className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-[11px] font-medium text-slate-700 cursor-pointer"
+          >
+            Tandai Semua Ya
+          </button>
+          <button
+            type="button"
+            onClick={() => handleBulkAchieved(null)}
+            className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-[11px] font-medium text-slate-700 cursor-pointer"
+          >
+            Kosongkan
+          </button>
+          <div className="text-xs font-mono text-slate-600 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
+            Ya: {items.filter((i) => i.achieved === true).length} · Tidak:{" "}
+            {items.filter((i) => i.achieved === false).length} · Belum:{" "}
+            {items.filter((i) => i.achieved === null).length}
+          </div>
         </div>
       </div>
 

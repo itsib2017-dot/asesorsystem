@@ -8,7 +8,7 @@ describe("formatDitJobFailureMessage & classifyDitFailure", () => {
       "Permintaan ke model AI (openai-compatible/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning) melewati batas waktu 220 detik (The operation was aborted due to timeout).",
     );
 
-    expect(msg).toContain("Analisis DIT gagal (Job ad17a9fc):");
+    expect(msg).toContain("Analisis DIT gagal (Job ad17a9fc-3459-430e-a6a8-f7d52832fdce):");
     expect(msg).toContain("bukan masalah kuota");
     expect(msg).toContain("model yang lebih cepat");
     expect(msg).not.toContain("batas kuota atau kredit");
@@ -21,7 +21,7 @@ describe("formatDitJobFailureMessage & classifyDitFailure", () => {
     expect(classifyDitFailure(raw)).toBe("quota");
 
     const msg = formatDitJobFailureMessage("6688fde7-07f4-48d3-be50-8b43f20a1670", raw);
-    expect(msg).toContain("Analisis DIT gagal (Job 6688fde7):");
+    expect(msg).toContain("Analisis DIT gagal (Job 6688fde7-07f4-48d3-be50-8b43f20a1670):");
     expect(msg).toContain("batas kuota atau kredit penyedia AI tercapai");
   });
 
@@ -46,7 +46,7 @@ describe("formatDitJobFailureMessage & classifyDitFailure", () => {
   it("falls back safely on unknown worker errors", () => {
     expect(classifyDitFailure("Unexpected JSON parse exception")).toBe("unknown");
     const msg = formatDitJobFailureMessage("def67890-0000-0000-0000-000000000000", null);
-    expect(msg).toContain("Analisis DIT gagal (Job def67890): kesalahan worker.");
+    expect(msg).toContain("Analisis DIT gagal (Job def67890-0000-0000-0000-000000000000): kesalahan worker.");
     expect(msg).toContain("Jalankan ulang analisis");
   });
 });

@@ -184,10 +184,8 @@ export function BatchMetadataSuratTugasPanel({
         return;
       }
       if (applyMetadata) {
-        const nextDate = res.appliedMetadata?.assessmentDate ?? (effectiveDate || null);
-        const nextTuk = res.appliedMetadata?.tukName ?? (effectiveTuk || null);
-        if (nextDate) setAssessmentDate(nextDate);
-        if (nextTuk) setTukName(nextTuk);
+        setDraftAssessmentDate(null);
+        setDraftTukName(null);
       }
       setStMsg({ type: "success", text: res.message ?? "Surat Tugas tersimpan." });
       setSelectedFile(null);
@@ -467,6 +465,15 @@ export function BatchMetadataSuratTugasPanel({
               </div>
             )}
 
+            {preview.schemeGroups && preview.schemeGroups.length > 1 && (
+              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
+                <strong>Surat Tugas memuat {preview.schemeGroups.length} skema:</strong>{" "}
+                {preview.schemeGroups
+                  .map((g) => `${g.schemeName} (${g.candidateNames.length} peserta)`)
+                  .join(" · ")}. Buat batch terpisah per skema agar unit &amp; blanko sesuai.
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
               <div className="flex flex-wrap gap-4">
                 <label className="inline-flex items-center gap-1.5 text-slate-700 cursor-pointer">
@@ -477,7 +484,7 @@ export function BatchMetadataSuratTugasPanel({
                   />
                   Terapkan tanggal asesmen &amp; TUK ke metadata batch
                 </label>
-                {rosterSummary && rosterSummary.toAdd.length > 0 && (
+                {rosterSummary && rosterSummary.toAdd.length > 0 ? (
                   <label className="inline-flex items-center gap-1.5 text-slate-700 cursor-pointer">
                     <input
                       type="checkbox"
@@ -486,6 +493,12 @@ export function BatchMetadataSuratTugasPanel({
                     />
                     Tambahkan {rosterSummary.toAdd.length} peserta baru ke roster asesi (konfirmasi manual — periksa daftar di atas terlebih dahulu)
                   </label>
+                ) : (
+                  <span className="text-[11px] text-slate-600">
+                    {rosterSummary && preview.candidateNames.length > 0
+                      ? "Semua peserta pada Surat Tugas sudah ada di roster. Peserta baru tidak ditambahkan otomatis — kelola peserta tambahan melalui Triage / Roster."
+                      : "Peserta baru tidak ditambahkan otomatis dari Surat Tugas — kelola peserta melalui Triage / Roster."}
+                  </span>
                 )}
               </div>
 

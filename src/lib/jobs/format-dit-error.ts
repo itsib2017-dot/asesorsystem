@@ -44,8 +44,8 @@ export function formatDitJobFailureMessage(
   jobId: string,
   rawError: string | null | undefined,
 ): string {
-  const shortId = jobId ? jobId.slice(0, 8) : "-";
+  const fullId = jobId?.trim() || "-";
   const detail = rawError?.trim() || "kesalahan worker.";
   const category = classifyDitFailure(rawError);
-  return `Analisis DIT gagal (Job ${shortId}): ${detail} ${FAILURE_GUIDANCE[category]}`;
+  return `Analisis DIT gagal (Job ${fullId}): ${detail} ${FAILURE_GUIDANCE[category]}`;
 }

@@ -154,7 +154,7 @@ export function DitAnalysisTrigger({
             text:
               final.status === "failed"
                 ? formatDitJobFailureMessage(jobId, final.error)
-                : `Analisis DIT masih berjalan atau melewati batas waktu tunggu (Job ${jobId.slice(0, 8)}). Periksa Status Pindai/Job pada halaman batch lalu segarkan halaman.`,
+                : `Analisis DIT masih berjalan atau melewati batas waktu tunggu (Job ${jobId}). Periksa Status Pindai/Job pada halaman batch lalu segarkan halaman.`,
           });
           router.refresh();
           return;
@@ -163,7 +163,7 @@ export function DitAnalysisTrigger({
 
       setFeedback({
         type: "success",
-        text: `Analisis DIT selesai (Job ${jobId?.slice(0, 8) ?? "-"}).`,
+        text: `Analisis DIT selesai (Job ${jobId ?? "-"}).`,
       });
       router.refresh();
     } catch (err) {

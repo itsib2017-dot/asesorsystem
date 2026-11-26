@@ -8,7 +8,11 @@ import { getLspNameForUser } from "@/repositories/auth.repository";
 import { resolveSchemeInterviewQuestions } from "@/lib/forms/assessee-forms";
 import { resolveUnitsForScheme } from "@/lib/forms/sync-vatm-decisions";
 import { getLatestProviderConfigForAssessor } from "@/repositories/provider.repository";
-import { listDriveFilesForBatch } from "@/repositories/batches.repository";
+import {
+  getBatchById,
+  listDriveFilesForBatch,
+  upsertDriveFilesForBatch,
+} from "@/repositories/batches.repository";
 import { isUuid } from "@/db";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { resolveAuthorizedLsp } from "@/lib/auth/get-role";
@@ -23,7 +27,6 @@ import {
   saveInterviewAssessment,
   upsertUnitDecision,
 } from "@/repositories/assessment.repository";
-import { getBatchById } from "@/repositories/batches.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 
 const questionSchema = z.object({
@@ -179,13 +182,18 @@ export async function saveInterviewAssessmentAction(formData: FormData): Promise
     return { ok: false, error: "Peran Anda tidak berwenang menyimpan penilaian wawancara." };
   }
 
+  const normalizedQuestions = data.questions.map((q, idx) => ({
+    ...q,
+    no: idx + 1,
+  }));
+
   await saveInterviewAssessment({
     userId: user.id,
     lspId: batch.lspId,
     batchId: batch.id,
     assesseeId: assessee.id,
     sourceFileId: data.sourceFileId,
-    questions: data.questions,
+    questions: normalizedQuestions,
     overallRecommendation: data.overallRecommendation,
     vatmUnitRecommendations: data.vatmUnitRecommendations,
     assessorNotes: data.assessorNotes,
@@ -459,16 +467,153 @@ export async function generateInterviewQuestionsAction(formData: FormData): Prom
     // non-fatal audit error
   }
 
+  const normalizedQuestions = result.output.interviewQuestions.map((q, idx) => ({
+    no: idx + 1,
+    question: q.question,
+    answerSummary: "",
+    achieved: null as null,
+    unitCode: q.unitCode,
+    dimension: q.dimension,
+  }));
+
+  try {
+    await persistInterviewDraftQuestions({
+      userId: user.id,
+      lspId: batch.lspId,
+      batchId: batch.id,
+      assesseeId: assessee.id,
+      questions: normalizedQuestions,
+    });
+    revalidatePath(`/batches/${batch.id}/assessees/${assessee.id}/interview`);
+  } catch {
+    // non-fatal draft cache error
+  }
+
   return {
     ok: true,
-    questions: result.output.interviewQuestions.map((q) => ({
-      no: q.no,
-      question: q.question,
-      answerSummary: "",
-      achieved: null,
-      unitCode: q.unitCode,
-      dimension: q.dimension,
-    })),
-    message: `${questionCount} pertanyaan wawancara dibuat dari manifes skema ${scheme.code}.`,
+    questions: normalizedQuestions,
+    message: `${questionCount} pertanyaan wawancara dibuat dari manifes skema ${scheme.code} dan disimpan sebagai draf.`,
+  };
+}
+
+async function persistInterviewDraftQuestions(params: {
+  userId: string;
+  lspId: string;
+  batchId: string;
+  assesseeId: string;
+  questions: Array<z.infer<typeof questionSchema>>;
+}): Promise<void> {
+  const normalized = params.questions.map((q, idx) => ({ ...q, no: idx + 1 }));
+  await upsertDriveFilesForBatch({
+    userId: params.userId,
+    lspId: params.lspId,
+    batchId: params.batchId,
+    files: [
+      {
+        driveFileId: `manual-ia09-draft-${params.assesseeId}`,
+        fileName: "FR.IA.09_Draft_Pertanyaan.json",
+        mimeType: "application/json",
+        drivePath: "Manual Input/FR.IA.09_Draft_Pertanyaan.json",
+        docType: "ia09_draft",
+        confidence: 1,
+        assesseeId: params.assesseeId,
+        triageStatus: "not_needed",
+        triageReason: "Draf pertanyaan wawancara FR.IA.09",
+        extractedText: JSON.stringify(normalized),
+        extractionMethod: "ia09_draft",
+        driveModifiedTime: new Date().toISOString(),
+      },
+    ],
+  });
+}
+
+const saveInterviewDraftSchema = z.object({
+  batchId: z.string().uuid(),
+  assesseeId: z.string().uuid(),
+  questions: z.array(questionSchema).min(1),
+});
+
+export async function saveInterviewDraftAction(formData: FormData): Promise<{
+  ok: boolean;
+  message?: string;
+  error?: string;
+}> {
+  const user = await getUser();
+  if (!user) {
+    return { ok: false, error: "Unauthorized: Silakan masuk terlebih dahulu." };
+  }
+
+  let parsedQuestions: unknown = [];
+  try {
+    parsedQuestions = JSON.parse(String(formData.get("questionsJson") ?? "[]"));
+  } catch {
+    return { ok: false, error: "Format JSON draf pertanyaan tidak valid." };
+  }
+
+  const parsed = saveInterviewDraftSchema.safeParse({
+    batchId: String(formData.get("batchId") ?? "").trim(),
+    assesseeId: String(formData.get("assesseeId") ?? "").trim(),
+    questions: parsedQuestions,
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Draf pertanyaan wawancara belum lengkap (isi teks pertanyaan terlebih dahulu).",
+    };
+  }
+
+  const data = parsed.data;
+  const rate = checkRateLimit(`interview:draft:${user.id}:${data.assesseeId}`, 30, 60_000);
+  if (!rate.allowed) {
+    return {
+      ok: false,
+      error: `Terlalu banyak permintaan simpan draf. Coba lagi dalam ${rate.retryAfterSeconds} detik.`,
+    };
+  }
+
+  const [batch, assessee, authz] = await Promise.all([
+    getBatchById(user.id, data.batchId),
+    getAssesseeById(user.id, data.assesseeId),
+    resolveAuthorizedLsp(user.id, ["lsp_admin", "assessor"]),
+  ]);
+  if (!batch || !assessee || assessee.batchId !== batch.id) {
+    return { ok: false, error: "Batch atau asesi tidak ditemukan." };
+  }
+  if (!authz.allowed) {
+    return { ok: false, error: "Peran Anda tidak berwenang menyimpan draf wawancara." };
+  }
+
+  await persistInterviewDraftQuestions({
+    userId: user.id,
+    lspId: batch.lspId,
+    batchId: batch.id,
+    assesseeId: assessee.id,
+    questions: data.questions,
+  });
+
+  try {
+    const supabase = await getSupabaseServerClient();
+    await writeAuditLog(
+      {
+        lsp_id: batch.lspId,
+        actor_id: user.id,
+        action: "interview.ia09.draft_save",
+        resource: "assessees",
+        resource_id: assessee.id,
+        after_summary: {
+          batchId: batch.id,
+          questionCount: data.questions.length,
+        },
+      },
+      supabase,
+    );
+  } catch {
+    // non-fatal audit error
+  }
+
+  revalidatePath(`/batches/${batch.id}/assessees/${assessee.id}/interview`);
+  return {
+    ok: true,
+    message: `Draf ${data.questions.length} pertanyaan wawancara tersimpan.`,
   };
 }

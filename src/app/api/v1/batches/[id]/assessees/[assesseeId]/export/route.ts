@@ -2,11 +2,12 @@ import { getUser } from "@/lib/auth/get-session";
 import { apiError } from "@/lib/errors";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { getBatchById } from "@/repositories/batches.repository";
+import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { getAssesseeById } from "@/repositories/assessees.repository";
 import { getActiveSignature } from "@/repositories/signatures.repository";
 import { getAssessorProfile } from "@/repositories/auth.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
+import { formatSchemeInstructionsText, selectDitInputFiles } from "@/lib/forms/dit-inputs";
 import {
   getAssesseeDecisionOverride,
   getLatestDitAnalysis,
@@ -222,12 +223,25 @@ export async function GET(
       templateBuffer,
     });
   } else if (form === "ia04a") {
-    const templateBuffer = await resolveSchemeTemplateBuffer({
-      scheme,
-      formKeys: ["ia04a", "04a", "fr.ia.04a", "fria04a"],
-      defaultAk3uFileName: "FR.IA.04A.DIT.docx",
-      downloadFromStorage,
-    });
+    const [templateBuffer, batchFiles] = await Promise.all([
+      resolveSchemeTemplateBuffer({
+        scheme,
+        formKeys: ["ia04a", "04a", "fr.ia.04a", "fria04a"],
+        defaultAk3uFileName: "FR.IA.04A.DIT.docx",
+        downloadFromStorage,
+      }),
+      listDriveFilesForBatch(user.id, batchId),
+    ]);
+    const selected04a = selectDitInputFiles(
+      batchFiles.filter((f) => f.assesseeId === assesseeId),
+      batchFiles,
+    );
+    const extracted04aText =
+      selected04a.used04aFiles
+        .map((f) => f.extractedText?.trim())
+        .filter(Boolean)
+        .join("\n\n") || formatSchemeInstructionsText(scheme);
+
     docxBuf = await generateIa04aDocx({
       ...buildIa04aPayload({
         schemeTitle,
@@ -238,6 +252,7 @@ export async function GET(
         assesseeName: assessee.certificateNameConfirmed,
         assessmentDate,
         ditAnalysis: ditAnalysis as Record<string, unknown> | null,
+        extracted04aText,
       }),
       templateBuffer,
     });
