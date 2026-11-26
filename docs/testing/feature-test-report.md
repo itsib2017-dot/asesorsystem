@@ -187,3 +187,17 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 | P23-T3: Retry + backoff Drive crawl, isolasi subfolder parsial, & deadline ZIP/ekstraksi | PASS | `drive.test.ts` (25/25 PASS: retry `TimeoutError`/503, `DRIVE_CRAWL_TIMEOUT`, isolasi subfolder + warning, API 503 retry) | — |
 | P23-T4: Rekonsiliasi stale di `/batches/[id]` & `/api/v1/batches*`, re-authz Server Action, & tombol pulih | PASS | `src/app/api/v1/batches/[id]/__tests__/route.test.ts` (3/3 PASS); verifikasi live UI menunggu deploy otomatis Vercel setelah push | Uji ulang rescan batch `2050a077` pasca-deploy |
 | P23-Gates: `tsc`, `eslint`, `vitest` penuh pasca edit terakhir | PASS | `npm run typecheck` (0 err), `npx eslint . --max-warnings 0` (0 warn/err), `npm run test` (60/60 files, 303/303 PASS; `testTimeout: 15_000`) | Paket `playwright` belum ada di `package.json`; UI live diuji pasca-deploy |
+
+---
+
+## Module: Putaran 23 Wave 2 (T5–T9) — DIT Gate/Charter/Triage & Kualitas Chunk 06C
+
+**Date:** 2026-11-26 · **Mode:** AUDIT MODE · **Deploy:** via git push to `main`
+
+| Scenario | Result | Evidence | Patch / Follow-up |
+|---|---|---|---|
+| P23-T5 (D1): Gate kelengkapan DIT di UI + nonaktifkan tombol + tautan Triage | PASS (kode + unit) | `dit-analysis-trigger.tsx` (`missingInputs` & no-jobId error) + `dit/page.tsx` (`unmatchedBatchFileCount` notice) | Verifikasi live di batch `c796c832` pasca-deploy |
+| P23-T6 (D2): Dukungan `muk_portofolio` (Project Charter) di DIT & Matriks Batch | PASS | `src/lib/forms/__tests__/dit-inputs.test.ts` (2/2 PASS); `batches/[id]/page.tsx` + `triage/page.tsx` | — |
+| P23-T7 (D4): Proteksi `excludeIds` roster folder datar + konfirmasi massal Triage | PASS | `worker.test.ts` (D4 flat folder, 22/22 PASS) + `triage/__tests__/actions.test.ts` (4/4 PASS) + `triage/__tests__/page-source.test.ts` (3/3 PASS) | Verifikasi live di batch `c796c832` pasca-deploy |
+| P23-T8/T9 (N1–N4): Range filter per chunk, pass pemulihan nomor hilang, Bahasa Indonesia, & progres bertahap | PASS | `src/services/__tests__/grading-chunked.test.ts` (10/10 PASS); `handleWrittenGradingJob` menyalurkan `job.onProgress` | Verifikasi live ulang pada ASESI-001 batch `6d577c84` pasca-deploy |
+| P23-Wave2-Gates: `tsc`, `eslint`, `vitest` penuh pasca edit terakhir | PASS | `npm run typecheck` (0 err), `npx eslint . --max-warnings 0` (0 warn/err), `npm run test` (61/61 files, 313/313 PASS) | — |

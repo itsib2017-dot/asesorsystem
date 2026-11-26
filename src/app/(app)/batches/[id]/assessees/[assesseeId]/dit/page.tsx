@@ -56,6 +56,7 @@ export default async function DitAnalysisPage({
     getAssesseeDecisionOverride(user.id, assesseeId),
   ]);
   const assesseeFiles = files.filter((f) => f.assesseeId === assesseeId);
+  const unmatchedBatchFileCount = files.filter((f) => f.triageStatus === "unmatched").length;
   const {
     assessee04a,
     sharedBatch04a,
@@ -177,6 +178,13 @@ export default async function DitAnalysisPage({
               <li key={m.input}>{m.label}</li>
             ))}
           </ul>
+          {unmatchedBatchFileCount > 0 && (
+            <p className="text-xs text-amber-900">
+              Catatan: terdapat <strong>{unmatchedBatchFileCount} berkas</strong> pada batch ini
+              yang berstatus <code className="font-mono">unmatched</code> — petakan berkas ke asesi
+              di Triage agar terdeteksi oleh gate DIT.
+            </p>
+          )}
           <div className="pt-2">
             <Link
               href={`/batches/${batchId}/triage`}
@@ -191,6 +199,8 @@ export default async function DitAnalysisPage({
       {/* Explicit DIT Trigger (Cacat 1) */}
       <DitAnalysisTrigger
         assesseeId={assesseeId}
+        batchId={batchId}
+        unmatchedBatchFileCount={unmatchedBatchFileCount}
         hasExistingAnalysis={Boolean(analysis)}
         inputs={{
           fr04a: {

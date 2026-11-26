@@ -153,8 +153,12 @@ export default async function BatchDetailPage({
       const key = col.toLowerCase().replace(/\./g, "").replace(/\s+/g, "_");
       const matching = aFiles.filter((f) =>
         key === "04b"
-          ? f.docType === "04b" || f.docType === "dit_form"
-          : f.docType === key,
+          ? f.docType === "04b" ||
+            f.docType === "dit_form" ||
+            f.docType === "muk_portofolio"
+          : key === "portofolio"
+            ? f.docType === "portofolio" || f.docType === "muk_portofolio"
+            : f.docType === key,
       );
       const matched = pickLatestDriveFile(matching);
       docs[col] = matched

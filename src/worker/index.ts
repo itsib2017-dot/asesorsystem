@@ -623,6 +623,7 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
 
   let upsertedRecords = existingAssesseesBefore;
   const canonicalIds = new Set<string>();
+  const protectedCanonicalIds = new Set<string>();
   const staleDuplicateIds = new Set<string>();
   const staleDuplicateMerges = new Map<
     string,
@@ -670,6 +671,7 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
           });
         }
         canonicalIds.add(m.id);
+        protectedCanonicalIds.add(m.id);
         canonicalTargets.push(m);
       }
     }
@@ -716,6 +718,9 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
         names: fallbackNames,
         existingPool: existingAssesseesBefore,
       });
+      for (const rec of upsertedRecords) {
+        protectedCanonicalIds.add(rec.id);
+      }
     }
   }
 
@@ -751,6 +756,11 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
               names: newSheetNames,
               existingPool: currentPool,
             });
+            for (const rec of upsertedRecords) {
+              if (!staleDuplicateIds.has(rec.id)) {
+                protectedCanonicalIds.add(rec.id);
+              }
+            }
             try {
               const supabase = await getSupabaseServerClient();
               await writeAuditLog(
@@ -909,9 +919,18 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     });
   }
 
+  for (const existing of existingAssesseesBefore) {
+    if (!staleDuplicateIds.has(existing.id)) {
+      protectedCanonicalIds.add(existing.id);
+    }
+  }
+
   const prunedRows = await pruneOrphanedDuplicateAssessees({
     userId,
     batchId: batch.id,
+    ...(protectedCanonicalIds.size > 0
+      ? { excludeIds: Array.from(protectedCanonicalIds) }
+      : {}),
   });
 
   const mergedAssessees = prunedRows.map((row) => {
@@ -1458,6 +1477,7 @@ async function handleWrittenGradingJob(job: WorkerJobInput): Promise<WorkerJobRe
     studentAnswerText,
     llmConfig,
     correlationId: job.id,
+    onProgress: job.onProgress,
   });
 
   if (!graded.ok) {

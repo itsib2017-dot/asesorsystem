@@ -592,6 +592,7 @@ export async function deleteAssesseeForBatch(params: {
 export async function pruneOrphanedDuplicateAssessees(params: {
   userId: string;
   batchId: string;
+  excludeIds?: string[];
 }): Promise<PrunedDuplicateAssessee[]> {
   if (!isUuid(params.batchId)) return [];
 
@@ -600,6 +601,7 @@ export async function pruneOrphanedDuplicateAssessees(params: {
   if (unconfirmed.length === 0) return [];
 
   const candidateIds = unconfirmed.map((a) => a.id);
+  const excludedSet = new Set((params.excludeIds ?? []).filter(Boolean));
 
   return runRepositoryDualPath({
     userId: params.userId,
@@ -632,7 +634,7 @@ export async function pruneOrphanedDuplicateAssessees(params: {
           .where(inArray(assesseeDecisionOverrides.assesseeId, candidateIds)),
       ]);
 
-      const protectedIds = new Set<string>();
+      const protectedIds = new Set<string>(excludedSet);
       for (const r of files) if (r.assesseeId) protectedIds.add(r.assesseeId);
       for (const r of decs) protectedIds.add(r.assesseeId);
       for (const r of dits) protectedIds.add(r.assesseeId);
@@ -669,7 +671,7 @@ export async function pruneOrphanedDuplicateAssessees(params: {
           .in("assessee_id", candidateIds),
       ]);
 
-      const protectedIds = new Set<string>();
+      const protectedIds = new Set<string>(excludedSet);
       for (const r of files ?? []) if (r.assessee_id) protectedIds.add(String(r.assessee_id));
       for (const r of decs ?? []) if (r.assessee_id) protectedIds.add(String(r.assessee_id));
       for (const r of dits ?? []) if (r.assessee_id) protectedIds.add(String(r.assessee_id));

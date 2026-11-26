@@ -13,6 +13,7 @@ export interface SelectedDitInputFiles<T extends RevisionComparableFile> {
   frIa04aSource: "assessee" | "batch" | "none";
   used04bFiles: T[];
   usedDitFormFiles: T[];
+  usedMukPortofolioFiles: T[];
   combinedDitFiles: T[];
   usedCvFile: T | null;
 }
@@ -43,7 +44,14 @@ export function selectDitInputFiles<
   const usedDitFormFiles = deduplicateFilesByLatestRevision(
     files.filter((f) => f.docType === "dit_form"),
   );
-  const combinedDitFiles = [...used04bFiles, ...usedDitFormFiles];
+  const usedMukPortofolioFiles = deduplicateFilesByLatestRevision(
+    files.filter((f) => f.docType === "muk_portofolio"),
+  );
+  const combinedDitFiles = [
+    ...used04bFiles,
+    ...usedDitFormFiles,
+    ...usedMukPortofolioFiles,
+  ];
 
   const usedCvFile =
     pickLatestDriveFile(files.filter((f) => f.docType === "cv")) ??
@@ -56,6 +64,7 @@ export function selectDitInputFiles<
     frIa04aSource,
     used04bFiles,
     usedDitFormFiles,
+    usedMukPortofolioFiles,
     combinedDitFiles,
     usedCvFile,
   };

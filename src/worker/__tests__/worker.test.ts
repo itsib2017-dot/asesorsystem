@@ -462,6 +462,7 @@ describe("Worker dispatcher and queue runner", () => {
     expect(mocks.pruneOrphanedDuplicateAssessees).toHaveBeenCalledWith({
       userId: "user-1",
       batchId,
+      excludeIds: expect.arrayContaining(["as-bagas", "as-suanggi", "as-fara"]),
     });
   });
 
@@ -1351,5 +1352,68 @@ describe("Worker dispatcher and queue runner", () => {
 
     expect(res.status).toBe("done");
     expect(progressUpdates).toEqual([15, 40, 55, 75, 90]);
+  });
+
+  it("protects single authoritative Surat Tugas assessee from pruning on flat Drive folder (B5 D4)", async () => {
+    const batchId = "00000000-0000-4000-8000-000000000907";
+    mocks.getBatchById.mockResolvedValue({
+      id: batchId,
+      lspId: "lsp-1",
+      schemeId: null,
+      name: "B5 ICT-PM 2022",
+      driveFolderUrl: "https://drive.google.com/drive/folders/flatfolder123",
+    });
+    mocks.listDriveFilesForBatch.mockResolvedValue([]);
+    mocks.listAssesseesByBatch.mockResolvedValue([]);
+    mocks.upsertAssesseesForBatch.mockResolvedValue([
+      { id: "as-single-1", displayName: "Budi Hartono", pseudonym: "ASESI-001" },
+    ]);
+    mocks.upsertDriveFilesForBatch.mockResolvedValue(2);
+    mocks.pruneOrphanedDuplicateAssessees.mockResolvedValue([]);
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("embeddedfolderview")) {
+        return new Response(
+          `
+          <div class="flip-entry" id="entry-st-file">
+            <a href="https://drive.google.com/file/d/st-file/view">
+              <div class="flip-entry-title">Surat_Tugas_ICT_PM.txt</div>
+            </a>
+          </div>
+          <div class="flip-entry" id="entry-cv-file">
+            <a href="https://drive.google.com/file/d/cv-file/view">
+              <div class="flip-entry-title">CV_Kandidat.txt</div>
+            </a>
+          </div>`,
+          { status: 200 },
+        );
+      }
+      if (url.includes("id=st-file")) {
+        return new Response(
+          "SURAT TUGAS\nNo. 008/ST.UJI/LSP-EDU/XI/2026\nDAFTAR PESERTA\n1. Budi Hartono\n",
+          { status: 200, headers: { "content-type": "text/plain" } },
+        );
+      }
+      return new Response("Ringkasan pengalaman proyek TIK 6 tahun.", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      });
+    });
+
+    const res = await runWorkerJob({
+      id: "job-flat-d4",
+      type: "drive_scan",
+      userId: "user-1",
+      payload: { batchId },
+    });
+
+    expect(res.status).toBe("done");
+    expect(res.meta).toMatchObject({ discoveredAssessees: 1 });
+    expect(mocks.pruneOrphanedDuplicateAssessees).toHaveBeenCalledWith({
+      userId: "user-1",
+      batchId,
+      excludeIds: ["as-single-1"],
+    });
   });
 });

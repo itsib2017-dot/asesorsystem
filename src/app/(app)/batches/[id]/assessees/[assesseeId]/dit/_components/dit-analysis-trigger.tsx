@@ -2,6 +2,7 @@
 // Client interactivity required to trigger POST /api/v1/dit/[assesseeId]/analyse, prevent double-submit, and surface job feedback.
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Clock, FileWarning, Play, RefreshCw } from "lucide-react";
 import { readApiResponse } from "@/lib/http/read-api-response";
@@ -18,6 +19,8 @@ interface InputStatusItem {
 
 interface DitAnalysisTriggerProps {
   assesseeId: string;
+  batchId?: string;
+  unmatchedBatchFileCount?: number;
   inputs: {
     fr04a: InputStatusItem;
     fr04b: InputStatusItem;
@@ -28,6 +31,8 @@ interface DitAnalysisTriggerProps {
 
 export function DitAnalysisTrigger({
   assesseeId,
+  batchId,
+  unmatchedBatchFileCount = 0,
   inputs,
   hasExistingAnalysis,
 }: DitAnalysisTriggerProps) {
@@ -89,8 +94,40 @@ export function DitAnalysisTrigger({
     );
   };
 
+  const has04a = Boolean(
+    inputs.fr04a.hasExtractedText ||
+      inputs.fr04a.fileName ||
+      inputs.fr04a.sourceNote ||
+      manual04a.trim().length >= 10,
+  );
+  const has04b = Boolean(
+    inputs.fr04b.hasExtractedText ||
+      inputs.fr04b.fileName ||
+      manual04b.trim().length >= 10,
+  );
+  const hasCv = Boolean(
+    inputs.cv.hasExtractedText ||
+      inputs.cv.fileName ||
+      manualCv.trim().length >= 10,
+  );
+
+  const missingInputs: string[] = [];
+  if (!has04a) missingInputs.push("FR.IA.04A (Instruksi DIT)");
+  if (!has04b) missingInputs.push("Tugas DIT / Presentasi (04B / Project Charter)");
+  if (!hasCv) missingInputs.push("Profil Kandidat (CV)");
+
+  const gateBlocked = missingInputs.length > 0;
+
   const handleRunAnalysis = async () => {
-    if (running) return;
+    if (running || gateBlocked) {
+      if (gateBlocked) {
+        setFeedback({
+          type: "error",
+          text: `Analisis ditunda — lengkapi bahan wajib: ${missingInputs.join(", ")}.`,
+        });
+      }
+      return;
+    }
     setRunning(true);
     setActiveJob(null);
     setFeedback(null);
@@ -136,34 +173,41 @@ export function DitAnalysisTrigger({
       }
 
       const jobId = parsed.data?.job_id;
-      if (jobId) {
-        setActiveJob({
-          id: jobId,
-          status: parsed.data?.status ?? "pending",
-          progress: Number(parsed.data?.progress ?? 0),
+      if (!jobId) {
+        setFeedback({
+          type: "error",
+          text: "Server tidak mengembalikan Job ID analisis DIT. Periksa kelengkapan bahan di Triage atau muat ulang halaman.",
         });
-        const final = await waitForJob(jobId, undefined, {
-          timeoutMs: 310_000,
-          onProgress: ({ status, progress }) => {
-            setActiveJob({ id: jobId, status, progress });
-          },
+        router.refresh();
+        return;
+      }
+
+      setActiveJob({
+        id: jobId,
+        status: parsed.data?.status ?? "pending",
+        progress: Number(parsed.data?.progress ?? 0),
+      });
+      const final = await waitForJob(jobId, undefined, {
+        timeoutMs: 310_000,
+        onProgress: ({ status, progress }) => {
+          setActiveJob({ id: jobId, status, progress });
+        },
+      });
+      if (final.status !== "done") {
+        setFeedback({
+          type: "error",
+          text:
+            final.status === "failed"
+              ? formatDitJobFailureMessage(jobId, final.error)
+              : `Analisis DIT masih berjalan atau melewati batas waktu tunggu (Job ${jobId}). Periksa Status Pindai/Job pada halaman batch lalu segarkan halaman.`,
         });
-        if (final.status !== "done") {
-          setFeedback({
-            type: "error",
-            text:
-              final.status === "failed"
-                ? formatDitJobFailureMessage(jobId, final.error)
-                : `Analisis DIT masih berjalan atau melewati batas waktu tunggu (Job ${jobId}). Periksa Status Pindai/Job pada halaman batch lalu segarkan halaman.`,
-          });
-          router.refresh();
-          return;
-        }
+        router.refresh();
+        return;
       }
 
       setFeedback({
         type: "success",
-        text: `Analisis DIT selesai (Job ${jobId ?? "-"}).`,
+        text: `Analisis DIT selesai (Job ${jobId}).`,
       });
       router.refresh();
     } catch (err) {
@@ -192,8 +236,10 @@ export function DitAnalysisTrigger({
         <button
           type="button"
           onClick={handleRunAnalysis}
-          disabled={running}
-          className="px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white text-xs font-medium inline-flex items-center gap-2 cursor-pointer"
+          disabled={running || gateBlocked}
+          aria-disabled={running || gateBlocked}
+          title={gateBlocked ? `Lengkapi bahan wajib: ${missingInputs.join(", ")}` : undefined}
+          className="px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium inline-flex items-center gap-2 cursor-pointer"
         >
           <Play className="w-3.5 h-3.5" />
           {running
@@ -218,6 +264,30 @@ export function DitAnalysisTrigger({
           {renderBadge(inputs.cv, Boolean(manualCv.trim()))}
         </div>
       </div>
+
+      {gateBlocked && (
+        <div
+          role="alert"
+          className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-2"
+        >
+          <span>
+            <strong>Bahan DIT belum lengkap:</strong> {missingInputs.join(", ")}. Tempel teks
+            minimal 10 karakter pada panel di bawah atau petakan berkas ke asesi ini di Triage
+            {unmatchedBatchFileCount > 0
+              ? ` (${unmatchedBatchFileCount} berkas batch belum terpetakan)`
+              : ""}
+            .
+          </span>
+          {batchId && (
+            <Link
+              href={`/batches/${batchId}/triage`}
+              className="px-3 py-1 rounded-lg bg-amber-700 hover:bg-amber-800 text-white font-medium shrink-0"
+            >
+              Buka Triage Berkas
+            </Link>
+          )}
+        </div>
+      )}
 
       <details className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-xs">
         <summary className="cursor-pointer font-medium text-slate-700">

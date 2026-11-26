@@ -13,6 +13,7 @@ import {
   addBatchRosterNoteAction,
   addAssesseeFormAction,
   assignDriveFileAction,
+  bulkAssignUnmatchedFilesAction,
   importRosterFormAction,
   reclassifyBatchContentAction,
 } from "./actions";
@@ -41,6 +42,7 @@ const DOC_TYPE_OPTIONS = [
   { value: "cv", label: "CV" },
   { value: "surat_tugas", label: "Surat Tugas / SK Kerja" },
   { value: "portofolio", label: "Portofolio Pengalaman Kerja" },
+  { value: "muk_portofolio", label: "MUK Portofolio / Project Charter (Bahan DIT)" },
   { value: "pas_foto", label: "Pas Foto" },
   { value: "sertifikat_pelatihan", label: "Sertifikat Pelatihan" },
   { value: "materi_pelatihan", label: "Materi Pelatihan (Tidak Dipakai)" },
@@ -90,6 +92,18 @@ export default async function TriagePage({
   );
   const unmatchedCount = files.filter((f) => f.triageStatus === "unmatched").length;
   const unextractableCount = files.filter((f) => f.triageStatus === "unextractable").length;
+  const bulkSkipDocTypes = new Set([
+    "materi_pelatihan",
+    "template_muk",
+    "surat_tugas",
+    "06a",
+    "06b",
+  ]);
+  const assignableUnmatchedFiles = files.filter(
+    (f) =>
+      f.triageStatus === "unmatched" &&
+      !bulkSkipDocTypes.has((f.docType ?? "").toLowerCase()),
+  );
 
   const q = (sp.q ?? "").trim();
   const statusFilter = (sp.status ?? "").trim();
@@ -426,6 +440,52 @@ export default async function TriagePage({
           </div>
         )}
       </section>
+
+      {/* Assessor-confirmed bulk assignment for flat-folder unmatched files (D4 / T7) */}
+      {assessees.length > 0 && assignableUnmatchedFiles.length > 0 && (
+        <section className="glass-card rounded-2xl p-4 border border-sky-200 bg-sky-50/70 flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-0.5 text-xs text-sky-950">
+            <div className="font-semibold">
+              Konfirmasi Pemetaan Massal ({assignableUnmatchedFiles.length} berkas belum terpetakan)
+            </div>
+            <p className="text-sky-800">
+              {assessees.length === 1
+                ? `Folder datar tanpa subfolder nama asesi membuat ${assignableUnmatchedFiles.length} berkas kandidat belum otomatis terikat ke ${assessees[0]?.displayName}. Berkas master (Surat Tugas/06A/06B/Template/Materi) tetap dilewati.`
+                : `Tetapkan seluruh ${assignableUnmatchedFiles.length} berkas kandidat yang belum terpetakan ke salah satu asesi di bawah (berkas master tetap dilewati).`}
+            </p>
+          </div>
+          <form
+            action={bulkAssignUnmatchedFilesAction}
+            className="flex flex-wrap items-center gap-2 shrink-0"
+          >
+            <input type="hidden" name="batchId" value={id} />
+            {assessees.length === 1 ? (
+              <input type="hidden" name="assesseeId" value={assessees[0]!.id} />
+            ) : (
+              <select
+                name="assesseeId"
+                required
+                aria-label="Pilih asesi untuk pemetaan massal"
+                className="px-3 py-2 rounded-xl border border-sky-300 bg-white text-xs text-slate-900"
+              >
+                {assessees.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.displayName} ({a.pseudonym ?? "Asesi"})
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-medium cursor-pointer"
+            >
+              {assessees.length === 1
+                ? `Konfirmasi & Tetapkan Semua (${assignableUnmatchedFiles.length}) ke ${assessees[0]?.displayName}`
+                : `Konfirmasi & Tetapkan ${assignableUnmatchedFiles.length} Berkas`}
+            </button>
+          </form>
+        </section>
+      )}
 
       {/* Filter & Search Bar */}
       <form
