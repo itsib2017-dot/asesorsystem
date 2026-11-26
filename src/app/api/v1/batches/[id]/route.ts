@@ -2,7 +2,7 @@ import { getUser } from "@/lib/auth/get-session";
 import { apiError, apiSuccess } from "@/lib/errors";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
-import { getLatestJobForBatch } from "@/repositories/jobs.repository";
+import { getLatestJobStatusForBatch } from "@/worker/queue";
 
 export async function GET(
   _req: Request,
@@ -16,7 +16,7 @@ export async function GET(
   const { id } = await context.params;
   const [batch, latestJob, assessees, files] = await Promise.all([
     getBatchById(user.id, id),
-    getLatestJobForBatch(user.id, id, "drive_scan"),
+    getLatestJobStatusForBatch(user.id, id, "drive_scan"),
     listAssesseesByBatch(user.id, id),
     listDriveFilesForBatch(user.id, id),
   ]);

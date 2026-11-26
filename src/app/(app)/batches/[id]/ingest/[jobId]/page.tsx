@@ -1,13 +1,18 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { AlertCircle, CheckCircle2, Clock, RefreshCw, XCircle } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
+import { requireLspRole } from "@/lib/auth/get-role";
+import { logEvent } from "@/lib/logger";
 import { listAuditLogsForResource } from "@/repositories/audit.repository";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
-import { getLatestJobForBatch } from "@/repositories/jobs.repository";
+import { getLatestJobForBatch, updateJobStatusRecord } from "@/repositories/jobs.repository";
 import { JobStatusPoller } from "@/components/batch/job-status-poller";
-import { executeJob, getJobStatus } from "@/worker/queue";
+import { executeJob, getJobStatus, markJobFailedSafely } from "@/worker/queue";
+
+export const maxDuration = 300;
 
 export const metadata = {
   title: "Status Pemindaian Drive — AsesorKompetensi",
@@ -77,12 +82,50 @@ export default async function BatchIngestJobPage({
     listDriveFilesForBatch(user.id, batchId),
     listAuditLogsForResource(user.id, batch.lspId, "jobs", job.id, 30),
   ]);
-  const userId = user.id;
-  const batchLspId = batch.lspId;
-
   async function retryJobAction() {
     "use server";
-    await executeJob(userId, jobId, { lspId: batchLspId, triggerAction: "retry" });
+    const currentUser = await getUser();
+    if (!currentUser) return;
+
+    const freshBatch = await getBatchById(currentUser.id, batchId);
+    if (!freshBatch) return;
+
+    const roleCheck = await requireLspRole(freshBatch.lspId, currentUser.id, [
+      "lsp_admin",
+      "tuk_admin",
+      "assessor",
+    ]);
+    if (!roleCheck.allowed) return;
+
+    await updateJobStatusRecord({
+      userId: currentUser.id,
+      jobId,
+      status: "pending",
+      progress: 0,
+      error: null,
+    });
+
+    after(async () => {
+      try {
+        await executeJob(currentUser.id, jobId, {
+          lspId: freshBatch.lspId,
+          triggerAction: "retry",
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logEvent("error", {
+          correlation_id: jobId,
+          user_id: currentUser.id,
+          tenant_id: freshBatch.lspId,
+          action: "batch.ingest.retry_after",
+          resource: "jobs",
+          outcome: "failure",
+          meta: { error: message },
+        });
+        await markJobFailedSafely(currentUser.id, jobId, message);
+      }
+    });
+
     revalidatePath(`/batches/${batchId}/ingest/${jobId}`);
     revalidatePath(`/batches/${batchId}/triage`);
     revalidatePath(`/batches/${batchId}`);
@@ -142,6 +185,7 @@ export default async function BatchIngestJobPage({
             jobId={job.id}
             initialStatus={job.status}
             initialProgress={job.progress}
+            initialError={job.error ?? null}
             mode="job"
           />
         </div>

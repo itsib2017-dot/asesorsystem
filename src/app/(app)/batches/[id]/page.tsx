@@ -14,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import { getUser } from "@/lib/auth/get-session";
+import { requireLspRole } from "@/lib/auth/get-role";
 import { getConfig } from "@/lib/config/get-config";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { getLspNameForUser } from "@/repositories/auth.repository";
@@ -24,7 +25,12 @@ import { resolveBatchActiveMasterKey } from "@/lib/written/master-key";
 import { resolveSchemeDocColumns } from "@/lib/forms/assessee-forms";
 import { pickLatestDriveFile } from "@/services/drive-revisions";
 import { logEvent } from "@/lib/logger";
-import { enqueueJob, executeJob } from "@/worker/queue";
+import {
+  enqueueJob,
+  executeJob,
+  getLatestJobStatusForBatch,
+  markJobFailedSafely,
+} from "@/worker/queue";
 import { CompletenessMatrix, type CompletenessRow } from "@/components/batch/completeness-matrix";
 import { BatchKeyUploadPanel } from "@/components/batch/batch-key-upload-panel";
 import { BatchWorkflowStepper } from "@/components/batch/batch-workflow-stepper";
@@ -66,7 +72,7 @@ export default async function BatchDetailPage({
     await Promise.all([
       listAssesseesByBatch(user.id, id),
       listDriveFilesForBatch(user.id, id),
-      getLatestJobForBatch(user.id, id, "drive_scan"),
+      getLatestJobStatusForBatch(user.id, id, "drive_scan"),
       getLatestJobForBatch(user.id, id),
       listSchemes(user.id, batch.lspId),
       getConfig("identity.ktp_ocr_min_confidence", { lspId: batch.lspId }),
@@ -86,36 +92,47 @@ export default async function BatchDetailPage({
   const ktpOcrMinConfidence =
     typeof configuredMinOcr === "number" && configuredMinOcr > 0 ? configuredMinOcr : 0.75;
 
-  const userId = user.id;
   const batchId = batch.id;
-  const batchLspId = batch.lspId;
-  const driveFolderUrl = batch.driveFolderUrl;
 
   async function rescanBatchDriveAction() {
     "use server";
-    if (!driveFolderUrl) return;
+    const currentUser = await getUser();
+    if (!currentUser) return;
+
+    const freshBatch = await getBatchById(currentUser.id, batchId);
+    if (!freshBatch || !freshBatch.driveFolderUrl) return;
+
+    const roleCheck = await requireLspRole(freshBatch.lspId, currentUser.id, [
+      "lsp_admin",
+      "tuk_admin",
+      "assessor",
+    ]);
+    if (!roleCheck.allowed) return;
+
     const scan = await enqueueJob({
-      userId,
-      lspId: batchLspId,
+      userId: currentUser.id,
+      lspId: freshBatch.lspId,
       triggerAction: "rescan",
       type: "drive_scan",
       runImmediately: false,
-      payload: { batchId, driveFolderUrl },
+      payload: { batchId: freshBatch.id, driveFolderUrl: freshBatch.driveFolderUrl },
     });
     if (scan.ok) {
       after(async () => {
         try {
-          await executeJob(userId, scan.job.id, { lspId: batchLspId });
+          await executeJob(currentUser.id, scan.job.id, { lspId: freshBatch.lspId });
         } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
           logEvent("error", {
             correlation_id: scan.job.id,
-            user_id: userId,
-            tenant_id: batchLspId,
+            user_id: currentUser.id,
+            tenant_id: freshBatch.lspId,
             action: "batch.rescan.drive_scan_after",
             resource: "jobs",
             outcome: "failure",
-            meta: { error: err instanceof Error ? err.message : String(err) },
+            meta: { error: message },
           });
+          await markJobFailedSafely(currentUser.id, scan.job.id, message);
         }
       });
     }
@@ -249,6 +266,7 @@ export default async function BatchDetailPage({
               jobId={latestJob?.id ?? null}
               initialStatus={latestJob?.status ?? null}
               initialProgress={latestJob?.progress ?? 0}
+              initialError={latestJob?.error ?? null}
               mode="batch"
             />
             {latestJob && (
@@ -315,12 +333,22 @@ export default async function BatchDetailPage({
         {latestJob?.status === "failed" && (
           <div
             role="alert"
-            className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 space-y-1"
+            className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex flex-wrap items-center justify-between gap-3"
           >
-            <p className="font-semibold">Error Worker Pemindaian Drive:</p>
-            <p className="font-mono break-all">
-              {latestJob.error || "Unknown worker error"}
-            </p>
+            <div className="space-y-1 min-w-0 flex-1">
+              <p className="font-semibold">Error Worker Pemindaian Drive:</p>
+              <p className="font-mono break-all">
+                {latestJob.error || "Unknown worker error"}
+              </p>
+              <p className="text-rose-800">
+                Klik <strong>Pindai Ulang Drive</strong> untuk mengulangi pemindaian.
+              </p>
+            </div>
+            {batch.driveFolderUrl && (
+              <form action={rescanBatchDriveAction} className="shrink-0">
+                <RescanDriveButton batchId={batch.id} />
+              </form>
+            )}
           </div>
         )}
 

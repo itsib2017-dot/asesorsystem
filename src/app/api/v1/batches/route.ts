@@ -10,7 +10,13 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { createBatchRecord, listBatchesForUser } from "@/repositories/batches.repository";
 import { listJobsForUser } from "@/repositories/jobs.repository";
 import { validateSafeExternalUrl } from "@/lib/security/ssrf";
-import { enqueueJob, executeJob } from "@/worker/queue";
+import { getStaleJobReason } from "@/worker/job-staleness";
+import {
+  enqueueJob,
+  executeJob,
+  markJobFailedSafely,
+  reconcileStaleJob,
+} from "@/worker/queue";
 
 export const maxDuration = 300;
 
@@ -39,26 +45,35 @@ export async function GET() {
     listJobsForUser(user.id, 100),
   ]);
 
-  const enriched = batches.map((batch) => {
-    const latestJob =
-      recentJobs.find((j) => String(j.payload?.batchId ?? "") === batch.id) ?? null;
-    return {
-      ...batch,
-      ingestJobId: latestJob?.id ?? null,
-      ingestStatus: latestJob?.status ?? null,
-      latestJob: latestJob
-        ? {
-            id: latestJob.id,
-            type: latestJob.type,
-            status: latestJob.status,
-            progress: latestJob.progress,
-            error: latestJob.error,
-            attempts: latestJob.attempts,
-            updatedAt: latestJob.updatedAt,
-          }
-        : null,
-    };
-  });
+  const enriched = await Promise.all(
+    batches.map(async (batch) => {
+      const matchedJob =
+        recentJobs.find(
+          (j) =>
+            j.type === "drive_scan" && String(j.payload?.batchId ?? "") === batch.id,
+        ) ?? null;
+      const latestJob =
+        matchedJob && getStaleJobReason(matchedJob)
+          ? await reconcileStaleJob(user.id, matchedJob)
+          : matchedJob;
+      return {
+        ...batch,
+        ingestJobId: latestJob?.id ?? null,
+        ingestStatus: latestJob?.status ?? null,
+        latestJob: latestJob
+          ? {
+              id: latestJob.id,
+              type: latestJob.type,
+              status: latestJob.status,
+              progress: latestJob.progress,
+              error: latestJob.error,
+              attempts: latestJob.attempts,
+              updatedAt: latestJob.updatedAt,
+            }
+          : null,
+      };
+    }),
+  );
 
   return apiSuccess(enriched);
 }
@@ -137,6 +152,7 @@ export async function POST(req: Request) {
       try {
         await executeJob(user.id, scanJob.job.id, { lspId: authz.lspId });
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         logEvent("error", {
           correlation_id: scanJob.job.id,
           user_id: user.id,
@@ -144,8 +160,9 @@ export async function POST(req: Request) {
           action: "batch.create.drive_scan_after",
           resource: "jobs",
           outcome: "failure",
-          meta: { error: err instanceof Error ? err.message : String(err) },
+          meta: { error: message },
         });
+        await markJobFailedSafely(user.id, scanJob.job.id, message);
       }
     });
   }

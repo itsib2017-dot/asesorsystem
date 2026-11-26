@@ -1,7 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { mockSupabaseFrom } = vi.hoisted(() => ({
+const { mockSupabaseFrom, mockAdminFrom, mockGetSupabaseServerClient } = vi.hoisted(() => ({
   mockSupabaseFrom: vi.fn(),
+  mockAdminFrom: vi.fn(),
+  mockGetSupabaseServerClient: vi.fn(),
 }));
 
 vi.mock("@/db", () => ({
@@ -16,20 +18,20 @@ vi.mock("@/db", () => ({
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
-  getSupabaseServerClient: vi.fn(async () => ({
-    from: mockSupabaseFrom,
-  })),
+  getSupabaseServerClient: mockGetSupabaseServerClient,
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
-  getSupabaseAdminClient: vi.fn(),
+  getSupabaseAdminClient: vi.fn(() => ({
+    from: mockAdminFrom,
+  })),
 }));
 
 vi.mock("@/lib/audit/write-audit-log", () => ({
   writeAuditLog: vi.fn(),
 }));
 
-import { getLatestJobForBatch } from "../jobs.repository";
+import { getLatestJobForBatch, updateJobStatusRecord } from "../jobs.repository";
 
 const USER_ID = "00000000-0000-4000-8000-000000000010";
 const BATCH_ID = "00000000-0000-4000-8000-000000000020";
@@ -37,6 +39,10 @@ const BATCH_ID = "00000000-0000-4000-8000-000000000020";
 describe("getLatestJobForBatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    mockGetSupabaseServerClient.mockResolvedValue({
+      from: mockSupabaseFrom,
+    });
   });
 
   it("ignores newer non-drive_scan jobs when type='drive_scan' is requested", async () => {
@@ -90,5 +96,30 @@ describe("getLatestJobForBatch", () => {
   it("returns null for non-UUID batchId", async () => {
     const res = await getLatestJobForBatch(USER_ID, "not-a-uuid", "drive_scan");
     expect(res).toBeNull();
+  });
+
+  it("falls through to owner-scoped admin update when cookies/server client throws inside after()", async () => {
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "test-service-key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
+    mockGetSupabaseServerClient.mockRejectedValueOnce(
+      new Error("cookies() was called outside a request scope"),
+    );
+
+    const eqUserSpy = vi.fn().mockResolvedValue({ error: null });
+    const eqJobSpy = vi.fn(() => ({ eq: eqUserSpy }));
+    const updateSpy = vi.fn(() => ({ eq: eqJobSpy }));
+    mockAdminFrom.mockReturnValue({ update: updateSpy });
+
+    await updateJobStatusRecord({
+      userId: USER_ID,
+      jobId: "00000000-0000-4000-8000-000000000199",
+      status: "failed",
+      progress: 0,
+      error: "WORKER_EXECUTION_TIMEOUT",
+    });
+
+    expect(mockAdminFrom).toHaveBeenCalledWith("jobs");
+    expect(eqJobSpy).toHaveBeenCalledWith("id", "00000000-0000-4000-8000-000000000199");
+    expect(eqUserSpy).toHaveBeenCalledWith("created_by", USER_ID);
   });
 });

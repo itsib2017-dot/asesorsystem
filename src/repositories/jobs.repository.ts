@@ -204,7 +204,6 @@ export async function updateJobStatusRecord(params: {
     }
   }
 
-  const supabase = await getSupabaseServerClient();
   const updatePayload: Record<string, unknown> = {
     status: params.status,
     progress: params.progress,
@@ -215,15 +214,23 @@ export async function updateJobStatusRecord(params: {
     updatePayload.attempts = params.attempts;
   }
 
-  const { data, error } = await supabase
-    .from("jobs")
-    .update(updatePayload)
-    .eq("id", params.jobId)
-    .eq("created_by", params.userId)
-    .select("id");
+  try {
+    const supabase = await getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("jobs")
+      .update(updatePayload)
+      .eq("id", params.jobId)
+      .eq("created_by", params.userId)
+      .select("id");
 
-  if (!error && Array.isArray(data) && data.length > 0) {
-    return;
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return;
+    }
+  } catch (err) {
+    console.warn(
+      "[JobsRepository Warning] Supabase REST updateJob fallback to service role:",
+      err instanceof Error ? err.message : "unknown",
+    );
   }
 
   // Fallback for background/server worker execution scoped strictly to owner

@@ -10,6 +10,7 @@ export interface JobStatusPollerProps {
   jobId: string | null;
   initialStatus: string | null;
   initialProgress: number;
+  initialError?: string | null;
   mode?: "batch" | "job";
   intervalMs?: number;
 }
@@ -18,6 +19,7 @@ interface PolledJobSnapshot {
   id: string;
   status: string;
   progress: number;
+  error?: string | null;
 }
 
 interface PolledOverride {
@@ -25,6 +27,7 @@ interface PolledOverride {
   jobId: string | null;
   status: string | null;
   progress: number;
+  error: string | null;
   awaitingNewJob: boolean;
 }
 
@@ -35,11 +38,12 @@ export function JobStatusPoller({
   jobId,
   initialStatus,
   initialProgress,
+  initialError = null,
   mode = "batch",
   intervalMs = 3000,
 }: JobStatusPollerProps) {
   const router = useRouter();
-  const propSignature = `${jobId ?? ""}:${initialStatus ?? ""}:${initialProgress}`;
+  const propSignature = `${jobId ?? ""}:${initialStatus ?? ""}:${initialProgress}:${initialError ?? ""}`;
   const [override, setOverride] = useState<PolledOverride | null>(null);
   const refreshedForJobRef = useRef<string | null>(null);
 
@@ -49,6 +53,7 @@ export function JobStatusPoller({
   const liveJobId = activeOverride ? activeOverride.jobId : jobId;
   const status = activeOverride ? activeOverride.status : initialStatus;
   const progress = activeOverride ? activeOverride.progress : initialProgress;
+  const liveError = activeOverride ? activeOverride.error : initialError;
   const awaitingNewJob = activeOverride ? activeOverride.awaitingNewJob : false;
 
   useEffect(() => {
@@ -62,6 +67,7 @@ export function JobStatusPoller({
           jobId,
           status: "running",
           progress: 10,
+          error: null,
           awaitingNewJob: true,
         });
       }
@@ -102,6 +108,7 @@ export function JobStatusPoller({
           id?: string;
           status?: string;
           progress?: number;
+          error?: string | null;
           latestJob?: PolledJobSnapshot | null;
         }>(res);
         if (!parsed.ok || cancelled) return;
@@ -113,6 +120,7 @@ export function JobStatusPoller({
                   id: parsed.data.id,
                   status: parsed.data.status,
                   progress: Number(parsed.data.progress ?? 0),
+                  error: parsed.data.error ?? null,
                 }
               : null
             : parsed.data?.latestJob ?? null;
@@ -131,6 +139,7 @@ export function JobStatusPoller({
               jobId: snapshot.id,
               status: snapshot.status,
               progress: snapshot.progress,
+              error: snapshot.error ?? null,
               awaitingNewJob: false,
             });
           }
@@ -143,6 +152,7 @@ export function JobStatusPoller({
           jobId: snapshot.id,
           status: snapshot.status,
           progress: snapshot.progress,
+          error: snapshot.error ?? null,
           awaitingNewJob: !isTerminal && awaitingNewJob,
         });
 
@@ -199,6 +209,7 @@ export function JobStatusPoller({
     <div className="inline-flex flex-wrap items-center gap-2" aria-live="polite">
       <span
         data-testid="job-status-badge"
+        title={status === "failed" && liveError ? liveError : undefined}
         className={`px-2.5 py-1 rounded-full text-xs font-semibold border inline-flex items-center gap-1.5 ${badgeTone}`}
       >
         {status === "done" ? (
@@ -215,6 +226,11 @@ export function JobStatusPoller({
       {shouldPoll && (
         <span className="text-[11px] text-amber-700">
           Menyegarkan otomatis…
+        </span>
+      )}
+      {activeOverride && status === "failed" && liveError && (
+        <span role="status" className="text-[11px] text-rose-700 max-w-xs truncate">
+          {liveError}
         </span>
       )}
     </div>

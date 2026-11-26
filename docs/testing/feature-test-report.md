@@ -173,3 +173,17 @@ All acceptance criteria from `docs/specs/roster-management.md` are implemented a
 | R22-09: Perbaikan sel `extractTextFromXlsx` + `compactDitPromptSection` lossless | PASS | `src/services/__tests__/extract-and-drive-download.test.ts` (14/14 PASS) + `src/services/__tests__/dit.test.ts` (4/4 PASS) | none |
 | R22-10: Job ID live saat berjalan (`waitForJob.onProgress`) & pemisahan error timeout vs kuota | PASS | `src/lib/jobs/__tests__/wait-for-job.test.ts` (2/2 PASS) + `src/lib/jobs/__tests__/format-dit-error.test.ts` (5/5 PASS) | none |
 | R22-11: Gates penuh hal. 3 (`tsc`, `eslint`, `vitest`, `next build`, Playwright lokal) | PASS | `tsc --noEmit` 0; `eslint --max-warnings 0` 0; `vitest run` 45 files / 217/217 PASS; `next build` PASS; Playwright `next start -p 3199` PASS | Siap untuk re-test DIT tunggal setelah deploy |
+
+---
+
+## Module: Putaran 23 (T1–T4) — Reliabilitas Pemindaian Drive & Pemulihan Job Macet
+
+**Date:** 2026-11-26 · **Mode:** AUDIT MODE · **Deploy:** via git push to `main`
+
+| Scenario | Result | Evidence | Patch / Follow-up |
+|---|---|---|---|
+| P23-T1: Audit env Vercel Hobby & RCA `running (10%)` + timeout 12/15 dtk | PASS | `npx vercel env ls` (`ENABLE_DIRECT_DB` nonaktif → jalur `cookies()`); RCA `updateJobStatusRecord`, `crawlPublicDriveFolderEmbedded` (`CONCURRENCY=6`, 0 retry), `BatchDetailPage` | `_documentations_/2026-11-26_1512_round23_t1_t4_drive_scan_reliability_and_stale_ui.md` |
+| P23-T2: Hardening DB fallback `after()`, timeout worker 240s, & guard stale pending/running | PASS | `jobs-repository.test.ts` (3/3 PASS), `job-staleness.test.ts` (4/4 PASS), `worker.test.ts` (`timeoutMs` + `getLatestJobStatusForBatch` + `onProgress`, 21/21 PASS) | — |
+| P23-T3: Retry + backoff Drive crawl, isolasi subfolder parsial, & deadline ZIP/ekstraksi | PASS | `drive.test.ts` (25/25 PASS: retry `TimeoutError`/503, `DRIVE_CRAWL_TIMEOUT`, isolasi subfolder + warning, API 503 retry) | — |
+| P23-T4: Rekonsiliasi stale di `/batches/[id]` & `/api/v1/batches*`, re-authz Server Action, & tombol pulih | PASS | `src/app/api/v1/batches/[id]/__tests__/route.test.ts` (3/3 PASS); verifikasi live UI menunggu deploy otomatis Vercel setelah push | Uji ulang rescan batch `2050a077` pasca-deploy |
+| P23-Gates: `tsc`, `eslint`, `vitest` penuh pasca edit terakhir | PASS | `npm run typecheck` (0 err), `npx eslint . --max-warnings 0` (0 warn/err), `npm run test` (60/60 files, 303/303 PASS; `testTimeout: 15_000`) | Paket `playwright` belum ada di `package.json`; UI live diuji pasca-deploy |

@@ -487,6 +487,9 @@ export async function enrichFilesByContent<T extends ContentEnrichableFile>(para
   assessees?: Array<{ id: string; displayName: string }>;
   schemeForms?: SchemeFormClassifierEntry[];
   cachedTextLookup?: (file: T) => string | null | undefined;
+  signal?: AbortSignal;
+  deadlineAtMs?: number;
+  fileTimeoutMs?: number;
 }): Promise<{ inspected: number; reclassified: number; reassigned: number }> {
   const maxInspect = params.maxInspect ?? 12;
   let inspected = 0;
@@ -609,7 +612,14 @@ export async function enrichFilesByContent<T extends ContentEnrichableFile>(para
   }
 
   const CONCURRENCY = 2;
+  const fileTimeoutMs = params.fileTimeoutMs ?? 20_000;
   for (let i = 0; i < networkQueue.length; i += CONCURRENCY) {
+    if (
+      params.signal?.aborted ||
+      (params.deadlineAtMs !== undefined && Date.now() >= params.deadlineAtMs)
+    ) {
+      break;
+    }
     const chunk = networkQueue.slice(i, i + CONCURRENCY);
     await Promise.all(
       chunk.map(async ({ file, parentPath, currentConf }) => {
@@ -634,15 +644,21 @@ export async function enrichFilesByContent<T extends ContentEnrichableFile>(para
             text = (extracted.text ?? "").trim();
             extractionMethod = extracted.extractionMethod ?? null;
           } else {
-            const buffer = await downloadPublicDriveFileBuffer({
-              driveFileId: file.driveFileId,
-              apiKey: params.apiKey,
-            });
-            const parsed = await extractTextFromBuffer({
-              buffer,
-              fileName: file.fileName,
-              mimeType: file.mimeType,
-            });
+            const parsed = await runWithTimeout(
+              (async () => {
+                const buffer = await downloadPublicDriveFileBuffer({
+                  driveFileId: file.driveFileId,
+                  apiKey: params.apiKey,
+                });
+                return extractTextFromBuffer({
+                  buffer,
+                  fileName: file.fileName,
+                  mimeType: file.mimeType,
+                });
+              })(),
+              fileTimeoutMs,
+              "CONTENT_INSPECT_TIMEOUT: Batas waktu inspeksi berkas terlampaui.",
+            );
             text = parsed.text.trim();
             extractionMethod = parsed.extractionMethod;
           }

@@ -1,3 +1,4 @@
+import { logEvent } from "@/lib/logger";
 import { validateSafeExternalUrl } from "@/lib/security/ssrf";
 import { inferMimeTypeFromFileName } from "@/services/extract";
 import {
@@ -688,11 +689,155 @@ function decodeHtmlEntities(input: string): string {
     .trim();
 }
 
+export interface DriveCrawlOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  retryBaseDelayMs?: number;
+  onWarning?: (warning: string) => void;
+  failedSubfolders?: Array<{ path: string; reason: string }>;
+}
+
+const DEFAULT_DRIVE_CRAWL_TIMEOUT_MS = 20_000;
+const DEFAULT_DRIVE_CRAWL_MAX_ATTEMPTS = 3;
+const DEFAULT_DRIVE_RETRY_BASE_DELAY_MS = 750;
+const EMBEDDED_CRAWL_CONCURRENCY = 2;
+const API_CRAWL_CONCURRENCY = 3;
+
+function createLinkedAbortSignal(
+  parent: AbortSignal | undefined,
+  timeoutMs: number,
+): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+  }, timeoutMs);
+
+  const onParentAbort = () => {
+    controller.abort(parent?.reason);
+  };
+
+  if (parent) {
+    if (parent.aborted) {
+      controller.abort(parent.reason);
+    } else {
+      parent.addEventListener("abort", onParentAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      if (parent) {
+        parent.removeEventListener("abort", onParentAbort);
+      }
+    },
+  };
+}
+
+function isTransientDriveFetchError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === "TimeoutError" || err.name === "AbortError" || err.name === "TypeError") {
+    return true;
+  }
+  return /timeout|aborted|fetch failed|econnreset|etimedout|socket/i.test(err.message);
+}
+
+async function waitWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return;
+  if (signal?.aborted) {
+    throw new Error("DRIVE_CRAWL_ABORTED: Pemindaian Google Drive dihentikan karena melewati batas waktu total job.");
+  }
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(
+        new Error(
+          "DRIVE_CRAWL_ABORTED: Pemindaian Google Drive dihentikan karena melewati batas waktu total job.",
+        ),
+      );
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function fetchDriveWithRetry(params: {
+  url: string;
+  init?: RequestInit;
+  timeoutMs: number;
+  maxAttempts: number;
+  retryBaseDelayMs: number;
+  stepLabel: string;
+  signal?: AbortSignal;
+  retryOn403?: boolean;
+}): Promise<Response> {
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < params.maxAttempts; attempt++) {
+    if (params.signal?.aborted) {
+      throw new Error(
+        "DRIVE_CRAWL_ABORTED: Pemindaian Google Drive dihentikan karena melewati batas waktu total job.",
+      );
+    }
+
+    const linked = createLinkedAbortSignal(params.signal, params.timeoutMs);
+    try {
+      const res = await fetch(params.url, {
+        ...params.init,
+        signal: linked.signal,
+      });
+
+      const shouldRetryStatus =
+        res.status === 429 ||
+        res.status >= 500 ||
+        (Boolean(params.retryOn403) && res.status === 403);
+
+      if (!shouldRetryStatus || attempt + 1 >= params.maxAttempts) {
+        return res;
+      }
+
+      lastError = new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      if (params.signal?.aborted) {
+        throw new Error(
+          "DRIVE_CRAWL_ABORTED: Pemindaian Google Drive dihentikan karena melewati batas waktu total job.",
+        );
+      }
+      lastError = err;
+      if (!isTransientDriveFetchError(err) || attempt + 1 >= params.maxAttempts) {
+        if (isTransientDriveFetchError(err)) {
+          throw new Error(
+            `DRIVE_CRAWL_TIMEOUT: Gagal mengambil daftar Google Drive (${params.stepLabel}) setelah ${params.maxAttempts} percobaan (batas ${Math.round(params.timeoutMs / 1000)} dtk per permintaan). Periksa koneksi atau coba Pindai Ulang.`,
+          );
+        }
+        throw err;
+      }
+    } finally {
+      linked.cleanup();
+    }
+
+    const delayMs = params.retryBaseDelayMs * Math.pow(2, attempt);
+    await waitWithAbort(delayMs, params.signal);
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(
+        `DRIVE_CRAWL_TIMEOUT: Gagal mengambil daftar Google Drive (${params.stepLabel}) setelah ${params.maxAttempts} percobaan.`,
+      );
+}
+
 export async function crawlPublicDriveFolderEmbedded(
   folderId: string,
   parentPath = "",
   depth = 0,
   schemeForms?: SchemeFormClassifierEntry[],
+  options?: DriveCrawlOptions,
 ): Promise<ClassifiedDriveFile[]> {
   if (depth > 4) return [];
 
@@ -702,19 +847,36 @@ export async function crawlPublicDriveFolderEmbedded(
     throw new Error(`INVALID_DRIVE_URL: ${ssrf.reason}`);
   }
 
-  const res = await fetch(targetUrl, {
-    headers: { "User-Agent": "AsesorKompetensi/1.4 (+https://assessor-zeta.vercel.app)" },
-    signal: AbortSignal.timeout(12000),
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_DRIVE_CRAWL_TIMEOUT_MS;
+  const maxAttempts = options?.maxAttempts ?? DEFAULT_DRIVE_CRAWL_MAX_ATTEMPTS;
+  const retryBaseDelayMs = options?.retryBaseDelayMs ?? DEFAULT_DRIVE_RETRY_BASE_DELAY_MS;
+  const failedSubfolders = options?.failedSubfolders ?? [];
+  const stepLabel =
+    depth === 0 ? "embedded_listing:root" : `embedded_listing:${parentPath || folderId}`;
+
+  const res = await fetchDriveWithRetry({
+    url: targetUrl,
+    init: {
+      headers: { "User-Agent": "AsesorKompetensi/1.4 (+https://assessor-zeta.vercel.app)" },
+    },
+    timeoutMs,
+    maxAttempts,
+    retryBaseDelayMs,
+    stepLabel,
+    signal: options?.signal,
+    retryOn403: false,
   });
 
   if (!res.ok) {
     if (depth > 0) {
+      const warnMsg = `Subfolder "${parentPath || folderId}" dilewati (HTTP ${res.status})`;
+      options?.onWarning?.(warnMsg);
       console.warn(
         `[Drive Crawl Warning] Skipping subfolder ${folderId} (${parentPath}): HTTP ${res.status}`,
       );
       return [];
     }
-    throw new Error(`Drive public listing error: HTTP ${res.status}`);
+    throw new Error(`Drive public listing error (${stepLabel}): HTTP ${res.status}`);
   }
 
   const html = await res.text();
@@ -753,18 +915,55 @@ export async function crawlPublicDriveFolderEmbedded(
     }
   }
 
-  // Bounded concurrency across subfolders to avoid hitting serverless limits
-  const CONCURRENCY = 6;
-  for (let i = 0; i < subfolders.length; i += CONCURRENCY) {
-    const chunk = subfolders.slice(i, i + CONCURRENCY);
+  const childOptions: DriveCrawlOptions = {
+    ...options,
+    failedSubfolders,
+  };
+
+  // Bounded concurrency across subfolders to prevent Google Drive throttling and timeout cascades
+  for (let i = 0; i < subfolders.length; i += EMBEDDED_CRAWL_CONCURRENCY) {
+    if (options?.signal?.aborted) {
+      throw new Error(
+        "DRIVE_CRAWL_ABORTED: Pemindaian Google Drive dihentikan karena melewati batas waktu total job.",
+      );
+    }
+    const chunk = subfolders.slice(i, i + EMBEDDED_CRAWL_CONCURRENCY);
     const nestedLists = await Promise.all(
-      chunk.map((sf) =>
-        crawlPublicDriveFolderEmbedded(sf.id, sf.path, depth + 1, schemeForms),
-      ),
+      chunk.map(async (sf) => {
+        try {
+          return await crawlPublicDriveFolderEmbedded(
+            sf.id,
+            sf.path,
+            depth + 1,
+            schemeForms,
+            childOptions,
+          );
+        } catch (err) {
+          if (options?.signal?.aborted) {
+            throw err;
+          }
+          const reason = err instanceof Error ? err.message : String(err);
+          failedSubfolders.push({ path: sf.path, reason });
+          options?.onWarning?.(`Subfolder "${sf.path}" gagal dipindai: ${reason}`);
+          console.warn(
+            `[Drive Crawl Warning] Subfolder ${sf.id} (${sf.path}) failed: ${reason}`,
+          );
+          return [];
+        }
+      }),
     );
     for (const nested of nestedLists) {
       files.push(...nested);
     }
+  }
+
+  if (depth === 0 && files.length === 0 && failedSubfolders.length > 0) {
+    throw new Error(
+      `DRIVE_CRAWL_TIMEOUT: Gagal memindai ${failedSubfolders.length} subfolder Google Drive (${failedSubfolders
+        .slice(0, 3)
+        .map((s) => s.path)
+        .join(", ")}): ${failedSubfolders[0]?.reason ?? "timeout"}`,
+    );
   }
 
   return files;
@@ -774,26 +973,50 @@ async function crawlPublicDriveFolderApi(params: {
   folderId: string;
   apiKey: string;
   parentPath?: string;
+  depth?: number;
   schemeForms?: SchemeFormClassifierEntry[];
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  retryBaseDelayMs?: number;
+  onWarning?: (warning: string) => void;
+  failedSubfolders?: Array<{ path: string; reason: string }>;
 }): Promise<ClassifiedDriveFile[]> {
+  const depth = params.depth ?? 0;
+  if (depth > 4) return [];
+
+  const timeoutMs = params.timeoutMs ?? DEFAULT_DRIVE_CRAWL_TIMEOUT_MS;
+  const maxAttempts = params.maxAttempts ?? DEFAULT_DRIVE_CRAWL_MAX_ATTEMPTS;
+  const retryBaseDelayMs = params.retryBaseDelayMs ?? DEFAULT_DRIVE_RETRY_BASE_DELAY_MS;
+  const failedSubfolders = params.failedSubfolders ?? [];
   const results: ClassifiedDriveFile[] = [];
+  const subfolders: Array<{ id: string; path: string }> = [];
   let pageToken: string | undefined;
+  let pageNumber = 0;
 
   do {
+    pageNumber++;
     const query = encodeURIComponent(`'${params.folderId}' in parents and trashed = false`);
     const url = `https://www.googleapis.com/drive/v3/files?q=${query}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=100${
       pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""
     }&key=${encodeURIComponent(params.apiKey)}`;
 
-    let res: Response | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      if (res.status !== 429 && res.status !== 403) break;
-      await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt)));
-    }
+    const stepLabel = params.parentPath
+      ? `drive_api:${params.parentPath}#p${pageNumber}`
+      : `drive_api:root#p${pageNumber}`;
 
-    if (!res || !res.ok) {
-      throw new Error(`Drive API error: HTTP ${res?.status ?? 503}`);
+    const res = await fetchDriveWithRetry({
+      url,
+      timeoutMs,
+      maxAttempts,
+      retryBaseDelayMs,
+      stepLabel,
+      signal: params.signal,
+      retryOn403: false,
+    });
+
+    if (!res.ok) {
+      throw new Error(`Drive API error (${stepLabel}): HTTP ${res.status}`);
     }
 
     const body = (await res.json()) as {
@@ -804,13 +1027,7 @@ async function crawlPublicDriveFolderApi(params: {
     for (const f of body.files ?? []) {
       const currentPath = params.parentPath ? `${params.parentPath}/${f.name}` : f.name;
       if (f.mimeType === "application/vnd.google-apps.folder") {
-        const nested = await crawlPublicDriveFolderApi({
-          folderId: f.id,
-          apiKey: params.apiKey,
-          parentPath: currentPath,
-          schemeForms: params.schemeForms,
-        });
-        results.push(...nested);
+        subfolders.push({ id: f.id, path: currentPath });
       } else {
         const { docType, confidence, reason } = classifyDriveFileName(
           f.name,
@@ -833,6 +1050,54 @@ async function crawlPublicDriveFolderApi(params: {
     pageToken = body.nextPageToken;
   } while (pageToken);
 
+  for (let i = 0; i < subfolders.length; i += API_CRAWL_CONCURRENCY) {
+    if (params.signal?.aborted) {
+      throw new Error(
+        "DRIVE_CRAWL_ABORTED: Pemindaian Google Drive dihentikan karena melewati batas waktu total job.",
+      );
+    }
+    const chunk = subfolders.slice(i, i + API_CRAWL_CONCURRENCY);
+    const nestedLists = await Promise.all(
+      chunk.map(async (sf) => {
+        try {
+          return await crawlPublicDriveFolderApi({
+            folderId: sf.id,
+            apiKey: params.apiKey,
+            parentPath: sf.path,
+            depth: depth + 1,
+            schemeForms: params.schemeForms,
+            signal: params.signal,
+            timeoutMs,
+            maxAttempts,
+            retryBaseDelayMs,
+            onWarning: params.onWarning,
+            failedSubfolders,
+          });
+        } catch (err) {
+          if (params.signal?.aborted) {
+            throw err;
+          }
+          const reason = err instanceof Error ? err.message : String(err);
+          failedSubfolders.push({ path: sf.path, reason });
+          params.onWarning?.(`Subfolder "${sf.path}" gagal dipindai via API: ${reason}`);
+          return [];
+        }
+      }),
+    );
+    for (const nested of nestedLists) {
+      results.push(...nested);
+    }
+  }
+
+  if (depth === 0 && results.length === 0 && failedSubfolders.length > 0) {
+    throw new Error(
+      `DRIVE_CRAWL_TIMEOUT: Gagal memindai ${failedSubfolders.length} subfolder Google Drive (${failedSubfolders
+        .slice(0, 3)
+        .map((s) => s.path)
+        .join(", ")}): ${failedSubfolders[0]?.reason ?? "timeout"}`,
+    );
+  }
+
   return results;
 }
 
@@ -841,6 +1106,11 @@ export async function crawlPublicDriveFolder(params: {
   apiKey?: string;
   parentPath?: string;
   schemeForms?: SchemeFormClassifierEntry[];
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  retryBaseDelayMs?: number;
+  onWarning?: (warning: string) => void;
 }): Promise<ClassifiedDriveFile[]> {
   const key = params.apiKey?.trim();
   if (key) {
@@ -850,8 +1120,25 @@ export async function crawlPublicDriveFolder(params: {
         apiKey: key,
         parentPath: params.parentPath,
         schemeForms: params.schemeForms,
+        signal: params.signal,
+        timeoutMs: params.timeoutMs,
+        maxAttempts: params.maxAttempts,
+        retryBaseDelayMs: params.retryBaseDelayMs,
+        onWarning: params.onWarning,
       });
-    } catch {
+    } catch (err) {
+      if (params.signal?.aborted) {
+        throw err;
+      }
+      logEvent("warn", {
+        action: "drive.crawl.api_fallback",
+        resource: "drive",
+        outcome: "failure",
+        meta: {
+          folderId: params.folderId,
+          reason: err instanceof Error ? err.message : String(err),
+        },
+      });
       // Fall through to keyless public HTML listing when key is restricted/invalid
     }
   }
@@ -861,6 +1148,13 @@ export async function crawlPublicDriveFolder(params: {
     params.parentPath ?? "",
     0,
     params.schemeForms,
+    {
+      signal: params.signal,
+      timeoutMs: params.timeoutMs,
+      maxAttempts: params.maxAttempts,
+      retryBaseDelayMs: params.retryBaseDelayMs,
+      onWarning: params.onWarning,
+    },
   );
 }
 

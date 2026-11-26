@@ -90,6 +90,8 @@ export interface WorkerJobInput {
   type: string;
   payload: Record<string, unknown>;
   userId?: string;
+  signal?: AbortSignal;
+  onProgress?: (progress: number) => Promise<void> | void;
 }
 
 export interface WorkerJobResult {
@@ -229,14 +231,41 @@ function formatUnextractableZipReason(rawError: string): string {
   return `Tidak dapat diproses (${rawError}). Tindakan: unduh manual dari Google Drive, ekstrak berkas di perangkat Anda, lalu unggah isi berkasnya ke folder Drive batch atau ubah status ke 'not_needed'.`;
 }
 
+async function runWithScanTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function expandZipArchivesForScan(
   discovered: ClassifiedDriveFile[],
   apiKey: string | undefined,
   schemeForms?: SchemeFormClassifierEntry[],
+  options?: {
+    signal?: AbortSignal;
+    deadlineAtMs?: number;
+    perZipTimeoutMs?: number;
+    warnings?: string[];
+  },
 ): Promise<{ items: ScanCandidateFile[]; unpackedZipCount: number }> {
   const output: ScanCandidateFile[] = [];
   let unpackedZipCount = 0;
   const masterTypes = buildBatchMasterInstrumentSet(schemeForms);
+  const perZipTimeoutMs = options?.perZipTimeoutMs ?? 30_000;
 
   for (const file of discovered) {
     const isZip =
@@ -249,13 +278,32 @@ async function expandZipArchivesForScan(
       continue;
     }
 
+    if (
+      options?.signal?.aborted ||
+      (options?.deadlineAtMs !== undefined && Date.now() >= options.deadlineAtMs)
+    ) {
+      options?.warnings?.push(`Ekstraksi ZIP "${file.fileName}" dilewati karena mendekati batas waktu.`);
+      output.push({
+        ...file,
+        classificationReason:
+          "Ekstraksi arsip ZIP dilewati karena mendekati batas waktu pemindaian — jalankan Pindai Ulang atau ekstrak manual.",
+      });
+      continue;
+    }
+
     unpackedZipCount++;
     try {
-      const zipBuffer = await downloadPublicDriveFileBuffer({
-        driveFileId: file.driveFileId,
-        apiKey,
-      });
-      const entries = await unpackSafeZipEntries(zipBuffer);
+      const entries = await runWithScanTimeout(
+        (async () => {
+          const zipBuffer = await downloadPublicDriveFileBuffer({
+            driveFileId: file.driveFileId,
+            apiKey,
+          });
+          return unpackSafeZipEntries(zipBuffer);
+        })(),
+        perZipTimeoutMs,
+        `ZIP_TIMEOUT: Batas waktu unduh/ekstrak arsip "${file.fileName}" (${Math.round(perZipTimeoutMs / 1000)} dtk) terlampaui.`,
+      );
       const lastSlash = file.drivePath.lastIndexOf("/");
       const zipFolder = lastSlash > 0 ? file.drivePath.slice(0, lastSlash) : "";
 
@@ -453,15 +501,25 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
   const driveApiKey =
     (await resolveDriveApiKeyIfNeeded(userId, true, payloadApiKey)) ?? "";
 
+  const scanDeadlineAt = Date.now() + 220_000;
+  const crawlWarnings: string[] = [];
+  const phaseStart = Date.now();
+
+  await job.onProgress?.(15);
+
   const [discovered, existingFiles, existingAssesseesBefore] = await Promise.all([
     crawlPublicDriveFolder({
       folderId,
       apiKey: driveApiKey || undefined,
       schemeForms,
+      signal: job.signal,
+      onWarning: (w) => crawlWarnings.push(w),
     }),
     listDriveFilesForBatch(userId, batch.id),
     listAssesseesByBatch(userId, batch.id),
   ]);
+
+  await job.onProgress?.(40);
 
   const existingByDriveId = new Map(existingFiles.map((f) => [f.driveFileId, f]));
 
@@ -469,7 +527,14 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     discovered,
     driveApiKey || undefined,
     schemeForms,
+    {
+      signal: job.signal,
+      deadlineAtMs: scanDeadlineAt - 60_000,
+      warnings: crawlWarnings,
+    },
   );
+
+  await job.onProgress?.(55);
 
   await enrichFilesByContent({
     files: expandedFiles,
@@ -479,7 +544,12 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     reassignAssessee: false,
     schemeForms,
     cachedTextLookup: (file) => existingByDriveId.get(file.driveFileId)?.extractedText,
+    signal: job.signal,
+    deadlineAtMs: scanDeadlineAt - 45_000,
+    fileTimeoutMs: 20_000,
   });
+
+  await job.onProgress?.(75);
 
   const suratTugasRoster: string[] = [];
   let parsedSuratTugasDate: string | null = null;
@@ -814,6 +884,8 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
     };
   });
 
+  await job.onProgress?.(90);
+
   const savedCount = await upsertDriveFilesForBatch({
     userId,
     lspId: batch.lspId,
@@ -915,6 +987,8 @@ async function handleDriveScanJob(job: WorkerJobInput): Promise<WorkerJobResult>
       ...(mergedAssessees.length > 0 ? { mergedAssessees } : {}),
       ...(renamedAssessees.length > 0 ? { renamedAssessees } : {}),
       ...(rosterChangeSummary ? { rosterChangeSummary } : {}),
+      ...(crawlWarnings.length > 0 ? { crawlWarnings } : {}),
+      durationMs: Date.now() - phaseStart,
       folderId,
     },
   };

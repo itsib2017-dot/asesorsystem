@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   enqueueJobRecord: vi.fn(),
   getJobRecordById: vi.fn(),
+  getLatestJobForBatch: vi.fn(),
   updateJobStatusRecord: vi.fn(),
   updateDriveFileExtraction: vi.fn(),
   updateDriveFileClassification: vi.fn(),
@@ -32,6 +33,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/repositories/jobs.repository", () => ({
   enqueueJobRecord: mocks.enqueueJobRecord,
   getJobRecordById: mocks.getJobRecordById,
+  getLatestJobForBatch: mocks.getLatestJobForBatch,
   updateJobStatusRecord: mocks.updateJobStatusRecord,
 }));
 
@@ -103,7 +105,7 @@ import * as encryption from "@/lib/crypto/encryption";
 import * as ditService from "@/services/dit";
 import * as gradingService from "@/services/grading";
 import { runWorkerJob } from "../index";
-import { enqueueJob, executeJob } from "../queue";
+import { enqueueJob, executeJob, getLatestJobStatusForBatch } from "../queue";
 import { STALE_RUNNING_MS, isStaleRunningJob } from "../job-staleness";
 
 describe("Worker dispatcher and queue runner", () => {
@@ -1201,5 +1203,153 @@ describe("Worker dispatcher and queue runner", () => {
       extractedText: "CV Multimedia pengalaman 5 tahun",
       extractionMethod: "manual_paste",
     });
+  });
+
+  it("enforces executeJob timeoutMs and transitions hanging drive_scan to failed (P23-1)", async () => {
+    const jobId = "00000000-0000-4000-8000-000000000901";
+    const batchId = "00000000-0000-4000-8000-000000000902";
+    const baseJob = {
+      id: jobId,
+      createdBy: "user-1",
+      type: "drive_scan",
+      status: "pending" as const,
+      payload: {
+        batchId,
+        driveFolderUrl: "https://drive.google.com/drive/folders/hungfolder123",
+      },
+      progress: 0,
+      error: null,
+      attempts: 0,
+      createdAt: "2026-11-26T00:00:00Z",
+      updatedAt: "2026-11-26T00:00:00Z",
+    };
+
+    mocks.getJobRecordById
+      .mockResolvedValueOnce(baseJob)
+      .mockResolvedValueOnce({
+        ...baseJob,
+        status: "failed",
+        progress: 0,
+        error: "WORKER_EXECUTION_TIMEOUT: Pekerjaan drive_scan melewati batas waktu eksekusi (0 detik).",
+        attempts: 1,
+      });
+    mocks.getBatchById.mockResolvedValue({
+      id: batchId,
+      lspId: "lsp-1",
+      schemeId: null,
+      name: "Batch Timeout",
+    });
+    mocks.updateJobStatusRecord.mockResolvedValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise<Response>(() => {}),
+    );
+
+    const finalJob = await executeJob("user-1", jobId, {
+      lspId: "lsp-1",
+      timeoutMs: 30,
+    });
+
+    expect(finalJob?.status).toBe("failed");
+    expect(mocks.updateJobStatusRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId,
+        status: "failed",
+        progress: 0,
+        error: expect.stringContaining("WORKER_EXECUTION_TIMEOUT"),
+      }),
+    );
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "job.drive_scan.failed",
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("reconciles stale running (>305s) and stale pending (>60s) batch scan jobs via getLatestJobStatusForBatch (P23-2)", async () => {
+    const batchId = "00000000-0000-4000-8000-000000000903";
+    const staleRunning = {
+      id: "00000000-0000-4000-8000-000000000904",
+      createdBy: "user-1",
+      type: "drive_scan",
+      status: "running" as const,
+      payload: { batchId },
+      progress: 10,
+      error: null,
+      attempts: 1,
+      createdAt: new Date(Date.now() - 400_000).toISOString(),
+      updatedAt: new Date(Date.now() - 400_000).toISOString(),
+    };
+
+    mocks.getLatestJobForBatch.mockResolvedValueOnce(staleRunning);
+    mocks.getBatchById.mockResolvedValue({ id: batchId, lspId: "lsp-1" });
+    mocks.updateJobStatusRecord.mockResolvedValue(undefined);
+    mocks.getJobRecordById.mockResolvedValueOnce({
+      ...staleRunning,
+      status: "failed",
+      error: "Worker timeout (Vercel 300s). Jalankan ulang pemindaian / analisis.",
+    });
+
+    const reconciledRunning = await getLatestJobStatusForBatch("user-1", batchId, "drive_scan");
+    expect(reconciledRunning?.status).toBe("failed");
+    expect(reconciledRunning?.error).toContain("300s");
+
+    const stalePending = {
+      ...staleRunning,
+      id: "00000000-0000-4000-8000-000000000905",
+      status: "pending" as const,
+      progress: 0,
+      updatedAt: new Date(Date.now() - 90_000).toISOString(),
+    };
+    mocks.getLatestJobForBatch.mockResolvedValueOnce(stalePending);
+    mocks.getJobRecordById.mockResolvedValueOnce({
+      ...stalePending,
+      status: "failed",
+      error: "Antrean job tidak dimulai dalam 60 detik (konteks latar terhenti). Jalankan ulang pemindaian / analisis.",
+    });
+
+    const reconciledPending = await getLatestJobStatusForBatch("user-1", batchId, "drive_scan");
+    expect(reconciledPending?.status).toBe("failed");
+    expect(reconciledPending?.error).toContain("60 detik");
+  });
+
+  it("emits incremental progress milestones during handleDriveScanJob", async () => {
+    const batchId = "00000000-0000-4000-8000-000000000906";
+    mocks.getBatchById.mockResolvedValue({
+      id: batchId,
+      lspId: "lsp-1",
+      schemeId: null,
+      name: "Batch Progress",
+      driveFolderUrl: "https://drive.google.com/drive/folders/progfolder123",
+    });
+    mocks.listDriveFilesForBatch.mockResolvedValue([]);
+    mocks.listAssesseesByBatch.mockResolvedValue([]);
+    mocks.upsertDriveFilesForBatch.mockResolvedValue(1);
+    mocks.pruneOrphanedDuplicateAssessees.mockResolvedValue([]);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        `<div class="flip-entry" id="entry-file-p1">
+          <a href="https://drive.google.com/file/d/file-p1/view">
+            <div class="flip-entry-title">Surat_Tugas.jpg</div>
+          </a>
+        </div>`,
+        { status: 200 },
+      ),
+    );
+
+    const progressUpdates: number[] = [];
+    const res = await runWorkerJob({
+      id: "job-scan-progress",
+      type: "drive_scan",
+      userId: "user-1",
+      payload: { batchId },
+      onProgress: (p) => {
+        progressUpdates.push(p);
+      },
+    });
+
+    expect(res.status).toBe("done");
+    expect(progressUpdates).toEqual([15, 40, 55, 75, 90]);
   });
 });

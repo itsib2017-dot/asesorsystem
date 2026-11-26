@@ -616,4 +616,160 @@ describe("Drive folder crawling & BNSP path classification", () => {
       expect(cvWithK3Content?.docType).toBe("cv");
     });
   });
+
+  describe("Resilient Drive folder crawling with retries and partial isolation (P23-1)", () => {
+    it("retries transient TimeoutError in embedded folder listing and succeeds on attempt 2", async () => {
+      let attempts = 0;
+      const html = `
+        <div class="flip-entry" id="entry-f1">
+          <a href="https://drive.google.com/file/d/f1/view">
+            <div class="flip-entry-title">KTP Budi.jpg</div>
+          </a>
+        </div>
+      `;
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        attempts++;
+        if (attempts === 1) {
+          throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+        }
+        return new Response(html, { status: 200 });
+      });
+
+      const files = await crawlPublicDriveFolder({
+        folderId: "retry-root",
+        retryBaseDelayMs: 1,
+        maxAttempts: 3,
+      });
+
+      expect(attempts).toBe(2);
+      expect(files).toHaveLength(1);
+      expect(files[0]?.driveFileId).toBe("f1");
+    });
+
+    it("retries HTTP 503 in embedded listing and succeeds on attempt 2", async () => {
+      let attempts = 0;
+      const html = `
+        <div class="flip-entry" id="entry-f2">
+          <a href="https://drive.google.com/file/d/f2/view">
+            <div class="flip-entry-title">CV Budi.pdf</div>
+          </a>
+        </div>
+      `;
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        attempts++;
+        if (attempts === 1) {
+          return new Response("Service Unavailable", { status: 503 });
+        }
+        return new Response(html, { status: 200 });
+      });
+
+      const files = await crawlPublicDriveFolder({
+        folderId: "retry-503",
+        retryBaseDelayMs: 1,
+        maxAttempts: 3,
+      });
+
+      expect(attempts).toBe(2);
+      expect(files).toHaveLength(1);
+      expect(files[0]?.docType).toBe("cv");
+    });
+
+    it("throws descriptive DRIVE_CRAWL_TIMEOUT when root listing times out across all retries", async () => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      });
+
+      await expect(
+        crawlPublicDriveFolder({
+          folderId: "always-timeout",
+          retryBaseDelayMs: 1,
+          maxAttempts: 2,
+          timeoutMs: 5000,
+        }),
+      ).rejects.toThrow(/DRIVE_CRAWL_TIMEOUT.*embedded_listing:root.*2 percobaan/);
+    });
+
+    it("isolates a timed-out subfolder when sibling subfolder succeeds and emits warning", async () => {
+      const rootHtml = `
+        <div class="flip-entry" id="entry-slow">
+          <a href="https://drive.google.com/drive/folders/slow">
+            <div class="flip-entry-title">Subfolder Lambat</div>
+          </a>
+        </div>
+        <div class="flip-entry" id="entry-fast">
+          <a href="https://drive.google.com/drive/folders/fast">
+            <div class="flip-entry-title">1. Budi Santoso</div>
+          </a>
+        </div>
+      `;
+      const fastHtml = `
+        <div class="flip-entry" id="entry-doc-ok">
+          <a href="https://drive.google.com/file/d/doc-ok/view">
+            <div class="flip-entry-title">KTP Budi.jpg</div>
+          </a>
+        </div>
+      `;
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.includes("id=root-partial")) return new Response(rootHtml, { status: 200 });
+        if (url.includes("id=slow")) {
+          throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+        }
+        return new Response(fastHtml, { status: 200 });
+      });
+
+      const warnings: string[] = [];
+      const files = await crawlPublicDriveFolder({
+        folderId: "root-partial",
+        retryBaseDelayMs: 1,
+        maxAttempts: 2,
+        onWarning: (w) => warnings.push(w),
+      });
+
+      expect(files).toHaveLength(1);
+      expect(files[0]?.driveFileId).toBe("doc-ok");
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("Subfolder Lambat");
+    });
+
+    it("retries transient 503 on Drive API before succeeding", async () => {
+      let apiAttempts = 0;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.includes("googleapis.com/drive/v3/files")) {
+          apiAttempts++;
+          if (apiAttempts === 1) {
+            return new Response("Backend Error", { status: 503 });
+          }
+          return new Response(
+            JSON.stringify({
+              files: [
+                {
+                  id: "api-f1",
+                  name: "APL01_Budi.docx",
+                  mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        throw new Error("Should not fall back to embedded when retry succeeds");
+      });
+
+      const files = await crawlPublicDriveFolder({
+        folderId: "api-retry-root",
+        apiKey: "valid-key",
+        retryBaseDelayMs: 1,
+        maxAttempts: 3,
+      });
+
+      expect(apiAttempts).toBe(2);
+      expect(files).toHaveLength(1);
+      expect(files[0]?.docType).toBe("apl01");
+    });
+  });
 });

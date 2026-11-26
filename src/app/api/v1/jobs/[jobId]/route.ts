@@ -2,6 +2,8 @@ import { getUser } from "@/lib/auth/get-session";
 import { apiError, apiSuccess } from "@/lib/errors";
 import { executeJob, getJobStatus } from "@/worker/queue";
 
+export const maxDuration = 300;
+
 export async function GET(
   _req: Request,
   context: { params: Promise<{ jobId: string }> },

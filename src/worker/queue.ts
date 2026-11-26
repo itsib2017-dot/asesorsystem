@@ -7,11 +7,14 @@ import { getBatchById } from "@/repositories/batches.repository";
 import {
   enqueueJobRecord,
   getJobRecordById,
+  getLatestJobForBatch,
   updateJobStatusRecord,
   type JobRecord,
 } from "@/repositories/jobs.repository";
 import { runWorkerJob } from "./index";
-import { isStaleRunningJob } from "./job-staleness";
+import { getStaleJobReason } from "./job-staleness";
+
+export const WORKER_MAX_EXECUTION_MS = 240_000;
 
 export type JobType =
   | "drive_scan"
@@ -94,7 +97,7 @@ async function recordJobAuditEvent(params: {
 export async function executeJob(
   userId: string,
   jobId: string,
-  options?: { lspId?: string | null; triggerAction?: "retry" },
+  options?: { lspId?: string | null; triggerAction?: "retry"; timeoutMs?: number },
 ): Promise<JobRecord | null> {
   const job = await getJobRecordById(userId, jobId);
   if (!job) return null;
@@ -144,13 +147,52 @@ export async function executeJob(
   let resultMeta: Record<string, unknown> | undefined;
   let errorMessage: string | undefined;
 
+  const onProgress = async (progress: number) => {
+    const clamped = Math.max(1, Math.min(99, Math.round(progress)));
+    try {
+      await updateJobStatusRecord({
+        userId,
+        jobId: job.id,
+        status: "running",
+        progress: clamped,
+        attempts: nextAttempts,
+      });
+    } catch {
+      // Non-fatal progress heartbeat failure
+    }
+  };
+
   try {
-    const result = await runWorkerJob({
-      id: job.id,
-      type: job.type,
-      payload: job.payload,
-      userId,
-    });
+    const controller = new AbortController();
+    const effectiveTimeoutMs = options?.timeoutMs ?? WORKER_MAX_EXECUTION_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let result: Awaited<ReturnType<typeof runWorkerJob>>;
+    try {
+      result = await Promise.race([
+        runWorkerJob({
+          id: job.id,
+          type: job.type,
+          payload: job.payload,
+          userId,
+          signal: controller.signal,
+          onProgress,
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(
+              new Error(
+                `WORKER_EXECUTION_TIMEOUT: Pekerjaan ${job.type} melewati batas waktu eksekusi (${Math.round(effectiveTimeoutMs / 1000)} detik). Silakan jalankan ulang.`,
+              ),
+            );
+          }, effectiveTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    }
 
     resultMeta = result.meta;
     await updateJobStatusRecord({
@@ -257,22 +299,83 @@ export async function enqueueJob(params: {
   return enqueued;
 }
 
-export async function getJobStatus(userId: string, jobId: string) {
-  const job = await getJobRecordById(userId, jobId);
-  if (!job) return null;
-
-  // shortcut: a worker killed by the Vercel 300s timeout cannot update its own
-  // row; surface a terminal state instead of polling "running" forever.
-  if (isStaleRunningJob(job)) {
+export async function markJobFailedSafely(
+  userId: string,
+  jobId: string,
+  errorMessage: string,
+): Promise<void> {
+  try {
     await updateJobStatusRecord({
       userId,
       jobId,
       status: "failed",
-      progress: job.progress,
-      error: "Worker timeout (Vercel 300s). Jalankan ulang analisis.",
+      progress: 0,
+      error: errorMessage,
     });
-    return getJobRecordById(userId, jobId);
+  } catch (err) {
+    logEvent("error", {
+      correlation_id: jobId,
+      user_id: userId,
+      action: "worker.mark_failed_safely",
+      resource: "jobs",
+      outcome: "failure",
+      meta: { error: err instanceof Error ? err.message : String(err) },
+    });
+  }
+}
+
+export async function reconcileStaleJob(
+  userId: string,
+  job: JobRecord | null,
+): Promise<JobRecord | null> {
+  if (!job) return null;
+  const staleReason = getStaleJobReason(job);
+  if (!staleReason) return job;
+
+  // A worker killed by Vercel timeout or a dropped after() callback cannot update
+  // its own row; reconcile stale pending/running states to terminal failed.
+  try {
+    await updateJobStatusRecord({
+      userId,
+      jobId: job.id,
+      status: "failed",
+      progress: job.progress,
+      error: staleReason,
+    });
+    const lspId = await resolveJobLspId(userId, job.payload);
+    await recordJobAuditEvent({
+      userId,
+      lspId,
+      job,
+      action: `job.${job.type}.failed`,
+      status: "failed",
+      extra: { error: staleReason, reason: "stale_reconciled" },
+    });
+    const refreshed = await getJobRecordById(userId, job.id);
+    if (refreshed && refreshed.status === "failed") {
+      return refreshed;
+    }
+  } catch {
+    // Fall back to synthesized terminal view so callers never hang on stale state
   }
 
-  return job;
+  return {
+    ...job,
+    status: "failed",
+    error: staleReason,
+  };
+}
+
+export async function getJobStatus(userId: string, jobId: string) {
+  const job = await getJobRecordById(userId, jobId);
+  return reconcileStaleJob(userId, job);
+}
+
+export async function getLatestJobStatusForBatch(
+  userId: string,
+  batchId: string,
+  type?: string,
+): Promise<JobRecord | null> {
+  const latest = await getLatestJobForBatch(userId, batchId, type);
+  return reconcileStaleJob(userId, latest);
 }
