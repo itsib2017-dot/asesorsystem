@@ -177,8 +177,9 @@ export default async function DitAnalysisPage({
             label: "FR.IA.04A (Instruksi DIT)",
             fileName: used04aFiles[0]?.fileName ?? null,
             fileNames: used04aFiles.map((f) => f.fileName),
-            sourceNote:
-              used04aFiles.length === 0 && scheme04aFallback
+            sourceNote: used04aFiles.some((f) => f.extractionMethod === "manual_paste")
+              ? "manual"
+              : used04aFiles.length === 0 && scheme04aFallback
                 ? `Skema ${common.scheme?.code ?? common.schemeTitle}`
                 : assessee04a.length === 0 && sharedBatch04a.length > 0
                   ? `Batch 04A (${sharedBatch04a[0]?.fileName ?? ""})`
@@ -189,12 +190,16 @@ export default async function DitAnalysisPage({
             label: "Tugas DIT (04B & Formulir)",
             fileName: combinedDitFiles[0]?.fileName ?? null,
             fileNames: combinedDitFiles.map((f) => f.fileName),
+            sourceNote: combinedDitFiles.some((f) => f.extractionMethod === "manual_paste")
+              ? "manual"
+              : null,
             hasExtractedText: Boolean(ditExtracted),
           },
           cv: {
             label: "Profil Kandidat (CV)",
             fileName: fileCv?.fileName ?? null,
             fileNames: fileCv ? [fileCv.fileName] : [],
+            sourceNote: fileCv?.extractionMethod === "manual_paste" ? "manual" : null,
             hasExtractedText: Boolean(cvExtracted),
           },
         }}

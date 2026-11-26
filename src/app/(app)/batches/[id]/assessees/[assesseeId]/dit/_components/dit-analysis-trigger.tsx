@@ -53,10 +53,12 @@ export function DitAnalysisTrigger({
         ? [item.fileName]
         : [];
     const displayLabel =
-      item.sourceNote ||
-      (names.length > 1
-        ? `${names.length} berkas (${names.slice(0, 2).join(", ")}${names.length > 2 ? ", ..." : ""})`
-        : names[0] ?? null);
+      hasOverride && !item.hasExtractedText
+        ? "manual"
+        : item.sourceNote ||
+          (names.length > 1
+            ? `${names.length} berkas (${names.slice(0, 2).join(", ")}${names.length > 2 ? ", ..." : ""})`
+            : names[0] ?? null);
 
     if (item.hasExtractedText || hasOverride) {
       return (

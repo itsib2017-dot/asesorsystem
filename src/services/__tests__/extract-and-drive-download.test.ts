@@ -26,6 +26,7 @@ import {
   enrichFilesByContent,
   ensureDriveFileExtracted,
   extractDriveVirusScanConfirmUrl,
+  FRIENDLY_EXTRACTION_PERSIST_ERROR,
   reclassifyBatchFilesByContent,
   resolveAssesseeDitInputs,
 } from "../drive-extract";
@@ -491,5 +492,130 @@ describe("File text extraction & SSRF-guarded Drive download (T2)", () => {
       "DEPARTEMEN : | HSE",
       "Cleaning Tanki | 16 | Risiko Tinggi",
     ]);
+  });
+
+  it("strips NUL and control characters from PDF extraction (T5 / P0-2)", () => {
+    const stream = Buffer.from(
+      "BT (Resume\\000\\001 Multimedia\\007 Artist) Tj ET",
+      "latin1",
+    );
+    const deflated = zlib.deflateSync(stream);
+    const pdfBuf = Buffer.concat([
+      Buffer.from("%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n", "latin1"),
+      deflated,
+      Buffer.from("\nendstream\nendobj\n%%EOF", "latin1"),
+    ]);
+
+    const extracted = extractTextFromPdfBasic(pdfBuf);
+    expect(extracted).toBe("Resume Multimedia Artist");
+    expect(extracted).not.toContain("\u0000");
+    expect(extracted).not.toContain("\x01");
+  });
+
+  it("returns user-friendly manual paste message when DB rejects extraction persistence", async () => {
+    const pdfPayload = Buffer.from(
+      "%PDF-1.4\n1 0 obj\n<<>>\nstream\nBT (CV Multimedia Artist pengalaman 4 tahun) Tj ET\nendstream\nendobj\n%%EOF",
+      "latin1",
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(pdfPayload, {
+        status: 200,
+        headers: { "content-type": "application/pdf" },
+      }),
+    );
+    mocks.updateDriveFileExtraction.mockRejectedValueOnce(
+      new Error("DRIVE_FILE_EXTRACTION_UPDATE_FAILED: unsupported Unicode escape sequence"),
+    );
+
+    const out = await ensureDriveFileExtracted({
+      userId: "user-1",
+      file: {
+        id: "db-cv-bad",
+        driveFileId: "drivecvbad123",
+        fileName: "Minimal Multimedia Artist Resume (1).pdf",
+        mimeType: "application/pdf",
+        extractedText: null,
+        extractionMethod: null,
+      },
+    });
+
+    expect(out.text).toBeNull();
+    expect(out.error).toBe(FRIENDLY_EXTRACTION_PERSIST_ERROR);
+    expect(out.error).not.toContain("DRIVE_FILE_EXTRACTION_UPDATE_FAILED");
+    expect(out.error).not.toContain("unsupported Unicode");
+  });
+
+  it("skips Drive extraction for CV when skipCv is true (T6 / P1-6)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const resolved = await resolveAssesseeDitInputs({
+      userId: "user-1",
+      skipCv: true,
+      files: [
+        {
+          id: "f-04a",
+          lspId: "lsp-1",
+          batchId: "b-1",
+          assesseeId: "a-1",
+          driveFileId: "d1",
+          fileName: "FR.IA.04A.docx",
+          mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          drivePath: "04A.docx",
+          docType: "04a",
+          classificationConfidence: 0.9,
+          triageStatus: "assigned",
+          triageReason: null,
+          extractedText: "Instruksi 04A lengkap",
+          extractionMethod: "ooxml_docx",
+          ocrConfidence: null,
+          driveModifiedTime: null,
+          archiveParentId: null,
+          archiveEntryPath: null,
+        },
+        {
+          id: "f-04b",
+          lspId: "lsp-1",
+          batchId: "b-1",
+          assesseeId: "a-1",
+          driveFileId: "d2",
+          fileName: "Tugas.pptx",
+          mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          drivePath: "Tugas.pptx",
+          docType: "04b",
+          classificationConfidence: 0.9,
+          triageStatus: "assigned",
+          triageReason: null,
+          extractedText: "Presentasi lengkap",
+          extractionMethod: "ooxml_pptx",
+          ocrConfidence: null,
+          driveModifiedTime: null,
+          archiveParentId: null,
+          archiveEntryPath: null,
+        },
+        {
+          id: "f-cv",
+          lspId: "lsp-1",
+          batchId: "b-1",
+          assesseeId: "a-1",
+          driveFileId: "drivecvskip123",
+          fileName: "Broken_CV.pdf",
+          mimeType: "application/pdf",
+          drivePath: "Broken_CV.pdf",
+          docType: "cv",
+          classificationConfidence: 0.9,
+          triageStatus: "assigned",
+          triageReason: null,
+          extractedText: null,
+          extractionMethod: null,
+          ocrConfidence: null,
+          driveModifiedTime: null,
+          archiveParentId: null,
+          archiveEntryPath: null,
+        },
+      ],
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(resolved.extractionErrors).toEqual([]);
+    expect(resolved.candidateProfileSummary).toBe("");
   });
 });

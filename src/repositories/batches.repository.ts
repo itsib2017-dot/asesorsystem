@@ -3,6 +3,7 @@ import { isUuid, runRepositoryDualPath } from "@/db";
 import { assessees, batchAssessors, batchRosterNotes, batches, driveFiles } from "@/db/schema";
 import { normalizeOcrConfidence } from "@/lib/ocr/confidence";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { sanitizeExtractedText } from "@/lib/text/sanitize-extracted-text";
 
 export type MasterKeySource =
   | "assessor_upload"
@@ -648,6 +649,7 @@ export async function updateDriveFileExtraction(params: {
   ocrConfidence?: number | null;
 }): Promise<void> {
   const now = new Date();
+  const cleanText = sanitizeExtractedText(params.extractedText);
   const normalizedOcr =
     params.ocrConfidence != null ? normalizeOcrConfidence(params.ocrConfidence) : null;
   return runRepositoryDualPath({
@@ -657,7 +659,7 @@ export async function updateDriveFileExtraction(params: {
       await tx
         .update(driveFiles)
         .set({
-          extractedText: params.extractedText,
+          extractedText: cleanText,
           extractionMethod: params.extractionMethod,
           ocrConfidence: normalizedOcr != null ? normalizedOcr.toFixed(4) : null,
           updatedAt: now,
@@ -669,7 +671,7 @@ export async function updateDriveFileExtraction(params: {
       const { error } = await supabase
         .from("drive_files")
         .update({
-          extracted_text: params.extractedText,
+          extracted_text: cleanText,
           extraction_method: params.extractionMethod,
           ocr_confidence: normalizedOcr,
           updated_at: now.toISOString(),
@@ -695,6 +697,10 @@ export async function updateDriveFileClassification(params: {
   triageStatus?: "assigned" | "not_needed" | "unmatched";
 }): Promise<void> {
   const now = new Date();
+  const cleanText =
+    typeof params.extractedText === "string"
+      ? sanitizeExtractedText(params.extractedText)
+      : params.extractedText;
   return runRepositoryDualPath({
     userId: params.userId,
     label: "BatchesRepository.updateDriveFileClassification",
@@ -705,7 +711,7 @@ export async function updateDriveFileClassification(params: {
           docType: params.docType,
           classificationConfidence: params.confidence.toFixed(4),
           triageReason: params.triageReason,
-          ...(params.extractedText !== undefined ? { extractedText: params.extractedText } : {}),
+          ...(cleanText !== undefined ? { extractedText: cleanText } : {}),
           ...(params.extractionMethod !== undefined
             ? { extractionMethod: params.extractionMethod }
             : {}),
@@ -729,7 +735,7 @@ export async function updateDriveFileClassification(params: {
           doc_type: params.docType,
           classification_confidence: params.confidence,
           triage_reason: params.triageReason,
-          ...(params.extractedText !== undefined ? { extracted_text: params.extractedText } : {}),
+          ...(cleanText !== undefined ? { extracted_text: cleanText } : {}),
           ...(params.extractionMethod !== undefined
             ? { extraction_method: params.extractionMethod }
             : {}),

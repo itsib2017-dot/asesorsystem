@@ -100,6 +100,7 @@ vi.mock("@/repositories/schemes.repository", () => ({
 import JSZip from "jszip";
 import * as assessmentRepo from "@/repositories/assessment.repository";
 import * as encryption from "@/lib/crypto/encryption";
+import * as ditService from "@/services/dit";
 import * as gradingService from "@/services/grading";
 import { runWorkerJob } from "../index";
 import { enqueueJob, executeJob } from "../queue";
@@ -1106,5 +1107,99 @@ describe("Worker dispatcher and queue runner", () => {
         confirmedAt: "2026-11-25T08:00:00.000Z",
       }),
     );
+  });
+
+  it("persists manual pasted CV override as extractionMethod manual_paste and skips Drive CV extraction (T6)", async () => {
+    mocks.getAssesseeById.mockResolvedValue({
+      id: "as-manual-cv",
+      lspId: "lsp-1",
+      batchId: "b-manual-cv",
+      displayName: "Asesi Uji",
+      pseudonym: "ASESI-002",
+    });
+    mocks.getBatchById.mockResolvedValue({
+      id: "b-manual-cv",
+      lspId: "lsp-1",
+      schemeId: "scheme-1",
+      name: "Simulasi Manual CV",
+    });
+    mocks.listDriveFilesForBatch.mockResolvedValue([
+      {
+        id: "f-04a",
+        assesseeId: "as-manual-cv",
+        docType: "04a",
+        fileName: "FR.IA.04A.docx",
+        driveFileId: "drive04a999",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        extractedText: "Instruksi 04A lengkap.",
+        driveModifiedTime: null,
+      },
+      {
+        id: "f-04b",
+        assesseeId: "as-manual-cv",
+        docType: "04b",
+        fileName: "Tugas.pptx",
+        driveFileId: "drive04b999",
+        mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        extractedText: "Presentasi DIT lengkap.",
+        driveModifiedTime: null,
+      },
+      {
+        id: "f-cv-broken",
+        assesseeId: "as-manual-cv",
+        docType: "cv",
+        fileName: "Minimal Multimedia Artist Resume (1).pdf",
+        driveFileId: "drivecvbroken999",
+        mimeType: "application/pdf",
+        extractedText: null,
+        extractionMethod: null,
+        driveModifiedTime: null,
+      },
+    ]);
+    mocks.getLatestProviderConfigForAssessor.mockResolvedValue({
+      provider: "openai-compatible",
+      encryptedApiKey: "iv:tag:cipher",
+      baseUrl: null,
+      encryptedGatewayToken: null,
+      model: "gpt-4o-mini",
+      temperature: 0,
+      maxTokens: 4096,
+    });
+    vi.spyOn(encryption, "decryptSecret").mockReturnValue("sk-test-fake");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    vi.spyOn(ditService, "runDitPipeline").mockResolvedValueOnce({
+      ok: true,
+      promptVersion: "v1.0.0",
+      output: {
+        pseudonym: "ASESI-002",
+        coverageMatrix: [],
+        gapQuestions: [],
+        questionBank: [],
+        readiness: {
+          status: "Siap",
+          summary: "Siap dinilai",
+          missingElements: [],
+        },
+      },
+    } as never);
+
+    const res = await runWorkerJob({
+      id: "job-dit-manual-cv",
+      type: "dit_analysis",
+      userId: "user-1",
+      payload: {
+        assesseeId: "as-manual-cv",
+        candidateProfileSummary: "CV Multimedia\u0000\uD800 pengalaman 5 tahun",
+      },
+    });
+
+    expect(res.status).toBe("done");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mocks.updateDriveFileExtraction).toHaveBeenCalledWith({
+      userId: "user-1",
+      fileId: "f-cv-broken",
+      extractedText: "CV Multimedia pengalaman 5 tahun",
+      extractionMethod: "manual_paste",
+    });
   });
 });

@@ -1,5 +1,6 @@
 import { validateSafeExternalUrl } from "@/lib/security/ssrf";
 import { findBestMatchingCandidate } from "@/lib/names";
+import { sanitizeExtractedText } from "@/lib/text/sanitize-extracted-text";
 import {
   formatSchemeInstructionsText,
   selectDitInputFiles,
@@ -52,6 +53,9 @@ const ALLOWED_DRIVE_DOWNLOAD_DOMAINS = [
   "googleusercontent.com",
   "www.googleapis.com",
 ];
+
+export const FRIENDLY_EXTRACTION_PERSIST_ERROR =
+  "Berkas tidak bisa dibaca otomatis — tempel teks secara manual.";
 
 export interface DriveExtractionOutcome {
   text: string | null;
@@ -281,7 +285,7 @@ export async function ensureDriveFileExtracted(params: {
       "EXTRACTION_TIMEOUT: Batas waktu ekstraksi berkas (30 detik) terlampaui.",
     );
 
-    const trimmed = parsed.text.trim();
+    const trimmed = sanitizeExtractedText(parsed.text).trim();
     if (!trimmed) {
       return {
         text: null,
@@ -290,18 +294,33 @@ export async function ensureDriveFileExtracted(params: {
       };
     }
 
-    await updateDriveFileExtraction({
-      userId: params.userId,
-      fileId: params.file.id,
-      extractedText: trimmed,
-      extractionMethod: parsed.extractionMethod,
-    });
+    try {
+      await updateDriveFileExtraction({
+        userId: params.userId,
+        fileId: params.file.id,
+        extractedText: trimmed,
+        extractionMethod: parsed.extractionMethod,
+      });
+    } catch (persistErr) {
+      const rawMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+      console.warn(`[DriveExtract Persist Warning] file=${params.file.id}: ${rawMsg}`);
+      return {
+        text: null,
+        extractionMethod: parsed.extractionMethod,
+        error: FRIENDLY_EXTRACTION_PERSIST_ERROR,
+      };
+    }
 
     return { text: trimmed, extractionMethod: parsed.extractionMethod };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Ekstraksi Drive gagal.";
     console.warn(`[DriveExtract Warning] file=${params.file.id}: ${message}`);
-    return { text: null, error: message };
+    const safeError =
+      message.includes("DRIVE_FILE_EXTRACTION_UPDATE_FAILED") ||
+      /unsupported unicode escape sequence/i.test(message)
+        ? FRIENDLY_EXTRACTION_PERSIST_ERROR
+        : message;
+    return { text: null, error: safeError };
   }
 }
 
@@ -348,6 +367,9 @@ export async function resolveAssesseeDitInputs(params: {
   batchFiles?: DriveFileRecord[];
   scheme?: SchemeRecord | null;
   apiKey?: string;
+  skip04a?: boolean;
+  skip04b?: boolean;
+  skipCv?: boolean;
 }): Promise<{
   frIa04aText: string;
   frIa04aSource: "assessee" | "batch" | "scheme" | "none";
@@ -373,30 +395,34 @@ export async function resolveAssesseeDitInputs(params: {
   } = selected;
 
   const [text04a, textDitParts, resCv] = await Promise.all([
-    extractMultipleDriveFiles({
-      userId: params.userId,
-      files: used04aFiles,
-      apiKey: params.apiKey,
-      labelPrefix: "FR.IA.04A",
-      extractionErrors,
-    }),
-    extractMultipleDriveFiles({
-      userId: params.userId,
-      files: combinedDitFiles,
-      apiKey: params.apiKey,
-      labelPrefix: "Tugas DIT",
-      extractionErrors,
-    }),
-    fileCv
+    params.skip04a
+      ? Promise.resolve("")
+      : extractMultipleDriveFiles({
+          userId: params.userId,
+          files: used04aFiles,
+          apiKey: params.apiKey,
+          labelPrefix: "FR.IA.04A",
+          extractionErrors,
+        }),
+    params.skip04b
+      ? Promise.resolve("")
+      : extractMultipleDriveFiles({
+          userId: params.userId,
+          files: combinedDitFiles,
+          apiKey: params.apiKey,
+          labelPrefix: "Tugas DIT",
+          extractionErrors,
+        }),
+    !params.skipCv && fileCv
       ? ensureDriveFileExtracted({
           userId: params.userId,
           file: fileCv,
           apiKey: params.apiKey,
         })
-      : null,
+      : Promise.resolve(null),
   ]);
 
-  if (fileCv && !resCv?.text && resCv?.error) {
+  if (!params.skipCv && fileCv && !resCv?.text && resCv?.error) {
     extractionErrors.push(`CV (${fileCv.fileName}): ${resCv.error}`);
   }
 

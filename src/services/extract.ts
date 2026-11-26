@@ -2,6 +2,9 @@ import mammoth from "mammoth";
 import JSZip from "jszip";
 import ExcelJS from "exceljs";
 import zlib from "node:zlib";
+import { sanitizeExtractedText } from "@/lib/text/sanitize-extracted-text";
+
+export { sanitizeExtractedText };
 
 const OLE_MAGIC_BYTES = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 const MAX_PDF_EXTRACT_BYTES = 15 * 1024 * 1024;
@@ -654,7 +657,7 @@ export function extractTextFromPdfBasic(buffer: Buffer): string {
     allLines.push(...extractStreamTextWithLayout(st));
   }
 
-  return allLines.join("\n").trim();
+  return sanitizeExtractedText(allLines.join("\n")).trim();
 }
 
 export async function extractTextFromBuffer(params: {
@@ -667,27 +670,30 @@ export async function extractTextFromBuffer(params: {
 
   if (mimeLower.includes("presentationml") || nameLower.endsWith(".pptx")) {
     return {
-      text: await extractTextFromPptx(params.buffer),
+      text: sanitizeExtractedText(await extractTextFromPptx(params.buffer)).trim(),
       extractionMethod: "ooxml_pptx",
     };
   }
   if (mimeLower.includes("spreadsheetml") || nameLower.endsWith(".xlsx")) {
     return {
-      text: await extractTextFromXlsx(params.buffer),
+      text: sanitizeExtractedText(await extractTextFromXlsx(params.buffer)).trim(),
       extractionMethod: "ooxml_xlsx",
     };
   }
   if (mimeLower.includes("wordprocessingml") || nameLower.endsWith(".docx")) {
     const res = await extractTextFromDocx(params.buffer);
-    const text =
+    const rawText =
       res.embeddedImageCount > 0 && !res.text
         ? `[Dokumen berisi ${res.embeddedImageCount} gambar tersemat — perlu tinjauan manual]`
         : res.text;
-    return { text, extractionMethod: "ooxml_docx" };
+    return {
+      text: sanitizeExtractedText(rawText).trim(),
+      extractionMethod: "ooxml_docx",
+    };
   }
   if (mimeLower === "application/pdf" || nameLower.endsWith(".pdf")) {
     return {
-      text: extractTextFromPdfBasic(params.buffer),
+      text: sanitizeExtractedText(extractTextFromPdfBasic(params.buffer)).trim(),
       extractionMethod: "pdf_text_layer",
     };
   }
@@ -698,7 +704,7 @@ export async function extractTextFromBuffer(params: {
     nameLower.endsWith(".md")
   ) {
     return {
-      text: params.buffer.toString("utf8").trim(),
+      text: sanitizeExtractedText(params.buffer.toString("utf8")).trim(),
       extractionMethod: "raw_text",
     };
   }

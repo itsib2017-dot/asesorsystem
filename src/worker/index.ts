@@ -2,9 +2,11 @@ import type { RuntimeLlmConfig } from "@/ai/llm";
 import { writeAuditLog } from "@/lib/audit/write-audit-log";
 import { decryptSecret } from "@/lib/crypto/encryption";
 import { getConfig } from "@/lib/config/get-config";
+import { selectDitInputFiles } from "@/lib/forms/dit-inputs";
 import { logEvent } from "@/lib/logger";
 import { normalizeOcrConfidence } from "@/lib/ocr/confidence";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { sanitizeExtractedText } from "@/lib/text/sanitize-extracted-text";
 import { readStringField } from "@/lib/utils/record-fields";
 import { findBestMatchingCandidate } from "@/lib/names";
 import {
@@ -1073,17 +1075,119 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
   const files = await listDriveFilesForBatch(userId, batch.id);
   const assesseeFiles = files.filter((f) => f.assesseeId === assessee.id);
 
-  const payload04a = typeof job.payload.frIa04aText === "string" ? job.payload.frIa04aText.trim() : "";
-  const payload04b =
+  const clean04a = sanitizeExtractedText(
+    typeof job.payload.frIa04aText === "string" ? job.payload.frIa04aText : "",
+  ).trim();
+  const clean04b = sanitizeExtractedText(
     typeof job.payload.presentationTranscript === "string"
-      ? job.payload.presentationTranscript.trim()
-      : "";
-  const payloadCv =
+      ? job.payload.presentationTranscript
+      : "",
+  ).trim();
+  const cleanCv = sanitizeExtractedText(
     typeof job.payload.candidateProfileSummary === "string"
-      ? job.payload.candidateProfileSummary.trim()
-      : "";
+      ? job.payload.candidateProfileSummary
+      : "",
+  ).trim();
 
-  const needsInputs = !payload04a || !payload04b || !payloadCv;
+  // Round 22 T6 (P1-6): persist manual pasted overrides as `manual_paste` so
+  // reload shows "Siap (manual)" and future runs skip re-extracting broken Drive files.
+  if (clean04a || clean04b || cleanCv) {
+    const selectedDit = selectDitInputFiles(assesseeFiles, files);
+    const nowIso = new Date().toISOString();
+    const manualUpserts: Array<{
+      driveFileId: string;
+      fileName: string;
+      mimeType: string;
+      drivePath: string;
+      docType: string;
+      confidence: number;
+      assesseeId: string;
+      triageStatus: "assigned";
+      triageReason: string;
+      extractedText: string;
+      extractionMethod: string;
+      driveModifiedTime: string;
+    }> = [];
+
+    const persistManualTarget = async (
+      existingFile: (typeof files)[number] | null | undefined,
+      text: string,
+      fallback: { driveFileId: string; fileName: string; drivePath: string; docType: string; reason: string },
+    ) => {
+      if (!text) return;
+      if (existingFile?.id) {
+        await updateDriveFileExtraction({
+          userId,
+          fileId: existingFile.id,
+          extractedText: text,
+          extractionMethod: "manual_paste",
+        });
+      } else {
+        manualUpserts.push({
+          driveFileId: fallback.driveFileId,
+          fileName: fallback.fileName,
+          mimeType: "text/plain",
+          drivePath: fallback.drivePath,
+          docType: fallback.docType,
+          confidence: 1,
+          assesseeId: assessee.id,
+          triageStatus: "assigned",
+          triageReason: fallback.reason,
+          extractedText: text,
+          extractionMethod: "manual_paste",
+          driveModifiedTime: nowIso,
+        });
+      }
+    };
+
+    try {
+      await persistManualTarget(selectedDit.usedCvFile, cleanCv, {
+        driveFileId: `manual-dit-cv-${assessee.id}`,
+        fileName: "CV_Manual.txt",
+        drivePath: "Manual Input/CV_Manual.txt",
+        docType: "cv",
+        reason: "Teks CV ditempel manual oleh asesor",
+      });
+      await persistManualTarget(selectedDit.assessee04a[0], clean04a, {
+        driveFileId: `manual-dit-04a-${assessee.id}`,
+        fileName: "FR.IA.04A_Manual.txt",
+        drivePath: "Manual Input/FR.IA.04A_Manual.txt",
+        docType: "04a",
+        reason: "Teks FR.IA.04A ditempel manual oleh asesor",
+      });
+      await persistManualTarget(
+        selectedDit.combinedDitFiles.length === 1 ? selectedDit.combinedDitFiles[0] : null,
+        clean04b,
+        {
+          driveFileId: `manual-dit-04b-${assessee.id}`,
+          fileName: "Tugas_DIT_Manual.txt",
+          drivePath: "Manual Input/Tugas_DIT_Manual.txt",
+          docType: "04b",
+          reason: "Teks Tugas DIT ditempel manual oleh asesor",
+        },
+      );
+      if (manualUpserts.length > 0) {
+        await upsertDriveFilesForBatch({
+          userId,
+          lspId: assessee.lspId,
+          batchId: batch.id,
+          files: manualUpserts,
+        });
+      }
+    } catch (err) {
+      logEvent("warn", {
+        correlation_id: job.id,
+        user_id: userId,
+        tenant_id: assessee.lspId,
+        action: "dit.manual_override.persist",
+        resource: "drive_files",
+        outcome: "failure",
+        meta: { error: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+
+  const needsInputs = !clean04a || !clean04b || !cleanCv;
   const driveApiKey = await resolveDriveApiKeyIfNeeded(userId, needsInputs);
   const resolvedInputs = needsInputs
     ? await resolveAssesseeDitInputs({
@@ -1092,12 +1196,15 @@ async function handleDitAnalysisJob(job: WorkerJobInput): Promise<WorkerJobResul
         batchFiles: files,
         scheme,
         apiKey: driveApiKey,
+        skip04a: Boolean(clean04a),
+        skip04b: Boolean(clean04b),
+        skipCv: Boolean(cleanCv),
       })
     : null;
 
-  const frIa04aText = payload04a || resolvedInputs?.frIa04aText || "";
-  const presentationTranscript = payload04b || resolvedInputs?.presentationTranscript || "";
-  const candidateProfileSummary = payloadCv || resolvedInputs?.candidateProfileSummary || "";
+  const frIa04aText = clean04a || resolvedInputs?.frIa04aText || "";
+  const presentationTranscript = clean04b || resolvedInputs?.presentationTranscript || "";
+  const candidateProfileSummary = cleanCv || resolvedInputs?.candidateProfileSummary || "";
 
   const earlyGate = checkDitCompletenessGate({
     frIa04aText,
