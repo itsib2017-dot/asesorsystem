@@ -16,7 +16,7 @@ export async function GET(
   const { id } = await context.params;
   const [batch, latestJob, assessees, files] = await Promise.all([
     getBatchById(user.id, id),
-    getLatestJobForBatch(user.id, id),
+    getLatestJobForBatch(user.id, id, "drive_scan"),
     listAssesseesByBatch(user.id, id),
     listDriveFilesForBatch(user.id, id),
   ]);

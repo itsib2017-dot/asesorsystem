@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { FileSearch, FileSpreadsheet, MessageSquare } from "lucide-react";
+import { Download, FileSearch, FileSpreadsheet, MessageSquare } from "lucide-react";
 import { getLspRole } from "@/lib/auth/get-role";
 import { getUser } from "@/lib/auth/get-session";
 import { getLatestNameJuryVerdict } from "@/repositories/assessees.repository";
@@ -25,10 +25,15 @@ import {
 } from "@/lib/ak05/decision-rules";
 import {
   buildAk02Payload,
+  extractOfficial04bAssessment,
+  extractOfficial06cAssessment,
+  hasSavedOfficial04bAssessment,
+  hasSavedOfficial06cAssessment,
   resolveSchemeBranding,
   resolveSchemeUnitsList,
   type RawDecisionRow,
 } from "@/lib/forms/assessee-forms";
+import { buildAssesseeExportReadiness } from "@/lib/forms/assessee-readiness";
 import { resolveUnitsForScheme } from "@/lib/forms/sync-vatm-decisions";
 import { computeVatmUnitRollup } from "@/services/vatm-rollup";
 import { OverallDecisionOverrideCard } from "./_components/overall-decision-override";
@@ -80,14 +85,15 @@ export default async function AssesseeDetailPage({
     getLspRole(common.batch.lspId, user.id),
     listDriveFilesForBatch(user.id, batchId),
   ]);
-  const hasDitForms = batchFiles.some(
-    (f) => f.assesseeId === assesseeId && (f.docType === "dit_form" || f.docType === "04b"),
+  const assesseeFiles = batchFiles.filter((f) => f.assesseeId === assesseeId);
+  const hasDitForms = assesseeFiles.some(
+    (f) => f.docType === "dit_form" || f.docType === "04b",
   );
 
   // If the jury verdict row is not yet readable, still surface the OCR evidence
   // and require a human decision rather than showing "not run".
-  const ktpOcrFile = batchFiles.find(
-    (f) => f.assesseeId === assesseeId && f.docType === "ktp" && f.ocrConfidence != null,
+  const ktpOcrFile = assesseeFiles.find(
+    (f) => f.docType === "ktp" && f.ocrConfidence != null,
   );
   const rawOcrConfidence = ktpOcrFile?.ocrConfidence ?? null;
   const rawJuryConfidence = jury ? (jury.ocr_confidence ?? jury.ocrConfidence ?? null) : null;
@@ -116,6 +122,22 @@ export default async function AssesseeDetailPage({
     }),
   });
   const canOverride = role === "lsp_admin" || role === "assessor";
+
+  const hasSaved04b = hasSavedOfficial04bAssessment(
+    extractOfficial04bAssessment(ditAnalysis as Record<string, unknown> | null),
+  );
+  const hasSaved06c = hasSavedOfficial06cAssessment(
+    extractOfficial06cAssessment(writtenGrading as Record<string, unknown> | null),
+  );
+  const readiness = buildAssesseeExportReadiness({
+    hasActiveSignature: common.hasActiveSignature,
+    isNameConfirmed: common.isNameConfirmed,
+    decidedUnitCount: resolvedOverall.decidedCount,
+    totalSchemeUnits: schemeUnitsList.length,
+    hasSaved04b,
+    hasSaved06c,
+    hasInterview: Boolean(interviewAssessment),
+  });
 
   const rollupUnits = computeVatmUnitRollup({
     units: resolveUnitsForScheme(common.scheme),
@@ -202,6 +224,68 @@ export default async function AssesseeDetailPage({
             Wawancara (FR.IA.09)
           </Link>
         </div>
+      </div>
+
+      {/* E6: One-line missing-items readiness summary */}
+      <div
+        data-testid="assessee-readiness-bar"
+        className={`rounded-xl border px-3.5 py-2 text-xs ${
+          readiness.isReady
+            ? "border-emerald-200 bg-emerald-50/70 text-emerald-950"
+            : "border-amber-200 bg-amber-50/80 text-amber-950"
+        }`}
+      >
+        {readiness.summaryLine}
+      </div>
+
+      {/* P2-3: Direct in-app assessee files download */}
+      <div className="glass-card rounded-2xl p-4 space-y-2.5 border border-slate-200">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Berkas Asesi ({assesseeFiles.length})
+          </h2>
+          <span className="text-[11px] text-slate-500">
+            Unduh langsung dokumen sumber dari Google Drive / unggahan
+          </span>
+        </div>
+        {assesseeFiles.length === 0 ? (
+          <p className="text-xs text-slate-500">
+            Belum ada berkas yang dipetakan untuk asesi ini. Periksa halaman{" "}
+            <Link href={`/batches/${batchId}/triage`} className="text-teal-700 hover:underline">
+              Triage
+            </Link>
+            .
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {assesseeFiles.map((f) => {
+              const downloadable =
+                !f.driveFileId?.startsWith("manual-") || Boolean(f.extractedText?.trim());
+              return (
+                <div
+                  key={f.id}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs"
+                >
+                  <span className="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[10px] text-slate-700">
+                    {f.docType}
+                  </span>
+                  <span className="text-slate-800 max-w-[220px] truncate" title={f.fileName}>
+                    {f.fileName}
+                  </span>
+                  {downloadable && (
+                    <a
+                      href={`/api/v1/batches/${batchId}/files/${f.id}/download`}
+                      className="inline-flex items-center gap-1 text-teal-700 hover:underline font-medium"
+                    >
+                      <Download className="w-3 h-3" />
+                      Unduh
+                    </a>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Name Jury & KTP Verification */}

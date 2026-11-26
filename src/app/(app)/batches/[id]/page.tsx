@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import {
   AlertTriangle,
+  Archive,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -17,7 +18,7 @@ import { getConfig } from "@/lib/config/get-config";
 import { getBatchById, listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { getLspNameForUser } from "@/repositories/auth.repository";
 import { listAssesseesByBatch } from "@/repositories/assessees.repository";
-import { getLatestJobForBatch } from "@/repositories/jobs.repository";
+import { getLatestJobForBatch, type JobRecord } from "@/repositories/jobs.repository";
 import { listSchemes } from "@/repositories/schemes.repository";
 import { resolveBatchActiveMasterKey } from "@/lib/written/master-key";
 import { resolveSchemeDocColumns } from "@/lib/forms/assessee-forms";
@@ -37,6 +38,18 @@ export const metadata = {
   title: "Detail Batch — AsesorKompetensi",
 };
 
+const JOB_TYPE_LABELS: Record<string, string> = {
+  drive_scan: "Pemindaian Drive",
+  written_grading: "Koreksi Tertulis FR.IA.06C",
+  dit_analysis: "Analisis DIT FR.IA.04A/04B",
+  ktp_ocr: "OCR KTP",
+  interview_gen: "Wawancara FR.IA.09",
+};
+
+function formatJobTypeLabel(type: string): string {
+  return JOB_TYPE_LABELS[type] ?? type;
+}
+
 export default async function BatchDetailPage({
   params,
 }: {
@@ -49,14 +62,18 @@ export default async function BatchDetailPage({
   const batch = await getBatchById(user.id, id);
   if (!batch) return notFound();
 
-  const [assessees, files, latestJob, schemes, configuredMinOcr, lspName] = await Promise.all([
-    listAssesseesByBatch(user.id, id),
-    listDriveFilesForBatch(user.id, id),
-    getLatestJobForBatch(user.id, id),
-    listSchemes(user.id, batch.lspId),
-    getConfig("identity.ktp_ocr_min_confidence", { lspId: batch.lspId }),
-    getLspNameForUser(user.id, batch.lspId),
-  ]);
+  const [assessees, files, latestJob, latestAnyJob, schemes, configuredMinOcr, lspName] =
+    await Promise.all([
+      listAssesseesByBatch(user.id, id),
+      listDriveFilesForBatch(user.id, id),
+      getLatestJobForBatch(user.id, id, "drive_scan"),
+      getLatestJobForBatch(user.id, id),
+      listSchemes(user.id, batch.lspId),
+      getConfig("identity.ktp_ocr_min_confidence", { lspId: batch.lspId }),
+      getLspNameForUser(user.id, batch.lspId),
+    ]);
+  const nonIngestJob: JobRecord | null =
+    latestAnyJob && latestAnyJob.type !== "drive_scan" ? latestAnyJob : null;
   const scheme = schemes.find((s) => s.id === batch.schemeId) ?? null;
   const docColumns = resolveSchemeDocColumns(scheme);
 
@@ -195,6 +212,13 @@ export default async function BatchDetailPage({
             <FileCheck className="w-3.5 h-3.5" />
             Laporan FR.AK.05
           </Link>
+          <a
+            href={`/api/v1/batches/${batch.id}/export-pack`}
+            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-xs font-medium text-white inline-flex items-center gap-1.5"
+          >
+            <Archive className="w-3.5 h-3.5" />
+            Paket ZIP
+          </a>
         </div>
       </div>
 
@@ -264,6 +288,29 @@ export default async function BatchDetailPage({
             </span>
           )}
         </div>
+
+        {nonIngestJob && (
+          <div className="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-slate-700">
+            <span>
+              Aktivitas Latar Terakhir:{" "}
+              <strong className="text-slate-900">{formatJobTypeLabel(nonIngestJob.type)}</strong> · Status:{" "}
+              <strong
+                className={
+                  nonIngestJob.status === "failed"
+                    ? "text-rose-700"
+                    : nonIngestJob.status === "done"
+                      ? "text-emerald-700"
+                      : "text-amber-700"
+                }
+              >
+                {nonIngestJob.status}
+              </strong>
+            </span>
+            <span className="font-mono text-[11px] text-slate-500 break-all">
+              Job ID: {nonIngestJob.id}
+            </span>
+          </div>
+        )}
 
         {latestJob?.status === "failed" && (
           <div

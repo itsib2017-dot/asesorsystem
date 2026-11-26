@@ -260,6 +260,10 @@ describe("Drive folder crawling & BNSP path classification", () => {
     ).toBe("04b");
     expect(classifyDriveFileName("Naila pass poto.jpeg", "Persyaratan/Naila").docType).toBe("pas_foto");
     expect(classifyDriveFileName("SUKET S2.jpeg", "Persyaratan/Naila").docType).toBe("ijazah");
+    expect(classifyDriveFileName("e-ktp.jpg", "Persyaratan/Budi").docType).toBe("ktp");
+    expect(classifyDriveFileName("IMG_001.jpg", "Persyaratan/Budi/KTP").docType).toBe("ktp");
+    expect(classifyDriveFileName("IMG_002.png", "Persyaratan/Budi/Pas Foto").docType).toBe("pas_foto");
+    expect(classifyDriveFileName("scan.jpg", "Persyaratan/Budi/Ijazah").docType).toBe("ijazah");
     expect(
       classifyDriveFileName("SK Kenaikan Pangkat III.b Faradhila.pdf", "Persyaratan/Faradhila").docType,
     ).toBe("surat_tugas");

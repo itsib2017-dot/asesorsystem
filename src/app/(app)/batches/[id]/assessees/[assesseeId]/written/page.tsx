@@ -6,6 +6,7 @@ import { getLatestWrittenGrading } from "@/repositories/assessment.repository";
 import { listDriveFilesForBatch } from "@/repositories/batches.repository";
 import { pickLatestDriveFile } from "@/services/drive-revisions";
 import { resolveBatchActiveMasterKey } from "@/lib/written/master-key";
+import { parseMasterKeyByQuestion } from "@/lib/written/parse-key-items";
 import { Ia06cBlankoPreview } from "@/components/forms/ia06c-blanko-preview";
 import { loadAssesseeCommonFormMeta } from "@/lib/forms/load-assessee-page-data";
 import {
@@ -87,6 +88,9 @@ export default async function WrittenGradingPage({
     | { status?: string; reasoning?: string }
     | undefined;
   const schemeWrittenQuestions = resolveSchemeWrittenQuestions(common.scheme);
+  const masterKeyByNo = resolvedMasterKey.isReadyForGrading
+    ? parseMasterKeyByQuestion(resolvedMasterKey.activeFile?.extractedText ?? "")
+    : {};
 
   return (
     <div className="space-y-6">
@@ -276,6 +280,7 @@ export default async function WrittenGradingPage({
           batchId={batchId}
           assesseeId={assesseeId}
           schemeQuestions={schemeWrittenQuestions}
+          masterKeyByNo={masterKeyByNo}
           initialAssessment={savedOfficial06c}
           hasSavedAssessment={hasSavedOfficial06c}
           aiProposal={aiProposal06c}

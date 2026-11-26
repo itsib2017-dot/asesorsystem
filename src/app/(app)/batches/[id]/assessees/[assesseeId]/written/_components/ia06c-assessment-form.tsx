@@ -23,6 +23,7 @@ interface Ia06cAssessmentFormProps {
   batchId: string;
   assesseeId: string;
   schemeQuestions: SchemeWrittenQuestionSpec[];
+  masterKeyByNo?: Record<number, string>;
   initialAssessment: Official06cAssessment;
   hasSavedAssessment: boolean;
   aiProposal: Ia06cAiProposal;
@@ -149,6 +150,7 @@ export function Ia06cAssessmentForm({
   batchId,
   assesseeId,
   schemeQuestions,
+  masterKeyByNo,
   initialAssessment,
   hasSavedAssessment,
   aiProposal,
@@ -253,6 +255,46 @@ export function Ia06cAssessmentForm({
     setTouchedItems(new Set(items.map((item) => item.questionNo)));
   };
 
+  const handleStartBlank = () => {
+    if (
+      isSaved &&
+      !window.confirm("Kosongkan semua nilai tersimpan dan mulai dari awal?")
+    ) {
+      return;
+    }
+    setItems((prev) => prev.map((item) => ({ ...item, achieved: null })));
+    setOverallAchieved(null);
+    setFeedbackDetail("");
+    setTouchedItems(new Set(items.map((item) => item.questionNo)));
+    setOverallTouched(true);
+  };
+
+  const handleLoadAiProposal = () => {
+    if (!aiProposal.hasProposal) return;
+    if (
+      isSaved &&
+      !window.confirm("Muat ulang usulan AI dan timpa nilai tersimpan?")
+    ) {
+      return;
+    }
+    setItems((prev) =>
+      prev.map((item) => {
+        const proposal = proposalByNo.get(item.questionNo);
+        return {
+          ...item,
+          answerText: item.answerText.trim()
+            ? item.answerText
+            : (proposal?.answerText ?? ""),
+          achieved: proposal ? proposal.achieved : null,
+        };
+      }),
+    );
+    setOverallAchieved(aiProposal.overallAchieved);
+    setFeedbackDetail(aiProposal.feedbackDetail);
+    setTouchedItems(new Set());
+    setOverallTouched(false);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (saving || items.length === 0) return;
@@ -333,6 +375,24 @@ export function Ia06cAssessmentForm({
           >
             Kosongkan
           </button>
+          <button
+            type="button"
+            data-testid="ia06c-start-blank"
+            onClick={handleStartBlank}
+            className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-[11px] font-medium text-slate-700 cursor-pointer"
+          >
+            Mulai Kosong
+          </button>
+          {aiProposal.hasProposal && (
+            <button
+              type="button"
+              data-testid="ia06c-load-ai"
+              onClick={handleLoadAiProposal}
+              className="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-300 hover:bg-amber-100 text-[11px] font-medium text-amber-900 cursor-pointer"
+            >
+              Muat Usulan AI
+            </button>
+          )}
           <div className="text-xs font-mono text-slate-600 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
             Ya: {items.filter((i) => i.achieved === true).length} · Tidak:{" "}
             {items.filter((i) => i.achieved === false).length} · Belum:{" "}
@@ -415,9 +475,6 @@ export function Ia06cAssessmentForm({
                       {badge.label}
                     </span>
                   </div>
-                  {schemeQ?.question && (
-                    <p className="text-xs text-slate-700">{schemeQ.question}</p>
-                  )}
                   {proposal?.sourceVerdict && (
                     <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
                       <strong>Putusan AI:</strong> {proposal.sourceVerdict}
@@ -463,22 +520,48 @@ export function Ia06cAssessmentForm({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  value={item.answerText}
-                  onChange={(e) => setItemAnswerText(item.questionNo, e.target.value)}
-                  placeholder={`Ringkasan jawaban asesi soal #${item.questionNo}...`}
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-slate-800"
-                />
-                <input
-                  type="text"
-                  value={item.note ?? ""}
-                  onChange={(e) => setItemNote(item.questionNo, e.target.value)}
-                  placeholder="Catatan koreksi asesor untuk soal ini (opsional)..."
-                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-slate-800"
-                />
+              <div
+                data-testid={`ia06c-three-col-${item.questionNo}`}
+                className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs"
+              >
+                <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                  <div className="font-semibold text-slate-600 mb-1">Soal (06A)</div>
+                  <p className="text-slate-800 whitespace-pre-wrap">
+                    {schemeQ?.question?.trim() || "Soal belum tercantum di manifes skema."}
+                  </p>
+                </div>
+                <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                  <div className="font-semibold text-slate-600 mb-1">Kunci (06B)</div>
+                  <p className="text-slate-800 whitespace-pre-wrap">
+                    {proposal?.masterSpan?.trim() ||
+                      masterKeyByNo?.[item.questionNo]?.trim() ||
+                      "Belum ada kutipan kunci 06B."}
+                  </p>
+                </div>
+                <div className="p-2.5 rounded-lg bg-white border border-slate-200">
+                  <label
+                    htmlFor={`ia06c-answer-${item.questionNo}`}
+                    className="block font-semibold text-slate-600 mb-1"
+                  >
+                    Jawaban Asesi (06C)
+                  </label>
+                  <textarea
+                    id={`ia06c-answer-${item.questionNo}`}
+                    rows={3}
+                    value={item.answerText}
+                    onChange={(e) => setItemAnswerText(item.questionNo, e.target.value)}
+                    placeholder={`Ringkasan jawaban asesi soal #${item.questionNo}...`}
+                    className="w-full px-2 py-1.5 rounded-md border border-slate-300 bg-white text-xs text-slate-800"
+                  />
+                </div>
               </div>
+              <input
+                type="text"
+                value={item.note ?? ""}
+                onChange={(e) => setItemNote(item.questionNo, e.target.value)}
+                placeholder="Catatan koreksi asesor untuk soal ini (opsional)..."
+                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-slate-800"
+              />
             </div>
           );
         })}

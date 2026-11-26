@@ -186,6 +186,10 @@ interface UnifiedClassifierRule {
   contentReason?: string;
 }
 
+function isImageFileName(fnLower: string): boolean {
+  return /\.(?:jpe?g|png|webp|heic|bmp|tif?f)$/i.test(fnLower);
+}
+
 const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> = {
   materi_pelatihan: {
     docType: "materi_pelatihan",
@@ -209,8 +213,11 @@ const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> 
   ktp: {
     docType: "ktp",
     confidence: DRIVE_DOC_TYPES.ktp.defaultConfidence,
-    matchesName: ({ fnBase }) =>
-      /(?:^|\s)ktpp?(?:$|\s)|kartu\s*tanda\s*penduduk|(?:^|\s)nik(?:$|\s)/i.test(fnBase),
+    matchesName: ({ fnLower, fnBase, ppNorm }) =>
+      /(?:^|\s)e?\s*ktpp?(?:$|\s)|kartu\s*tanda\s*penduduk|(?:^|\s)nik(?:$|\s)|id\s*card/i.test(
+        fnBase,
+      ) ||
+      (isImageFileName(fnLower) && /(?:^|\/|\s)e?\s*ktpp?(?:$|\s|\/)/i.test(ppNorm)),
     nameReason: "Dokumen identitas KTP",
     contentPattern:
       /kartu\s*tanda\s*penduduk|nik\s*:?\s*\d{12,16}|provinsi[\s\S]{0,60}kabupaten|gol\.?\s*darah/i,
@@ -315,10 +322,12 @@ const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> 
   ijazah: {
     docType: "ijazah",
     confidence: DRIVE_DOC_TYPES.ijazah.defaultConfidence,
-    matchesName: ({ fnBase }) =>
+    matchesName: ({ fnLower, fnBase, ppNorm }) =>
       /ijaz?ah|ijasah|ijajah|transkrip\s*nilai|sertifikat\s*kelulusan|surat\s*keterangan\s*(?:ll?ulus|kuliah|pendidikan)|\bsu?ket\s*(?:ll?ulus|s\s*[123])|\bs\s*[12]\b/i.test(
         fnBase,
-      ),
+      ) ||
+      ((isImageFileName(fnLower) || /\.pdf$/i.test(fnLower)) &&
+        /(?:^|\/|\s)ijaz?ah(?:$|\s|\/)/i.test(ppNorm)),
     nameReason: "Ijazah / surat keterangan pendidikan",
     contentPattern:
       /ijas?zah|surat\s*keterangan\s*(?:lulus|mahasiswa|kuliah)|transkrip\s*nilai|program\s*studi|magister|sarjana/i,
@@ -358,10 +367,12 @@ const UNIFIED_CLASSIFIER_RULES: Readonly<Record<string, UnifiedClassifierRule>> 
   pas_foto: {
     docType: "pas_foto",
     confidence: DRIVE_DOC_TYPES.pas_foto.defaultConfidence,
-    matchesName: ({ fnBase }) =>
-      /pas+\s*p?f?oto|foto\s*3x4|(?:^|\s)(?:photo|foto)(?:$|\s)|latar\s*merah|bg\s*merah|merah\s*batik|fococlipping/i.test(
+    matchesName: ({ fnLower, fnBase, ppNorm }) =>
+      /pas+\s*p?f?oto|foto\s*(?:3x4|4x6)|(?:^|\s)(?:photo|foto|3x4|4x6)(?:$|\s)|latar\s*merah|bg\s*merah|merah\s*batik|fococlipping/i.test(
         fnBase,
-      ),
+      ) ||
+      (isImageFileName(fnLower) &&
+        /(?:^|\/|\s)(?:pas\s*)?foto(?:$|\s|\/)/i.test(ppNorm)),
     nameReason: "Pas foto asesi",
   },
   sertifikat_pelatihan: {

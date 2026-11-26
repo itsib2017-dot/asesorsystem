@@ -156,11 +156,16 @@ export async function listJobsForUser(
 export async function getLatestJobForBatch(
   userId: string,
   batchId: string,
+  type?: string,
 ): Promise<JobRecord | null> {
   if (!isUuid(batchId)) return null;
   const recent = await listJobsForUser(userId, 50);
   return (
-    recent.find((j) => String(j.payload?.batchId ?? "") === batchId) ?? null
+    recent.find(
+      (j) =>
+        String(j.payload?.batchId ?? "") === batchId &&
+        (!type || j.type === type),
+    ) ?? null
   );
 }
 

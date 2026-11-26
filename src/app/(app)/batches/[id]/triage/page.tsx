@@ -546,6 +546,14 @@ export default async function TriagePage({
                             Tidak Bisa Diproses
                           </span>
                         )}
+                        {(!f.driveFileId?.startsWith("manual-") || Boolean(f.extractedText?.trim())) && (
+                          <a
+                            href={`/api/v1/batches/${id}/files/${f.id}/download`}
+                            className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-white text-teal-700 border border-teal-200 hover:bg-teal-50"
+                          >
+                            Unduh
+                          </a>
+                        )}
                       </div>
                       <div className="text-xs text-slate-400 font-mono break-all">
                         {f.drivePath}

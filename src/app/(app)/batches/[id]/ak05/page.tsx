@@ -58,13 +58,30 @@ export default async function Ak05Page({
   return (
     <div className="space-y-6">
       <BatchWorkflowStepper batchId={batchId} currentStep={8} />
-      <div>
-        <Link href={`/batches/${batchId}`} className="text-xs text-teal-700 hover:underline">
-          &larr; Kembali ke Batch
-        </Link>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
-          FR.AK.05 Laporan Asesmen ({batch.name})
-        </h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <Link href={`/batches/${batchId}`} className="text-xs text-teal-700 hover:underline">
+            &larr; Kembali ke Batch
+          </Link>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
+            FR.AK.05 Laporan Asesmen ({batch.name})
+          </h1>
+        </div>
+        {signature ? (
+          <a
+            href={`/api/v1/batches/${batchId}/export-pack`}
+            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-xs font-medium text-white inline-flex items-center gap-1.5"
+          >
+            Unduh Paket Batch (ZIP)
+          </a>
+        ) : (
+          <span
+            title="Unggah tanda tangan asesor di Pengaturan → Profil terlebih dahulu"
+            className="px-3.5 py-2 rounded-xl bg-slate-200 text-slate-500 text-xs font-medium inline-flex items-center gap-1.5 cursor-not-allowed"
+          >
+            Unduh Paket Batch (ZIP) — Perlu TTD
+          </span>
+        )}
       </div>
 
       <section id="ekspor">
